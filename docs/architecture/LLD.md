@@ -417,11 +417,14 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - stroke reveal with human pacing (slower into corners)
   - handwriting revealed letter by letter
 
-  Randomness is seeded by element id, so a replay draws identical strokes.
-- **Freeze and resume.** The UI owns each stroke's progress. `Freeze` stops it in place, and `Resume` continues from there.
-- **Orb.** A port of the design's orb component: five blurred gradient blobs, plus the listening dot field. Its state targets are eased per frame. It pauses when the window is hidden.
-- **Animation clock.** UI time follows the session time stamped on each event batch, so strokes start where the core scheduled them.
-- **Replay mode.** `?replay=<file>` plays an `events.jsonl` with no backend. It drives UI development and side-by-side checks against the design canvas. The design's demo becomes fixture `fixtures/demo.events.jsonl`.
+  Randomness is seeded by element id, so a replay draws identical strokes. Handwriting sits above every stroke on its layer and fills sit under the ink, as on the canvas.
+- **Pacing.** An op draws at the design's natural pace, including the pen's travel between items. When that would overrun `budget_ms`, the whole op is compressed to fit; it is never stretched, so the nib rests between ops instead.
+- **Freeze and resume.** The UI owns each stroke's progress. `Freeze` stops it in place, and `Resume` continues from there, fitting what is left into its new budget. The nib waits on the frozen point, pulsing, until then.
+- **Orb.** A port of the design's orb component: five blurred gradient blobs, plus the listening dot field. Its state targets are eased exponentially from the last change, evaluated in closed form so a seek lands on the same frame. `Freeze` plays the interrupted contraction and `Acknowledge` a small pulse. It pauses when the window is hidden.
+- **Animation clock.** Every animated value is a function of session time. Live, the clock follows the session time stamped on each event batch: it jumps forward when a batch is ahead of it and never runs backwards, so strokes start where the core scheduled them. In replay, the playhead is the clock.
+- **Transport.** The Tauri transport calls `invoke("connect", { events: Channel<UiBatch> })` once, then `invoke("command", { command })` per `UiCommand`. Batches are parsed again at this boundary; malformed events are dropped and counted.
+- **Replay mode.** `?replay=<url>` plays an `events.jsonl` with no backend; `&t=<ms>` opens it paused at that time (for screenshots), `&speed=` and `&controls=0` are options. Outside Tauri with no `?replay`, the demo plays. Malformed lines are skipped and counted. It drives UI development and side-by-side checks against the design canvas. The fixtures in `ui/public/fixtures/` are written by `ui/src/replay/` and a test fails while one is stale: `demo.events.jsonl` is the canvas's frames 1→7, and `primitives.events.jsonl` covers the remaining ops and surfaces.
+- **Tokens and fonts.** TypeScript reads its numeric tokens from `tokens.css` at boot and fails on a missing one. Geist, Geist Mono and Excalifont are bundled (latin subsets, OFL), since the CSP allows no remote fonts.
 - **Budgets.** At most 4 ms of script per frame. One SVG path per stroke and one per hachure fill.
 
 ## 5. Limits

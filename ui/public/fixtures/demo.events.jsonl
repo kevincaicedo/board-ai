@@ -1,0 +1,209 @@
+{"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":0,"y":0,"w":1440,"h":900},"focus":null}}
+{"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":2050,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":2300,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":70}}
+{"v":1,"t":2300,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk","is_final":false}}
+{"v":1,"t":2532,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me","is_final":false}}
+{"v":1,"t":2698,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through","is_final":false}}
+{"v":1,"t":3029,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the","is_final":false}}
+{"v":1,"t":3228,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request","is_final":false}}
+{"v":1,"t":3559,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path","is_final":false}}
+{"v":1,"t":3791,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for","is_final":false}}
+{"v":1,"t":3990,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for our","is_final":false}}
+{"v":1,"t":4189,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for our user","is_final":false}}
+{"v":1,"t":4421,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for our user API.","is_final":false}}
+{"v":1,"t":4780,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":70}}
+{"v":1,"t":4880,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":4880,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for our user API.","is_final":true}}
+{"v":1,"t":5580,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":5580,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure,","is_final":false}}
+{"v":1,"t":5962,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure, let","is_final":false}}
+{"v":1,"t":6161,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure, let me","is_final":false}}
+{"v":1,"t":6327,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure, let me sketch","is_final":false}}
+{"v":1,"t":6625,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure, let me sketch it.","is_final":false}}
+{"v":1,"t":6651,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":6751,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":null,"detours":[]}}
+{"v":1,"t":7051,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":7051,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Sure, let me sketch it.","is_final":true}}
+{"v":1,"t":7271,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"client","op":1,"shape":"Actor","label":"Client","rect":{"x":119,"y":384,"w":42,"h":86},"stack":1},"budget_ms":1721}}
+{"v":1,"t":7721,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":7721,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A","is_final":false}}
+{"v":1,"t":7771,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":0,"detours":[]}}
+{"v":1,"t":7854,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request","is_final":false}}
+{"v":1,"t":8185,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts","is_final":false}}
+{"v":1,"t":8483,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at","is_final":false}}
+{"v":1,"t":8649,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the","is_final":false}}
+{"v":1,"t":8848,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client","is_final":false}}
+{"v":1,"t":8992,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"client>cdn","op":2,"from":"client","to":"cdn","path":{"start":{"x":170,"y":430},"control":null,"end":{"x":246,"y":430}},"label":null,"style":"Solid"},"budget_ms":362}}
+{"v":1,"t":9046,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":1,"detours":[]}}
+{"v":1,"t":9146,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client and","is_final":false}}
+{"v":1,"t":9345,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client and hits","is_final":false}}
+{"v":1,"t":9354,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"cdn","op":3,"shape":"Service","label":"CDN","rect":{"x":260,"y":392,"w":132,"h":76},"stack":1},"budget_ms":1151}}
+{"v":1,"t":9577,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client and hits the","is_final":false}}
+{"v":1,"t":9776,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client and hits the CDN.","is_final":false}}
+{"v":1,"t":10235,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":10235,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A request starts at the client and hits the CDN.","is_final":true}}
+{"v":1,"t":10385,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":10385,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses","is_final":false}}
+{"v":1,"t":10505,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"cdn>lb","op":4,"from":"cdn","to":"lb","path":{"start":{"x":404,"y":430},"control":null,"end":{"x":470,"y":430}},"label":null,"style":"Solid"},"budget_ms":745}}
+{"v":1,"t":10550,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":2,"detours":[]}}
+{"v":1,"t":10683,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go","is_final":false}}
+{"v":1,"t":10849,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on","is_final":false}}
+{"v":1,"t":11015,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on to","is_final":false}}
+{"v":1,"t":11181,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on to the","is_final":false}}
+{"v":1,"t":11250,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"lb","op":5,"shape":"Service","label":"Load balancer","rect":{"x":482,"y":392,"w":178,"h":76},"stack":1},"budget_ms":1727}}
+{"v":1,"t":11380,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on to the load","is_final":false}}
+{"v":1,"t":11612,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on to the load balancer,","is_final":false}}
+{"v":1,"t":12126,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":12126,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Misses go on to the load balancer,","is_final":true}}
+{"v":1,"t":12176,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":12176,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which","is_final":false}}
+{"v":1,"t":12441,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads","is_final":false}}
+{"v":1,"t":12772,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them","is_final":false}}
+{"v":1,"t":12977,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"lb>api","op":6,"from":"lb","to":"api","path":{"start":{"x":672,"y":430},"control":null,"end":{"x":736,"y":430}},"label":null,"style":"Solid"},"budget_ms":840}}
+{"v":1,"t":13004,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them across","is_final":false}}
+{"v":1,"t":13019,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":3,"detours":[]}}
+{"v":1,"t":13302,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them across three","is_final":false}}
+{"v":1,"t":13567,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them across three API","is_final":false}}
+{"v":1,"t":13766,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them across three API pods.","is_final":false}}
+{"v":1,"t":13817,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"api","op":7,"shape":"Group","label":"API pods ×3","rect":{"x":750,"y":304,"w":164,"h":252},"stack":1},"budget_ms":1493}}
+{"v":1,"t":14258,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":14258,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which spreads them across three API pods.","is_final":true}}
+{"v":1,"t":15310,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"api-1","op":8,"shape":"Service","label":"","rect":{"x":770,"y":322,"w":124,"h":54},"stack":1},"budget_ms":898}}
+{"v":1,"t":15797,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":15797,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To","is_final":false}}
+{"v":1,"t":15963,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find","is_final":false}}
+{"v":1,"t":16195,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a","is_final":false}}
+{"v":1,"t":16208,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"api-2","op":9,"shape":"Service","label":"","rect":{"x":770,"y":403,"w":124,"h":54},"stack":1},"budget_ms":893}}
+{"v":1,"t":16328,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user,","is_final":false}}
+{"v":1,"t":16710,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before","is_final":false}}
+{"v":1,"t":17008,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching","is_final":false}}
+{"v":1,"t":17101,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"api-3","op":10,"shape":"Service","label":"","rect":{"x":770,"y":484,"w":124,"h":54},"stack":1},"budget_ms":896}}
+{"v":1,"t":17372,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres,","is_final":false}}
+{"v":1,"t":17886,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres, the","is_final":false}}
+{"v":1,"t":17997,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"api>redis","op":11,"from":"api","to":"redis","path":{"start":{"x":926,"y":404},"control":{"x":970,"y":352},"end":{"x":1010,"y":350}},"label":null,"style":"Solid"},"budget_ms":1552}}
+{"v":1,"t":18085,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres, the service","is_final":false}}
+{"v":1,"t":18416,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres, the service checks","is_final":false}}
+{"v":1,"t":18714,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres, the service checks Redis.","is_final":false}}
+{"v":1,"t":19079,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":19079,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"To find a user, before touching Postgres, the service checks Redis.","is_final":true}}
+{"v":1,"t":19159,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":19159,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If","is_final":false}}
+{"v":1,"t":19325,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it","is_final":false}}
+{"v":1,"t":19491,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it hits,","is_final":false}}
+{"v":1,"t":19549,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"redis","op":12,"shape":"Service","label":"Redis","rect":{"x":1022,"y":316,"w":144,"h":68},"stack":1},"budget_ms":2500}}
+{"v":1,"t":19873,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it hits, we","is_final":false}}
+{"v":1,"t":20039,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it hits, we sk—","is_final":false}}
+{"v":1,"t":20169,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":20169,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it hits, we sk—","is_final":true}}
+{"v":1,"t":20169,"k":"ui","event":{"type":"Freeze","layer":0}}
+{"v":1,"t":20229,"k":"ui","event":{"type":"LayerPush","layer":1,"title":"cache-aside"}}
+{"v":1,"t":20269,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":70}}
+{"v":1,"t":20269,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait","is_final":false}}
+{"v":1,"t":20501,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait —","is_final":false}}
+{"v":1,"t":20669,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":3,"detours":["cache-aside"]}}
+{"v":1,"t":20801,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait — why","is_final":false}}
+{"v":1,"t":21000,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait — why Redis","is_final":false}}
+{"v":1,"t":21019,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Node","id":"api","op":15,"shape":"Service","label":"API","rect":{"x":44,"y":140,"w":120,"h":60},"stack":1},"budget_ms":727}}
+{"v":1,"t":21265,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait — why Redis first?","is_final":false}}
+{"v":1,"t":21746,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Edge","id":"api>redis","op":16,"from":"api","to":"redis","path":{"start":{"x":176,"y":158},"control":{"x":288,"y":96},"end":{"x":404,"y":96}},"label":"hit","style":"Solid"},"budget_ms":431}}
+{"v":1,"t":21790,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":21790,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait — why Redis first?","is_final":true}}
+{"v":1,"t":21990,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":21990,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside.","is_final":false}}
+{"v":1,"t":22177,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Node","id":"redis","op":17,"shape":"Service","label":"Redis","rect":{"x":420,"y":66,"w":136,"h":60},"stack":1},"budget_ms":727}}
+{"v":1,"t":22680,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis","is_final":false}}
+{"v":1,"t":22904,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Edge","id":"api>postgres","op":18,"from":"api","to":"postgres","path":{"start":{"x":176,"y":184},"control":{"x":288,"y":238},"end":{"x":404,"y":236}},"label":"miss","style":"Solid"},"budget_ms":431}}
+{"v":1,"t":22945,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers","is_final":false}}
+{"v":1,"t":23276,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from","is_final":false}}
+{"v":1,"t":23335,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Node","id":"postgres","op":19,"shape":"Db","label":"Postgres","rect":{"x":420,"y":194,"w":136,"h":80},"stack":1},"budget_ms":1175}}
+{"v":1,"t":23508,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory,","is_final":false}}
+{"v":1,"t":23956,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory, so","is_final":false}}
+{"v":1,"t":24122,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory, so it","is_final":false}}
+{"v":1,"t":24288,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory, so it goes","is_final":false}}
+{"v":1,"t":24510,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Edge","id":"postgres>redis","op":20,"from":"postgres","to":"redis","path":{"start":{"x":528,"y":190},"control":null,"end":{"x":528,"y":138}},"label":"write back","style":"Solid"},"budget_ms":464}}
+{"v":1,"t":24520,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory, so it goes first.","is_final":false}}
+{"v":1,"t":25045,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":25045,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Cache-aside. Redis answers from memory, so it goes first.","is_final":true}}
+{"v":1,"t":25195,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":25195,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On","is_final":false}}
+{"v":1,"t":25361,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a","is_final":false}}
+{"v":1,"t":25494,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss,","is_final":false}}
+{"v":1,"t":25876,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read","is_final":false}}
+{"v":1,"t":26108,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres,","is_final":false}}
+{"v":1,"t":26622,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres, then","is_final":false}}
+{"v":1,"t":26854,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres, then write","is_final":false}}
+{"v":1,"t":27119,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres, then write it","is_final":false}}
+{"v":1,"t":27285,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres, then write it back.","is_final":false}}
+{"v":1,"t":27777,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":27777,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a miss, read Postgres, then write it back.","is_final":true}}
+{"v":1,"t":27827,"k":"ui","event":{"type":"SurfaceShow","surface":{"kind":"Code","id":1,"path":"internal/user/service.go","first_line":42,"lines":["func (s *UserService) GetUser(ctx context.Context, id string) (*User, error) {","    if u, err := s.cache.Get(ctx, userKey(id)); err == nil {","        return u, nil // cache hit","    }","    u, err := s.db.FindUser(ctx, id)","    if err != nil {","        return nil, err","    }","    s.cache.Set(ctx, userKey(id), u, 10*time.Minute)","    return u, nil","}"],"highlight":null}}}
+{"v":1,"t":28277,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":28277,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In","is_final":false}}
+{"v":1,"t":28443,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the","is_final":false}}
+{"v":1,"t":28642,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code,","is_final":false}}
+{"v":1,"t":28974,"k":"ui","event":{"type":"SurfaceUpdate","id":1,"update":{"kind":"Highlight","line":43}}}
+{"v":1,"t":29024,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line","is_final":false}}
+{"v":1,"t":29256,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line 43","is_final":false}}
+{"v":1,"t":29422,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line 43 asks","is_final":false}}
+{"v":1,"t":29654,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line 43 asks Redis","is_final":false}}
+{"v":1,"t":29919,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line 43 asks Redis first.","is_final":false}}
+{"v":1,"t":30444,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":30444,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"In the code, line 43 asks Redis first.","is_final":true}}
+{"v":1,"t":30544,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":30544,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On","is_final":false}}
+{"v":1,"t":30710,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a","is_final":false}}
+{"v":1,"t":30843,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit,","is_final":false}}
+{"v":1,"t":31112,"k":"ui","event":{"type":"SurfaceUpdate","id":1,"update":{"kind":"Highlight","line":44}}}
+{"v":1,"t":31192,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line","is_final":false}}
+{"v":1,"t":31212,"k":"ui","event":{"type":"OpStart","layer":1,"op":{"kind":"Trace","id":"hit-trace","op":21,"points":[{"x":176,"y":158},{"x":195,"y":148},{"x":213,"y":139},{"x":232,"y":131},{"x":251,"y":124},{"x":270,"y":117},{"x":289,"y":112},{"x":308,"y":107},{"x":327,"y":103},{"x":346,"y":100},{"x":365,"y":98},{"x":385,"y":96},{"x":404,"y":96}]},"budget_ms":1300}}
+{"v":1,"t":31424,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line 44","is_final":false}}
+{"v":1,"t":31590,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line 44 returns","is_final":false}}
+{"v":1,"t":31921,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line 44 returns right","is_final":false}}
+{"v":1,"t":32186,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line 44 returns right away.","is_final":false}}
+{"v":1,"t":32678,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":32678,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On a hit, line 44 returns right away.","is_final":true}}
+{"v":1,"t":33278,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":70}}
+{"v":1,"t":33278,"k":"ui","event":{"type":"Caption","who":"User","text":"Note","is_final":false}}
+{"v":1,"t":33510,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that,","is_final":false}}
+{"v":1,"t":33842,"k":"ui","event":{"type":"Chip","kind":"Note","text":"Cache-aside: Redis first, Postgres on miss"}}
+{"v":1,"t":33892,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and","is_final":false}}
+{"v":1,"t":34091,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add","is_final":false}}
+{"v":1,"t":34290,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a","is_final":false}}
+{"v":1,"t":34423,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task","is_final":false}}
+{"v":1,"t":34655,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task to","is_final":false}}
+{"v":1,"t":34821,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task to check","is_final":false}}
+{"v":1,"t":35086,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task to check our","is_final":false}}
+{"v":1,"t":35285,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task to check our TTLs.","is_final":false}}
+{"v":1,"t":35477,"k":"ui","event":{"type":"Chip","kind":"Task","text":"Check our Redis TTLs"}}
+{"v":1,"t":35777,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":35777,"k":"ui","event":{"type":"Caption","who":"User","text":"Note that, and add a task to check our TTLs.","is_final":true}}
+{"v":1,"t":35927,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":35927,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Noted.","is_final":false}}
+{"v":1,"t":36452,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Noted. Task","is_final":false}}
+{"v":1,"t":36684,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Noted. Task added.","is_final":false}}
+{"v":1,"t":37209,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":37209,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Noted. Task added.","is_final":true}}
+{"v":1,"t":37409,"k":"ui","event":{"type":"LayerPop","layer":1}}
+{"v":1,"t":37409,"k":"ui","event":{"type":"SurfaceDismiss","id":1}}
+{"v":1,"t":37409,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":3,"detours":[]}}
+{"v":1,"t":37709,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":37709,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So,","is_final":false}}
+{"v":1,"t":38009,"k":"ui","event":{"type":"Resume","layer":0,"budget_ms":1377}}
+{"v":1,"t":38025,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back","is_final":false}}
+{"v":1,"t":38257,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to","is_final":false}}
+{"v":1,"t":38423,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the","is_final":false}}
+{"v":1,"t":38622,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request.","is_final":false}}
+{"v":1,"t":39213,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On","is_final":false}}
+{"v":1,"t":39379,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a","is_final":false}}
+{"v":1,"t":39386,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"api>postgres","op":13,"from":"api","to":"postgres","path":{"start":{"x":926,"y":458},"control":{"x":970,"y":514},"end":{"x":1010,"y":516}},"label":null,"style":"Solid"},"budget_ms":864}}
+{"v":1,"t":39512,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss,","is_final":false}}
+{"v":1,"t":39512,"k":"ui","event":{"type":"Thread","steps":["Client","Edge","LB","Service","Postgres","Response"],"current":4,"detours":[]}}
+{"v":1,"t":39894,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss, it","is_final":false}}
+{"v":1,"t":40060,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss, it goes","is_final":false}}
+{"v":1,"t":40250,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"postgres","op":14,"shape":"Db","label":"Postgres","rect":{"x":1022,"y":469,"w":144,"h":104},"stack":1},"budget_ms":2500}}
+{"v":1,"t":40292,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss, it goes to","is_final":false}}
+{"v":1,"t":40458,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss, it goes to Postgres.","is_final":false}}
+{"v":1,"t":41082,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
+{"v":1,"t":41082,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"So, back to the request. On a miss, it goes to Postgres.","is_final":true}}
+{"v":1,"t":42812,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}

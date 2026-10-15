@@ -1,0 +1,270 @@
+/* The canvas, the nib and the orb, transcribed from the design canvas (live demo, orb
+   component). Only tokens here; time-driven values are written by the frame loop. */
+
+/* Canvas */
+
+.board {
+  position: absolute;
+  inset: 0;
+  transform-origin: 38.9% 47.8%;
+}
+
+.board-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.stroke,
+.stroke-reveal {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.stroke-reveal {
+  stroke: white;
+}
+
+.tone-ink {
+  stroke: var(--ink);
+  fill: var(--ink);
+}
+.tone-ink2 {
+  stroke: var(--ink-2);
+  fill: var(--ink-2);
+}
+.tone-ink3 {
+  stroke: var(--ink-3);
+  fill: var(--ink-3);
+}
+.tone-grey {
+  stroke: var(--grey-300);
+  fill: var(--grey-300);
+}
+.tone-annotate {
+  stroke: var(--annotate);
+  fill: var(--annotate);
+}
+.tone-signal {
+  stroke: var(--signal);
+  fill: var(--signal);
+}
+.tone-lilac {
+  stroke: var(--sketch-lilac);
+  fill: var(--sketch-lilac);
+}
+.tone-sky {
+  stroke: var(--sketch-sky);
+  fill: var(--sketch-sky);
+}
+.tone-mint {
+  stroke: var(--sketch-mint);
+  fill: var(--sketch-mint);
+}
+.tone-blush {
+  stroke: var(--sketch-blush);
+  fill: var(--sketch-blush);
+}
+
+path.stroke {
+  fill: none;
+}
+
+.hand {
+  font-family: var(--font-hand);
+  stroke: none;
+  white-space: pre;
+  dominant-baseline: central;
+}
+
+.hand .unwritten {
+  fill-opacity: 0;
+}
+
+.hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  cursor: default;
+}
+
+.hover-highlight {
+  fill: var(--grey-100);
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(0.96);
+  transition:
+    opacity var(--duration-micro) var(--ease-out),
+    transform var(--duration-micro) var(--ease-out);
+  pointer-events: none;
+}
+
+.hover-highlight.on {
+  opacity: 0.9;
+  transform: scale(1);
+}
+
+.trace-halo {
+  fill: var(--signal);
+  fill-opacity: 0.16;
+}
+
+.trace-core {
+  fill: var(--signal);
+}
+
+.nib {
+  position: absolute;
+  left: calc(var(--nib-size) / -2);
+  top: calc(var(--nib-size) / -2);
+  width: var(--nib-size);
+  height: var(--nib-size);
+  pointer-events: none;
+  display: none;
+}
+
+.nib-glow {
+  position: absolute;
+  left: calc((var(--nib-size) - var(--nib-glow)) / 2);
+  top: calc((var(--nib-size) - var(--nib-glow)) / 2);
+  width: var(--nib-glow);
+  height: var(--nib-glow);
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    rgba(var(--orb-2-rgb), 0.42),
+    rgba(var(--orb-3-rgb), 0.16) 55%,
+    rgba(var(--orb-white-rgb), 0)
+  );
+}
+
+.nib-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--orb-body-1) 0%,
+    var(--orb-1) 26%,
+    var(--orb-2) 58%,
+    var(--orb-3) 100%
+  );
+  box-shadow:
+    0 0 6px rgba(var(--orb-2-rgb), 0.85),
+    0 0 16px rgba(var(--orb-3-rgb), 0.35);
+}
+
+/* The orb */
+
+.orb-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.orb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 50% 50%;
+  display: none;
+}
+
+.orb-field {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.orb-ring {
+  fill: none;
+  stroke: var(--orb-field-outer);
+  stroke-linecap: round;
+}
+
+.orb-ring-inner {
+  stroke: var(--orb-field-inner);
+}
+
+.orb-glow {
+  position: absolute;
+  left: -32%;
+  top: -32%;
+  width: 164%;
+  height: 164%;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    rgba(var(--orb-2-rgb), 0.22),
+    rgba(var(--orb-3-rgb), 0.09) 55%,
+    rgba(var(--orb-white-rgb), 0) 100%
+  );
+}
+
+.orb-body {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(
+    closest-side,
+    black 74%,
+    rgba(0, 0, 0, 0.55) 89%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(closest-side, black 74%, rgba(0, 0, 0, 0.55) 89%, transparent 100%);
+}
+
+.orb-base {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 46% 36%,
+    var(--orb-body-1) 0%,
+    var(--orb-body-2) 30%,
+    var(--orb-body-3) 58%,
+    var(--orb-body-4) 84%,
+    var(--orb-body-5) 100%
+  );
+}
+
+.orb-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.orb-blob {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.orb-blob-1 {
+  background: radial-gradient(closest-side, rgba(var(--orb-1-rgb), 1), rgba(var(--orb-1-rgb), 0));
+  opacity: 0.9;
+}
+.orb-blob-2 {
+  background: radial-gradient(closest-side, rgba(var(--orb-4-rgb), 1), rgba(var(--orb-4-rgb), 0));
+  opacity: 0.95;
+}
+.orb-blob-3 {
+  background: radial-gradient(closest-side, rgba(var(--orb-3-rgb), 1), rgba(var(--orb-3-rgb), 0));
+  opacity: 0.32;
+}
+.orb-blob-4 {
+  background: radial-gradient(closest-side, rgba(var(--orb-2-rgb), 1), rgba(var(--orb-2-rgb), 0));
+  opacity: 0.88;
+}
+.orb-blob-5 {
+  background: radial-gradient(
+    closest-side,
+    rgba(var(--orb-white-rgb), 1),
+    rgba(var(--orb-white-rgb), 0)
+  );
+  opacity: 0.95;
+}

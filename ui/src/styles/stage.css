@@ -1,0 +1,579 @@
+/* The stage and its surfaces, transcribed from the design canvas (live demo, 10b surfaces).
+   Only tokens here; time-driven values are written by the frame loop. */
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  user-select: none;
+}
+
+/* Thread */
+
+.thread {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: 0;
+  height: 120px;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.thread-track,
+.thread-progress {
+  position: absolute;
+  top: calc(var(--thread-top) - 1px);
+  height: 1.5px;
+  border-radius: 2px;
+}
+
+.thread-track {
+  background: var(--grey-100);
+}
+
+.thread-progress {
+  background: var(--grey-300);
+  width: 0;
+}
+
+.thread-branches {
+  position: absolute;
+  left: 0;
+  top: var(--thread-top);
+  overflow: visible;
+}
+
+.thread-branches path {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.thread-dot {
+  position: absolute;
+  top: var(--thread-top);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.thread-dot-passed {
+  width: 6px;
+  height: 6px;
+  background: var(--ink-3);
+}
+
+.thread-dot-current {
+  width: 10px;
+  height: 10px;
+  background: var(--signal);
+}
+
+.thread-dot-paused {
+  width: 10px;
+  height: 10px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 2px var(--signal);
+}
+
+.thread-dot-ahead {
+  width: 7px;
+  height: 7px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1.5px var(--grey-200);
+}
+
+.thread-halo {
+  position: absolute;
+  top: var(--thread-top);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.thread-label {
+  position: absolute;
+  top: calc(var(--thread-top) + 14px);
+  font-size: var(--type-small);
+  letter-spacing: 0.01em;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.thread-detour {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-small);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.thread-detour-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 4px rgba(var(--signal-rgb), 0.14);
+}
+
+/* Surfaces */
+
+.column {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  width: min(var(--surface-width), calc(50% - var(--surface-right)));
+  height: 100%;
+  pointer-events: none;
+}
+
+.surface {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--radius-card);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow:
+    var(--shadow-surface),
+    inset 0 0 0 1px var(--glass-edge);
+  pointer-events: auto;
+  display: none;
+  overflow: hidden;
+}
+
+.card-head {
+  position: absolute;
+  left: 24px;
+  top: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-card-title);
+  white-space: nowrap;
+}
+
+.surface-detour .card-head {
+  left: 28px;
+  top: 24px;
+  gap: 10px;
+}
+
+.card-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.card-path {
+  color: var(--ink);
+}
+
+.card-sub {
+  color: var(--ink-3);
+}
+
+.detour-glyph {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.detour-glyph circle {
+  fill: var(--signal);
+  stroke: none;
+}
+
+.detour-body {
+  position: absolute;
+  inset: 0;
+}
+
+.board-svg-detour {
+  width: 100%;
+  height: 100%;
+}
+
+.code-band {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: calc(var(--code-head) - 2px);
+  height: 27px;
+  border-radius: var(--radius-band);
+  background: var(--highlight-band);
+  opacity: 0;
+}
+
+.code-lines {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--code-head);
+  font-family: var(--font-code);
+  font-size: var(--type-code);
+  line-height: var(--code-line);
+  white-space: pre;
+  color: var(--ink);
+}
+
+.code-line {
+  display: flex;
+  height: var(--code-line);
+}
+
+.code-gutter {
+  width: var(--code-gutter);
+  flex: none;
+  box-sizing: border-box;
+  padding-right: 18px;
+  text-align: right;
+  color: var(--ink-3);
+}
+
+.code-keyword {
+  font-weight: 500;
+}
+
+.code-comment {
+  color: var(--ink-3);
+}
+
+.code-number {
+  color: var(--ink-2);
+}
+
+.compare-grid {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  top: var(--compare-head);
+  display: grid;
+  align-items: center;
+}
+
+.compare-option {
+  height: var(--compare-row);
+  padding: 0 8px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-hand);
+  font-size: var(--type-compare-head);
+  color: var(--ink);
+}
+
+.compare-criterion {
+  height: var(--compare-row);
+  display: flex;
+  align-items: center;
+  font-size: var(--type-compare-label);
+  color: var(--ink-2);
+  box-shadow: 0 -1px 0 var(--grey-100);
+}
+
+.compare-cell {
+  height: var(--compare-row);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 -1px 0 var(--grey-100);
+}
+
+.compare-cell svg {
+  overflow: visible;
+}
+
+.compare-text {
+  font-family: var(--font-hand);
+  font-size: var(--type-compare-text);
+  color: var(--ink);
+}
+
+.recap-list {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  top: calc(var(--recap-head) - 8px);
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: var(--type-body);
+  line-height: var(--recap-row);
+  color: var(--ink-2);
+}
+
+.recap-list li::marker {
+  color: var(--ink-3);
+}
+
+/* Captured chips and the brain edge */
+
+.chip {
+  position: absolute;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  box-sizing: border-box;
+  padding: 0 18px 0 14px;
+  border-radius: var(--radius-chip);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  box-shadow:
+    var(--shadow-chip),
+    inset 0 0 0 1px var(--glass-edge);
+  font-size: var(--type-chip);
+  white-space: nowrap;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+  display: none;
+}
+
+.chip-glyph {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.chip-glyph-fill {
+  fill: var(--ink-2);
+  stroke: none;
+}
+
+.chip-task-glyph {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  border: 1.5px solid var(--grey-300);
+}
+
+.chip-kind {
+  color: var(--ink-3);
+}
+
+.chip-source {
+  font-family: var(--font-code);
+  font-size: var(--type-small);
+  color: var(--ink-2);
+}
+
+.brain-edge,
+.brain-edge-glow {
+  position: absolute;
+  right: 0;
+  width: 2px;
+  pointer-events: none;
+}
+
+.brain-edge {
+  top: 16.7%;
+  height: 66.7%;
+  background: var(--brain-edge);
+  -webkit-mask-image: linear-gradient(transparent, black 30%, black 70%, transparent);
+  mask-image: linear-gradient(transparent, black 30%, black 70%, transparent);
+  opacity: 0.45;
+}
+
+.brain-edge-glow {
+  top: 32.2%;
+  height: 35.6%;
+  background: var(--brain-glow);
+  box-shadow: 0 0 18px 5px rgba(var(--signal-rgb), 0.32);
+  -webkit-mask-image: linear-gradient(transparent, black 35%, black 65%, transparent);
+  mask-image: linear-gradient(transparent, black 35%, black 65%, transparent);
+  opacity: 0;
+}
+
+/* Captions */
+
+.captions {
+  position: absolute;
+  left: 50%;
+  top: calc(100% - var(--caption-bottom));
+  width: min(var(--caption-width), calc(100% - 64px));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.caption-current {
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-line);
+  color: var(--ink-2);
+}
+
+.caption-current.caption-user,
+.caption-previous {
+  color: var(--ink-3);
+}
+
+.caption-previous {
+  font-size: var(--type-caption-previous);
+  line-height: var(--type-caption-previous-line);
+}
+
+/* Controls */
+
+.mic {
+  position: absolute;
+  right: 32px;
+  bottom: 32px;
+  width: var(--size-button);
+  height: var(--size-button);
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--shadow-button);
+}
+
+.mic svg,
+.replay-again {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mic:focus-visible,
+.replay-button:focus-visible,
+.replay-track:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+
+.replay {
+  position: absolute;
+  left: var(--controls-left);
+  bottom: var(--controls-bottom);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  opacity: 0.78;
+  transition: opacity var(--duration-micro) var(--ease-out);
+}
+
+.replay:hover {
+  opacity: 1;
+}
+
+.replay-button {
+  width: var(--size-control);
+  height: var(--size-control);
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--bg);
+  box-shadow: var(--shadow-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.replay-button svg {
+  fill: var(--signal);
+}
+
+.replay-button .replay-again {
+  fill: none;
+}
+
+.replay-track {
+  position: relative;
+  width: var(--scrubber-width);
+  height: 3px;
+  flex: none;
+  border-radius: 2px;
+  background: var(--grey-100);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.replay-progress {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--signal);
+}
+
+.replay-chapter {
+  position: absolute;
+  top: -11px;
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.replay-chapter span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--grey-300);
+}
+
+.replay-chapter.current span {
+  background: var(--signal);
+}
+
+.replay-time {
+  font-size: var(--type-small);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.replay-chapter-name {
+  font-size: var(--type-small);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.perf {
+  position: absolute;
+  right: 12px;
+  top: 8px;
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--ink-3);
+}
