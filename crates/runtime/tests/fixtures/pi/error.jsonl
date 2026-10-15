@@ -1,0 +1,6 @@
+{"id":"boardai-prompt","type":"response","command":"prompt","success":true,"data":{"disposition":"started"}}
+{"type":"agent_start"}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":""}],"stopReason":"error","errorMessage":"401 invalid x-api-key","api":"anthropic-messages","provider":"anthropic","model":"claude-opus-5-5","timestamp":1792100000300}}
+{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error"},"toolResults":[]}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled","aborted":false}

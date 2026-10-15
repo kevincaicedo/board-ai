@@ -1,0 +1,4 @@
+data: {"id":"gen-2","object":"chat.completion.chunk","model":"anthropic/claude-opus-5.5","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"error":{"message":"Provider returned error","code":502}}
+

@@ -247,7 +247,11 @@ pub trait LlmProvider: Send + Sync {
     fn stream(&self, conversation: &Conversation, cancel: CancelToken)
         -> BoxStream<'static, Result<ChatEvent, ProviderError>>;
 }
-pub enum ChatEvent { TextDelta(String), ToolCall(ToolCall), Done { stop: StopReason, usage: Usage } }
+pub enum ChatEvent {
+    TextDelta(String),
+    ToolCall(ToolInvocation), // parsed with ToolCall::parse; a call that fails is delivered with `call: Err`
+    Done { stop: StopReason, usage: Usage, raw: Option<RawAssistant> },
+}
 
 pub trait SpeechToText: Send {
     fn push(&mut self, pcm: &[f32]);
@@ -268,6 +272,8 @@ pub trait CodingHarness: Send + Sync {
 
 Dynamic dispatch at these seams is fine: it happens per request or per clause, never per audio sample. Errors are hand-written enums that keep their category (`Auth`, `RateLimited { retry_after }`, `Network`, `Refused`, `BadOutput`, …).
 
+The system prompt and tool set are session config (`TalkerConfig { role, model, effort, max_tokens, system_prompt, tools }`), so they never vary per request. Dropping a stream cancels it; `CancelToken` ends it without a drop and asks a harness to stop gracefully. `HarnessPool` wraps any `CodingHarness` with the limits (§3.5).
+
 ### 3.3 LLM adapters
 
 **Anthropic** (raw HTTPS and SSE; Rust has no official SDK):
@@ -280,11 +286,14 @@ Dynamic dispatch at these seams is fine: it happens per request or per clause, n
   - `tool_choice` auto (forced tool choice is rejected by current models)
   - No assistant prefill
 - **Stop reasons:** `refusal` becomes a short spoken line, and the talker opts into server-side fallbacks where the model supports them. `max_tokens` finishes the current sentence.
-- **Context injection:** the session recap, board and thread updates, and research results are appended as `role: "system"` messages, which keeps the cached prefix intact. Models without that feature get the same text as a block in the next user message.
+- **Context injection:** the session recap, board and thread updates, and research results are appended as `role: "system"` messages, which keeps the cached prefix intact (supported without a beta on Opus 5.5, Opus 5, Opus 4.8, Fable, Mythos, Sonnet 5.5 and Haiku 5.5). The API accepts one only right after a user turn, and only last or followed by an assistant turn; a run of consecutive context messages becomes one system message. Anywhere else, and on other models, the text is folded into the next user turn as a `<system-reminder>` block (after any tool results, which must lead their turn). The render is a pure function of the conversation, so every assistant turn is echoed after exactly the request that produced it (tested as a property). One edit remains possible: context appended last and then followed directly by a user turn moves into that user turn, which costs one cache miss after the last thinking block and invalidates nothing.
 - **History is append-only** (I3); interruptions follow §2.7. Assistant turns are stored exactly as returned, thinking blocks included, and echoed back unchanged.
-- **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5`. Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in DECISIONS.
+- **Request shape:** `thinking: {type: "adaptive"}` and `output_config.effort` on models that take them (thinking can't be disabled on Opus 5.5; effort `none` becomes `low` there). A cache breakpoint on the system prompt (tools render before it, so both cache) plus top-level automatic caching for the conversation tail. On models with server-side refusal fallbacks (Opus 5.5, Opus 5, Fable 5.1, Sonnet 5.5) the request carries `fallbacks: "default"` with the `server-side-fallback-2026-07-01` beta; after a mid-stream switch, the echoed content keeps only text before the last `fallback` block, as the API requires.
+- **Tool calls** are held until `message_stop`, when the stop reason is known. In a turn that stopped on `max_tokens` or `refusal`, every call is delivered as invalid and never runs; a call whose eager-streamed input is cut off or not valid JSON is delivered invalid too, so the core answers it with an error result.
+- **Retries and deadlines:** at most 2 jittered retries, only while nothing has been delivered (a partly delivered stream is never replayed). The first-token deadline covers the retries: 10 s for the talker, 60 s for the scribe. After the first token, 30 s of silence is a timeout. Anthropic pings while the model thinks. Jitter comes from the clock mixed by splitmix64, with no RNG.
+- **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5` at effort `medium` (set explicitly, since the model's default could change). Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in DECISIONS.
 
-**OpenAI-compatible** (`/v1/chat/completions`, streaming): OpenRouter, Ollama (`http://localhost:11434/v1`), LM Studio and similar. Text, tools and stop reasons map to the same `ChatEvent`.
+**OpenAI-compatible** (`/v1/chat/completions`, streaming): OpenRouter, Ollama (`http://localhost:11434/v1`), LM Studio and similar. Text, tools and stop reasons map to the same `ChatEvent`. Context stays a `role: "system"` message (these servers accept one anywhere). Tool results become `tool` messages, and tool-call argument fragments are joined by `index`. Effort goes out as `reasoning_effort`, and `none` turns thinking off. A local thinking model needs that to talk: at `low`, `qwen3.5:2b` spent a 400-token budget reasoning and never answered; at `none` its first token came in 278 ms. The key is optional.
 
 **Talker tools.** The set is fixed per session:
 
@@ -330,7 +339,11 @@ Dynamic dispatch at these seams is fine: it happens per request or per clause, n
   - Concurrency: 2 research or review tasks and 1 change task at a time; up to 4 more queue, and beyond that a task is refused out loud.
   - Timeouts: 10 minutes for research, 30 for a change.
   - Captured output is bounded to the last 256 KB.
-- **Discovery.** The harnesses are found on `PATH` at startup. Settings choose the default.
+- **Discovery.** The harnesses are found on `PATH` at startup, then in `~/.local/bin`, `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin`: an app opened from Finder gets a minimal `PATH`. Settings choose the default.
+- **Claude Code details** (flags checked against `claude --help`, 2.1.301). We are the "host" of a stream-json session and answer no permission prompts, so every run also passes `--permission-prompts none`: anything that would prompt fails instead of hanging. `--append-system-prompt` carries BoardAI's fixed brief for the task kind (read-only, or edit this branch only, and cite `path:line`). The task's own brief goes in as one stream-json user message, and stdin closes after the `result`. Multi-value flags get one comma-separated argument (`--allowedTools Read,Grep,Glob`).
+- **pi details** (`docs/rpc.md`, pi 1.3.0). One `prompt` command; the run ends at `agent_settled`. stdin closes only after that, because closing it mid-run aborts pi. An older pi without `agent_settled` finishes on `agent_end` with no retry pending. `--no-extensions` keeps extension dialogs away, and any dialog that still arrives is declined.
+- **Change preflight.** The branch must be `boardai/<slug>`. A dirty tree is refused, and untracked files count, so the harness's new files are its own. Then `git switch --create` runs.
+- **Lifecycle.** Each process runs in its own process group. Cancel is SIGINT to the group, then SIGKILL after 3 s, sent through `/bin/kill`: the runtime has no `unsafe`, and an unreaped child's id can't be reused. A finished task gets stdin closed and the same grace before it is interrupted. The terminal event is delivered only after the process is reaped. Dropping a stream kills the group. Citations are kept only for files that exist inside the repo.
 
 ### 3.6 Store (panel F)
 
@@ -377,8 +390,23 @@ Dynamic dispatch at these seams is fine: it happens per request or per clause, n
   - vault path
   - code roots, which are where "open the boardai repo" looks
   - mic mode
-- **Secrets** are stored in the Keychain (`keyring`) under names that the settings reference. A secret is never put in settings, logs or the event log.
-- **First run.** The first run is the one screen that needs typing: choose providers, paste keys, watch the model downloads, and grant mic permission. It is not on the design canvas yet and gets designed in Phase 0.
+- **Shape.** Top-level `vault`, `code_roots` (absolute or `~/`) and `mic` (`open` or `push_to_talk`), plus a table per role:
+
+  ```toml
+  [talker]   # and [scribe]: kind = "anthropic" | "openai_compatible", model, effort (none…max), max_tokens, base_url, secret
+  kind = "anthropic"
+  model = "claude-opus-5-5"
+  effort = "low"
+  secret = "anthropic"          # a name, never the key
+  [stt]      # kind = "whisper", model
+  [tts]      # kind = "kokoro" | "elevenlabs" | "system", model; base_url and secret for elevenlabs only
+  [harness]  # kind = "auto" | "claude_code" | "pi", model
+  [voice]    # id
+  ```
+
+  Everything has a default (the D-017 models, Ollama's URL for `openai_compatible`). Unknown keys are errors. Errors name the field and never quote a value: a value that looks like a key, or a misplaced one, is rejected without being echoed.
+- **Secrets** are stored in the Keychain (`keyring`) under names that the settings reference, read through the runtime's `SecretStore` trait. A secret is never put in settings, logs or the event log; `Secret` has no `Display` and a redacted `Debug`.
+- **First run.** The first run is the one screen that needs typing: choose providers, paste keys, watch the model downloads, and grant mic permission. Its design is artboard 11 on the design canvas.
 
 ## 4. UI
 
@@ -460,7 +488,7 @@ New entries need a row in [DECISIONS.md](../DECISIONS.md).
 | Where | Crates or packages |
 |---|---|
 | core | `serde`, `ts-rs` |
-| runtime | `tokio`, `reqwest` (rustls), `serde_json`, `rtrb`, objc2 + CoreAudio/AVFAudio bindings (audio leaf), `ort`, `whisper-rs`, `rusqlite` (bundled), `ignore`, `regex`, `tracing` |
+| runtime | `tokio`, `reqwest` (rustls with ring), `rustls`, `futures-util`, `serde`/`serde_json`, `toml`, `ignore`, `regex`, `tracing` (D-020); to come: `rtrb`, objc2 + CoreAudio/AVFAudio bindings (audio leaf), `ort`, `whisper-rs`, `rusqlite` (bundled) |
 | app | `tauri`, `tauri-build`, `keyring`, `tracing-subscriber` |
 | ui | `preact`, `@preact/signals`, `@tauri-apps/api`; dev only: `vite`, `typescript`, `@types/node`, `@biomejs/biome`, `@tauri-apps/cli` |
 

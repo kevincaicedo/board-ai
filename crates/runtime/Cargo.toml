@@ -12,3 +12,20 @@ workspace = true
 
 [dependencies]
 boardai-core.workspace = true
+# Stream combinators and `BoxStream` for the provider and harness seams; already in the graph
+# through reqwest and hyper.
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+ignore = "0.4.33"
+regex = "1.13.1"
+# TLS through rustls with the ring provider (installed in `llm::http`): no OpenSSL, and ring's
+# license (ISC) is simpler than aws-lc's. HTTP/2 for the long-lived streams.
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.53.3", features = ["rt", "macros", "time", "sync", "process", "io-util", "fs"] }
+toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "test-util"] }

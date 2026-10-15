@@ -21,6 +21,12 @@ protocol:
 files:
     scripts/check-file-length.sh
 
+# Real-provider smoke tests, never part of `check` or CI: Ollama (local), Anthropic when
+# ANTHROPIC_API_KEY is set, and Claude Code / pi with BOARDAI_LIVE_CLAUDE=1 / BOARDAI_LIVE_PI=1
+# (they use your account).
+live:
+    BOARDAI_LIVE=1 cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1
+
 # Run the desktop app with hot reload.
 dev:
     cd crates/app && ../../ui/node_modules/.bin/tauri dev

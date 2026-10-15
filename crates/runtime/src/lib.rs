@@ -9,3 +9,11 @@
 //! `unsafe` is denied here and allowed only in the CoreAudio FFI module, which will carry an
 //! explicit module-level allow and `// SAFETY:` arguments.
 #![deny(unsafe_code)]
+
+pub mod cancel;
+pub mod clock;
+pub mod harness;
+pub mod limits;
+pub mod llm;
+pub mod settings;
+pub mod tools;

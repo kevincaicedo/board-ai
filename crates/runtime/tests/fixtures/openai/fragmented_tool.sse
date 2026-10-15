@@ -1,0 +1,20 @@
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Checking "},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"content":"the code."},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_7a","type":"function","function":{"name":"search_code","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":"}}]},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \"fn route\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_7b","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\"src\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1","object":"chat.completion.chunk","model":"openai/gpt-5","choices":[],"usage":{"prompt_tokens":120,"completion_tokens":31,"total_tokens":151}}
+
+data: [DONE]
+

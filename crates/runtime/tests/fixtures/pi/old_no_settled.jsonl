@@ -1,0 +1,4 @@
+{"id":"boardai-prompt","type":"response","command":"prompt","success":true}
+{"type":"agent_start"}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"It returns hello (src/lib.rs:2)."}],"stopReason":"stop"}}
+{"type":"agent_end","messages":[],"willRetry":false}

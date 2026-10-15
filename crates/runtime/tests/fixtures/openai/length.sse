@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-9","object":"chat.completion.chunk","model":"qwen3.5:2b","choices":[{"index":0,"delta":{"role":"assistant","content":"The request"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9","object":"chat.completion.chunk","model":"qwen3.5:2b","choices":[{"index":0,"delta":{"content":" path"},"finish_reason":"length"}]}
+
