@@ -18,7 +18,7 @@ use crate::board::Board;
 use crate::conversation::ConversationState;
 use crate::effect::{Effect, LogRecord, Milestone};
 use crate::history::{Conversation, Message};
-use crate::ids::LayerId;
+use crate::ids::{ClauseId, LayerId};
 use crate::input::Input;
 use crate::limits::ORB_DRAWING_LINGER_MS;
 use crate::protocol::{OrbState, PointerTarget, UiCommand, UiEvent};
@@ -26,6 +26,7 @@ use crate::surfaces::Surfaces;
 use crate::thread::Thread;
 use crate::time::SessionTime;
 use crate::voice::Voice;
+use text::SYNTHESIS_FAILED_DETAIL;
 
 use listen::{ChangeGate, UserSide};
 use ops::OpQueue;
@@ -160,6 +161,7 @@ impl Core {
                     self.state = ConversationState::Speaking;
                 }
             }
+            Input::SynthesisFailed { clause } => self.on_synthesis_failed(clause, effects),
             Input::PlaybackAt { position } => {
                 if self.voice.playback_at(now, position) && !self.marks.first_audio {
                     self.marks.first_audio = true;
@@ -220,6 +222,18 @@ impl Core {
     #[must_use]
     pub fn op_anchor(&self, op: crate::ids::OpId) -> Option<(crate::ids::ClauseId, usize)> {
         self.anchors.get(&op).copied()
+    }
+
+    /// The voice can't say this clause. Skipping it keeps the reply moving (a clause that never
+    /// played would otherwise hold the turn open forever); the user reads what wasn't said.
+    fn on_synthesis_failed(&mut self, clause: ClauseId, effects: &mut Vec<Effect>) {
+        let Some(caption) = self.voice.failed(clause) else {
+            return;
+        };
+        effects.push(Effect::Ui(UiEvent::Problem {
+            spoken: caption.trim().to_owned(),
+            detail: SYNTHESIS_FAILED_DETAIL.to_owned(),
+        }));
     }
 
     fn on_tick(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {

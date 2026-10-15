@@ -14,5 +14,15 @@ workspace = true
 tauri-build = { version = "=2.7.3", features = [] }
 
 [dependencies]
+# The protocol types the transport carries (UiBatch, UiCommand).
+boardai-core.workspace = true
 boardai-runtime.workspace = true
+# Keychain secrets (proposed D-060): the keyring project's core API and its macOS store, which
+# the `keyring` crate itself recommends to apps; its all-platform v1 mode would also pull the
+# Windows and Linux stores. security-framework is already in the graph through reqwest.
+apple-native-keyring-store = { version = "1.0.2", default-features = false, features = ["keychain"] }
+keyring-core = "1.0.1"
 tauri = { version = "=2.12.4", features = [] }
+# Already in the graph; the shell waits on the UI's connection and delays the dev script.
+tokio = { version = "1.53.3", features = ["sync", "time"] }
+tracing = "0.1.44"

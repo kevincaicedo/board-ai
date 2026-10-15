@@ -1,7 +1,8 @@
 //! A seeded fuzzer over conversation interleavings (LLD §7). Random talker replies (good, bad
 //! and malformed narration, tools, refusals, failures) meet random user behaviour (questions,
-//! backchannels, interruptions, pointing, mute, push-to-talk, yes and no) on the simulator's fake
-//! clock. Every step is checked for I1–I7 and I9; any panic fails the test.
+//! backchannels, interruptions, pointing, mute, push-to-talk, yes and no) and a voice that
+//! sometimes fails to synthesize a clause, on the simulator's fake clock. Every step is checked
+//! for I1–I7 and I9; any panic fails the test.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
@@ -10,8 +11,9 @@ use std::collections::BTreeMap;
 
 use boardai_core::conversation::ConversationState;
 use boardai_core::effect::{Effect, LogRecord};
+use boardai_core::engine::text::SYNTHESIS_FAILED_DETAIL;
 use boardai_core::harness::HarnessKind;
-use boardai_core::ids::{ElementId, LayerId};
+use boardai_core::ids::{ClauseId, ElementId, LayerId};
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
 use boardai_core::protocol::{MicAction, PointerTarget, UiCommand, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
@@ -200,7 +202,25 @@ const PATHS: &[(&str, Reached)] = &[
     ("dropped", |effect| {
         matches!(effect, Effect::Log(LogRecord::Dropped { .. }))
     }),
+    (
+        "skipped clause",
+        |effect| matches!(effect, Effect::Ui(UiEvent::Problem { detail, .. }) if detail == SYNTHESIS_FAILED_DETAIL),
+    ),
 ];
+
+/// Clauses whose synthesis fails, about one in [`FAILED_CLAUSE_ONE_IN`], from their own generator
+/// so the user and talker behaviour of each seed stays what it was.
+const FAILED_CLAUSE_ONE_IN: u64 = 25;
+const CLAUSES_PER_SEED_MAX: u32 = 400;
+
+fn fail_some_clauses(sim: &mut Sim, seed: u64) {
+    let mut rng = Rng(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1);
+    for clause in 0..CLAUSES_PER_SEED_MAX {
+        if rng.below(FAILED_CLAUSE_ONE_IN) == 0 {
+            sim.speech.fail(ClauseId(clause));
+        }
+    }
+}
 
 impl Coverage {
     fn add(&mut self, sim: &Sim) {
@@ -233,6 +253,7 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     for _ in 0..40 {
         sim.talker.push(reply(&mut rng));
     }
+    fail_some_clauses(&mut sim, seed);
     let mut last_pointer_ms = 0;
     sim.user_says(0, "walk me through the request path");
     for _ in 0..30 {
@@ -275,6 +296,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "op",
         "change",
         "dropped",
+        "skipped clause",
     ]);
 }
 
@@ -293,5 +315,6 @@ fn random_interleavings_keep_every_invariant_push_to_talk() {
         "problem",
         "op",
         "dropped",
+        "skipped clause",
     ]);
 }

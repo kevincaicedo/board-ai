@@ -38,3 +38,8 @@ protocol-write:
 fmt:
     cargo fmt --all
     npm --prefix ui run format
+
+# Text-only dev loop: type to BoardAI, watch the narration, ops and latency marks (no audio).
+# Defaults to Ollama with gemma4:latest; see `just converse --help` for providers and scripts.
+converse *ARGS:
+    cargo run --quiet --locked -p boardai-runtime --example converse -- {{ARGS}}

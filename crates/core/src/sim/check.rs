@@ -80,6 +80,7 @@ impl Checker {
             | Input::Transcript { .. }
             | Input::TalkerDelta { .. }
             | Input::ClauseReady { .. }
+            | Input::SynthesisFailed { .. }
             | Input::PlaybackAt { .. }
             | Input::PlaybackDrained
             | Input::VoiceStopped { .. }

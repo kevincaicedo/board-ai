@@ -51,7 +51,7 @@ impl Core {
 }
 ```
 
-The runtime must not deliver talker inputs from a stream after it applied that stream's `CancelTalk`; inputs carry no stream id, so the talker actor drops them.
+The runtime must not deliver talker inputs from a stream after it applied that stream's `CancelTalk`; inputs carry no stream id, so the orchestrator tags each stream with a generation and drops the inputs of a cancelled one at its inbox (D-034).
 
 **Inputs** (runtime → core):
 
@@ -64,6 +64,7 @@ The runtime must not deliver talker inputs from a stream after it applied that s
 | `TalkerToolCall { id, call }` | talker | A validated tool call |
 | `TalkerDone { stop }` | talker | `EndTurn`, `ToolUse`, `MaxTokens`, `Refusal`, `Error` |
 | `ClauseReady { clause, timings }` | speech out | Word timings; exact or estimated |
+| `SynthesisFailed { clause }` | speech out | Answers `Synthesize` instead of `ClauseReady`. The clause is skipped: its ops are never drawn, its text shows as a `Problem`, and the reply goes on |
 | `PlaybackAt { clause, offset_ms }` | speech out | Coalesced; at most one per 20 ms |
 | `PlaybackDrained` | speech out | |
 | `ToolResult { id, result }`, `HarnessEvent { task, event }` | runtime | |
@@ -243,13 +244,15 @@ Secret redaction runs at the store boundary, so nothing reaches disk unredacted.
 |---|---|---|---|
 | **Audio I/O** | CoreAudio's real-time thread | Single-producer, single-consumer rings (`rtrb`): mic in (16 kHz mono f32, 2 s), voice out (24 kHz, 4 s); atomics for samples played and the duck gain | No allocation, locks or system calls in the callback |
 | **Speech in** | tokio task + one inference thread | Mic ring → orchestrator inbox | Silero VAD on 32 ms windows. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. |
-| **Orchestrator** | tokio task | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps it, then sends the effects. Playback positions arrive on a `watch` (latest wins), never queued. |
-| **Talker** | tokio task | Effects in, inputs out | One stream; cancelled by dropping it |
-| **Speech out** | tokio task + one inference thread | Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings |
+| **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, then flushes the store. |
+| **Talker** | tokio task | Effects in, inputs out | One stream, tagged with a generation; `CancelTalk` drops it, and the orchestrator drops any of its inputs still in the inbox |
+| **Speech out** | tokio task + one inference thread | `SpeechOut` port; answers through a `SpeechOutLink`. Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings. Until it lands, `VirtualVoice` stands in: estimated timings, real-time playback, the same reports |
 | **Tools** | blocking pool | | Repo reads and search, bounded (§5) |
 | **Harness** | one subprocess per task | JSON lines on stdout | Cancel: SIGINT, then kill after 3 s |
-| **Store** | tokio task, the only writer | | Event log, vault files, SQLite index |
-| **Bridge** | tokio task | `Transport` trait (a Tauri channel now, a WebSocket later) | Batches UI events per 16 ms frame. Captions and orb levels coalesce, latest wins. |
+| **Store** | tokio task, the only writer | `StoreSink` port: inputs, UI events, logs and memories (non-blocking), `recall` and `open_session`, `flush` | Event log, vault files, SQLite index. Until it lands, `MemoryStore` keeps this session's memories in memory |
+| **Bridge** | tokio task (`runtime::bridge`) | `UiSink` trait (a Tauri channel now, a WebSocket later) | Batches UI events per 16 ms frame; the first step after a quiet frame goes at once. A batch is stamped with the latest step time it carries, so nothing shows before the core produced it. The orb, the thread, the camera of a layer and a caption not yet final coalesce, latest wins. A frame over 256 events sends a full batch early; drawing events are never dropped. |
+
+**Speech in** is anything holding a `SpeechInLink` (voice start, voice end, transcripts). Until the speech stream lands, typed text stands in: `say_typed` gives a line the inputs of a finished utterance, with its voiced length estimated per word, so barge-in rules apply as they would to speech.
 
 **Time.** All runtime time comes through a `Clock` trait, real or fake. The core's `SessionTime` is monotonic time since the session started. Sync with the voice uses the separate playback offset, which comes from the audio clock.
 
@@ -401,7 +404,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - `Library { … }`, `Brain { … }`, `Problem { spoken, detail }`
 - **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `OpenLibrary`, `OpenBrain`, `ReplaySeek { ms }`, `SaveSettings { … }`.
 - **Types** are defined in `core::protocol` and exported to `ui/src/protocol/generated/` by ts-rs. A stale export fails `just check`.
-- **Transport.** A Tauri `Channel` carries events in batches per frame. One `invoke("command", …)` carries commands. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
+- **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. The app's capabilities allow only these two commands; debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
 
 ### 3.8 Settings and secrets
 
@@ -501,7 +504,9 @@ CI runs the same command on macOS.
 
 ## 8. Observability
 
-- `tracing` spans cover each turn, with marks at voice start, final transcript, talker first token, first audio, first op, barge-in duck and barge-in stop.
+- The core's `Log` milestones become `tracing` events (target `boardai::latency`) stamped with session time and a turn number: voice start, final transcript, talker requested, talker first token, first audio, first op, barge-in duck and barge-in stop. Turns are grouped by that number rather than spans.
+- Logs go to stderr through `runtime::logging`, a small subscriber that bounds every field (512 bytes) and line (4 KB) and redacts key-shaped text on the sink (`sk-…`, `ghp_…`, AWS keys, PEM blocks, bearer tokens, `password=`).
+- `just converse` prints the marks per answer, with ops drawn and narration tags dropped, for spikes S3 and S5.
 - A dev overlay (toggle with `⌘⇧L`) shows live latencies. Each session's digest records a latency summary locally.
 - Logs never contain secrets or full transcripts. Fields are bounded, and redaction runs on the log sink.
 
@@ -520,7 +525,7 @@ New entries need a row in [DECISIONS.md](../DECISIONS.md).
 |---|---|
 | core | `serde`, `ts-rs` |
 | runtime | `tokio`, `reqwest` (rustls with ring), `rustls`, `futures-util`, `serde`/`serde_json`, `toml`, `ignore`, `regex`, `tracing` (D-020); to come: `rtrb`, objc2 + CoreAudio/AVFAudio bindings (audio leaf), `ort`, `whisper-rs`, `rusqlite` (bundled) |
-| app | `tauri`, `tauri-build`, `keyring`, `tracing-subscriber` |
+| app | `tauri`, `tauri-build`, `keyring-core` + `apple-native-keyring-store` (D-045); logging is the runtime's own subscriber (D-046) |
 | ui | `preact`, `@preact/signals`, `@tauri-apps/api`; dev only: `vite`, `typescript`, `@types/node`, `@biomejs/biome`, `@tauri-apps/cli` |
 
 ## 11. Phase 0 build order

@@ -38,6 +38,37 @@ impl Clock for MonotonicClock {
     }
 }
 
+/// Session time on tokio's clock. In the app it reads the same monotonic time as
+/// [`MonotonicClock`]; under a paused tokio runtime (tests) it follows tokio's time, so the
+/// session's timers and the session time it stamps on inputs always agree.
+#[derive(Clone, Copy, Debug)]
+pub struct TokioClock {
+    start: tokio::time::Instant,
+}
+
+impl TokioClock {
+    /// Starts a session clock at zero now.
+    #[must_use]
+    pub fn start() -> Self {
+        Self {
+            start: tokio::time::Instant::now(),
+        }
+    }
+
+    /// The tokio instant at which session time reads `at`, for timers.
+    #[must_use]
+    pub fn instant_at(&self, at: SessionTime) -> tokio::time::Instant {
+        self.start + std::time::Duration::from_millis(at.as_ms())
+    }
+}
+
+impl Clock for TokioClock {
+    fn now(&self) -> SessionTime {
+        let elapsed_ms = u64::try_from(self.start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        SessionTime::from_ms(elapsed_ms)
+    }
+}
+
 /// A clock that moves only when told to. Clones share the same time.
 #[derive(Clone, Debug, Default)]
 pub struct FakeClock {
@@ -94,6 +125,17 @@ mod tests {
         assert_eq!(view.now(), SessionTime::from_ms(15));
         clock.advance_ms(u64::MAX);
         assert_eq!(view.now(), SessionTime::from_ms(u64::MAX));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tokio_clock_follows_paused_time() {
+        let clock = super::TokioClock::start();
+        tokio::time::advance(std::time::Duration::from_millis(1_250)).await;
+        assert_eq!(clock.now(), SessionTime::from_ms(1_250));
+        assert_eq!(
+            clock.instant_at(SessionTime::from_ms(1_250)),
+            tokio::time::Instant::now()
+        );
     }
 
     #[test]

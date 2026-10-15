@@ -10,11 +10,14 @@
 //! explicit module-level allow and `// SAFETY:` arguments.
 #![deny(unsafe_code)]
 
+pub mod bridge;
 pub mod cancel;
 pub mod clock;
 pub mod harness;
 pub mod limits;
 pub mod llm;
+pub mod logging;
+pub mod session;
 pub mod settings;
 pub mod store;
 pub mod tools;

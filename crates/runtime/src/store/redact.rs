@@ -88,7 +88,9 @@ const RULES: &[Rule] = &[
     },
     Rule {
         name: "elevenlabs-key",
-        pattern: r"\bsk_[A-Za-z0-9]{32,}",
+        // Real keys are 48 hex characters; 20 still catches a truncated or older key, and the
+        // digit check keeps `sk_` identifiers out.
+        pattern: r"\bsk_[A-Za-z0-9]{20,}",
         check: Check::HasDigit,
     },
     Rule {

@@ -2,7 +2,7 @@
 //! [`PLAYBACK_REPORT_MS`], and `VoiceStopped` answering `StopVoice` after a short fade, like
 //! the runtime's speech actor (LLD §3.1).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::ids::ClauseId;
 use crate::input::{Input, PlaybackPosition, TimingSource, WordTiming, WordTimings};
@@ -62,6 +62,8 @@ pub struct FakeSpeech {
     /// When each clause started playing, with its timings: what was actually heard.
     started: BTreeMap<ClauseId, (SessionTime, WordTimings)>,
     order: Vec<ClauseId>,
+    /// Clauses whose synthesis fails, answered with `SynthesisFailed`.
+    failing: BTreeSet<ClauseId>,
 }
 
 impl Default for FakeSpeech {
@@ -75,13 +77,23 @@ impl Default for FakeSpeech {
             drained_reported: true,
             started: BTreeMap::new(),
             order: Vec::new(),
+            failing: BTreeSet::new(),
         }
     }
 }
 
 impl FakeSpeech {
-    /// Queues a clause; returns its `ClauseReady`, to deliver after the synthesis delay.
+    /// Makes synthesis of `clause` fail when it is asked for.
+    pub fn fail(&mut self, clause: ClauseId) {
+        self.failing.insert(clause);
+    }
+
+    /// Queues a clause; returns its `ClauseReady`, to deliver after the synthesis delay, or
+    /// `SynthesisFailed` for a clause set to fail (nothing is queued then).
     pub fn synthesize(&mut self, clause: ClauseId, text: &str) -> Input {
+        if self.failing.contains(&clause) {
+            return Input::SynthesisFailed { clause };
+        }
         let timings = estimate_timings(text, self.ms_per_byte);
         self.clips.push_back(Clip {
             clause,

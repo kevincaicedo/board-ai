@@ -42,6 +42,12 @@ pub enum Input {
         clause: ClauseId,
         timings: WordTimings,
     },
+    /// Speech out could not synthesize this clause, so it will never play. It answers a
+    /// `Synthesize` instead of `ClauseReady`, never after it. The clause is skipped: its ops are
+    /// never drawn, its text is shown as a problem caption, and the reply goes on without it.
+    SynthesisFailed {
+        clause: ClauseId,
+    },
     /// Where playback is, from the audio sample counter minus output latency. The runtime
     /// coalesces these to at most one per 20 ms.
     PlaybackAt {

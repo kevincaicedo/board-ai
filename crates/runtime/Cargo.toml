@@ -31,4 +31,5 @@ toml = { version = "1.1.8", default-features = false, features = ["parse", "serd
 tracing = "0.1.44"
 
 [dev-dependencies]
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "test-util"] }
+# `io-std` reads typed lines in the `converse` example.
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "test-util", "io-std"] }

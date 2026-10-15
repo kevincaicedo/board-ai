@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window gets the core defaults only; BoardAI's own command and event channel are added with the runtime.",
+  "description": "The main window may only open the event channel and send commands (LLD §9, D-027). Debug builds also grant dev_say at runtime.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["allow-connect", "allow-command"]
 }

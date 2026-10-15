@@ -163,7 +163,7 @@ impl Core {
     fn due(&self, anchor: Anchor) -> Due {
         match anchor {
             Anchor::Spoken { clause, offset } => {
-                if self.voice.clause(clause).is_none() {
+                if self.voice.clause(clause).is_none() || self.voice.skipped(clause) {
                     Due::Never
                 } else if self.voice.reached(clause, offset) {
                     Due::Now

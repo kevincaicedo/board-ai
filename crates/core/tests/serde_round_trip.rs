@@ -70,6 +70,9 @@ fn speech_and_command_inputs() -> Vec<Input> {
             clause: ClauseId(2),
             timings,
         },
+        Input::SynthesisFailed {
+            clause: ClauseId(3),
+        },
         Input::PlaybackAt { position },
         Input::PlaybackDrained,
         Input::VoiceStopped {

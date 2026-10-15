@@ -20,7 +20,8 @@ pub enum Effect {
     },
     /// Fade the voice out (30 ms) and answer with `Input::VoiceStopped`.
     StopVoice,
-    /// Synthesize a clause's speakable text, then answer with `Input::ClauseReady`.
+    /// Synthesize a clause's speakable text, then answer with `Input::ClauseReady`, or with
+    /// `Input::SynthesisFailed` when it can't.
     Synthesize {
         clause: ClauseId,
         text: String,

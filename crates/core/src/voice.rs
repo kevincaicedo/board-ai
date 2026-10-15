@@ -25,6 +25,8 @@ enum Status {
     Synthesizing,
     Ready,
     Played,
+    /// Synthesis failed: the clause never plays, so nothing anchored in it is drawn.
+    Skipped,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,9 +170,14 @@ impl Voice {
         self.clauses.iter().find(|clause| clause.id == id)
     }
 
-    /// Records a clause's timings; false for a clause this voice doesn't know (a stale report).
+    /// Records a clause's timings; false for a clause this voice doesn't know (a stale report)
+    /// or one already skipped.
     pub fn ready(&mut self, id: ClauseId, timings: WordTimings) -> bool {
-        let Some(clause) = self.clauses.iter_mut().find(|clause| clause.id == id) else {
+        let Some(clause) = self
+            .clauses
+            .iter_mut()
+            .find(|clause| clause.id == id && clause.status != Status::Skipped)
+        else {
             return false;
         };
         clause.timings = Some(sanitize(timings, clause.speakable.text().len()));
@@ -178,6 +185,24 @@ impl Voice {
             clause.status = Status::Ready;
         }
         true
+    }
+
+    /// Synthesis of a clause failed: it is skipped and will never play. Returns its caption, or
+    /// `None` for a clause that is unknown or already past synthesis (a stale report).
+    pub fn failed(&mut self, id: ClauseId) -> Option<&str> {
+        let clause = self
+            .clauses
+            .iter_mut()
+            .find(|clause| clause.id == id && clause.status == Status::Synthesizing)?;
+        clause.status = Status::Skipped;
+        Some(&clause.caption)
+    }
+
+    /// The clause was skipped: it will never play.
+    #[must_use]
+    pub fn skipped(&self, id: ClauseId) -> bool {
+        self.clause(id)
+            .is_some_and(|clause| clause.status == Status::Skipped)
     }
 
     /// A playback report. Earlier clauses have finished; positions never move backwards.
@@ -239,8 +264,10 @@ impl Voice {
         let Some(target) = self.clause(clause) else {
             return false;
         };
-        if target.status == Status::Played {
-            return true;
+        match target.status {
+            Status::Played => return true,
+            Status::Skipped => return false,
+            Status::Synthesizing | Status::Ready => {}
         }
         let Some(heard) = self.heard.filter(|heard| heard.clause == clause) else {
             return false;
@@ -256,12 +283,12 @@ impl Voice {
         self.heard
     }
 
-    /// Every clause sent has been synthesized and played.
+    /// Every clause sent has been played or skipped.
     #[must_use]
     pub fn is_silent(&self) -> bool {
         self.clauses
             .iter()
-            .all(|clause| clause.status == Status::Played)
+            .all(|clause| matches!(clause.status, Status::Played | Status::Skipped))
     }
 
     /// Some clause has audio ready that hasn't finished playing.
@@ -346,7 +373,7 @@ impl Voice {
         let mut before_ms = 0_u64;
         for candidate in &self.clauses {
             let played_ms = match (candidate.status, candidate.started_at) {
-                (Status::Played, _) => {
+                (Status::Played | Status::Skipped, _) => {
                     if candidate.id == clause {
                         return 0;
                     }
@@ -370,7 +397,8 @@ impl Voice {
         for clause in &mut self.clauses {
             let target = match clause.status {
                 Status::Played => clause.caption.len(),
-                Status::Synthesizing => continue,
+                // A skipped clause's text is shown once, as a problem, by the engine.
+                Status::Synthesizing | Status::Skipped => continue,
                 Status::Ready => {
                     let Some(position) = heard.filter(|heard| heard.clause == clause.id) else {
                         continue;

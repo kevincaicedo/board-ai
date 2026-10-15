@@ -12,6 +12,10 @@ use crate::tools::{InvalidToolInput, ToolFailure, ToolOutput};
 /// Spoken when the model refuses (LLD §3.3): a short line, never silence.
 pub const REFUSAL_LINE: &str = "I can't help with that one.";
 
+/// Shown under the text of a clause the voice couldn't say (it is never spoken: the voice is
+/// what failed).
+pub const SYNTHESIS_FAILED_DETAIL: &str = "The voice couldn't say this part.";
+
 /// Spoken when a turn runs out of tool rounds.
 pub const TOOL_ROUNDS_LINE: &str = "I got stuck looking things up. Let's try a narrower question.";
 

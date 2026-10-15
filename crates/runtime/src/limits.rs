@@ -274,3 +274,104 @@ pub const DIGEST_TITLE_MAX_CHARS: usize = 80;
 
 /// Characters of a digest summary; a longer summary is cut and ends with `…`.
 pub const DIGEST_SUMMARY_MAX_CHARS: usize = 2_000;
+
+// ---------------------------------------------------------------------------------------------
+// Session orchestrator (owner: runtime::session)
+
+/// Inputs waiting in the orchestrator's inbox. Actors on tasks (talker, speech, tools, harness)
+/// wait for room, so a stalled orchestrator slows them down instead of losing their inputs. UI
+/// commands can't wait (they arrive in a command handler): when the inbox is full they are
+/// dropped and counted, since a stale pointer or mic toggle is worse than a missing one.
+pub const SESSION_INBOX_CAPACITY: usize = 1024;
+
+/// Deadlines held for the core's `WakeAt`. The core asks once per distinct deadline and needs
+/// only a few at a time, so crossing this is a broken invariant: the new deadline is dropped
+/// and logged as an error (debug builds assert).
+pub const SESSION_DEADLINES_MAX: usize = 1024;
+
+/// Repo-tool and store queries running at once. Past it a call is answered at once with
+/// `ToolFailure::Unavailable`, which the talker reads (the core allows 16 calls per reply).
+pub const SESSION_TOOL_TASKS_MAX: usize = 32;
+
+/// Harness tasks the session follows at once. The harness pool already caps running and
+/// queued tasks (2 + 1, queue 4); past this a task is answered at once with
+/// `HarnessFailure::QueueFull`, which the core says out loud.
+pub const SESSION_HARNESS_TASKS_MAX: usize = 16;
+
+/// How long closing a session waits for the store to flush; past it the session ends anyway
+/// and the store loses at most what it had not written (it flushes every 250 ms on its own).
+pub const SESSION_FLUSH_TIMEOUT_MS: u64 = 2_000;
+
+/// Voice time per word of a typed utterance, as if spoken: the voiced length the core sees, so
+/// the barge-in rules that count voice time apply as they would to speech.
+pub const TYPED_MS_PER_WORD: u32 = 280;
+
+// ---------------------------------------------------------------------------------------------
+// UI bridge (owner: runtime::bridge)
+
+/// One UI frame: events of the steps within it go out together, stamped with the latest step's
+/// time. The first step after a quiet frame goes out at once.
+pub const BRIDGE_FRAME_MS: u64 = 16;
+
+/// Events in one batch. Captions, the orb, the thread and the camera already coalesce (latest
+/// wins). A frame that still holds more sends a full batch at once and continues in the next
+/// one with the same stamp: drawing, layer and surface events are never dropped. Counted.
+pub const BRIDGE_BATCH_EVENTS_MAX: usize = 256;
+
+/// Steps waiting for the bridge. The orchestrator waits for room: losing a drawing op would
+/// break the board, and the bridge only hands batches to a non-blocking sink.
+pub const BRIDGE_QUEUE_STEPS: usize = 256;
+
+// ---------------------------------------------------------------------------------------------
+// Virtual voice (owner: runtime::session::virtual_voice)
+
+/// Commands waiting for the virtual voice. Past it `synthesize` is refused, and the
+/// orchestrator answers that clause with `SynthesisFailed`.
+pub const VIRTUAL_VOICE_COMMANDS_MAX: usize = 1024;
+
+/// How often playback positions are published, as speech out coalesces them (LLD §2.1).
+pub const PLAYBACK_REPORT_MS: u64 = 20;
+
+/// The fade after `StopVoice`; audio keeps playing through it, so it counts as heard.
+pub const VOICE_STOP_FADE_MS: u64 = 30;
+
+/// The virtual voice's speaking rate at speed 1 (about 15 characters a second, the core's
+/// estimate for an unsynthesized clause).
+pub const VIRTUAL_VOICE_MS_PER_BYTE: u32 = 65;
+
+/// Pauses the virtual voice adds after a comma and after a sentence end.
+pub const VIRTUAL_VOICE_COMMA_PAUSE_MS: u32 = 150;
+pub const VIRTUAL_VOICE_SENTENCE_PAUSE_MS: u32 = 300;
+
+/// Fastest and slowest speed factors the virtual voice accepts; others are clamped.
+pub const VIRTUAL_VOICE_SPEED_MIN: f32 = 0.25;
+pub const VIRTUAL_VOICE_SPEED_MAX: f32 = 8.0;
+
+// ---------------------------------------------------------------------------------------------
+// In-memory store and dev scripts (owner: runtime::session)
+
+/// Memories the in-memory store keeps for `recall`; past it the oldest is forgotten.
+pub const MEMORY_STORE_MEMORIES_MAX: usize = 1_000;
+
+/// Matches one `recall` returns from the in-memory store; the rest are counted.
+pub const MEMORY_STORE_RECALL_HITS_MAX: usize = 10;
+
+/// Lines in a dev script; a longer script is rejected.
+pub const SCRIPT_LINES_MAX: usize = 1_000;
+
+/// Bytes of one dev script line (the core keeps 4 KB of an utterance); a longer line rejects
+/// the script.
+pub const SCRIPT_LINE_MAX_BYTES: usize = 4 * 1024;
+
+/// A dev script waits at most this long for BoardAI to finish or start speaking; past it the
+/// next line is said anyway, with a warning.
+pub const SCRIPT_WAIT_MAX_MS: u64 = 120_000;
+
+// ---------------------------------------------------------------------------------------------
+// Logs (owner: runtime::logging)
+
+/// Bytes of one field value in a log line; the rest is cut and ends with `…`.
+pub const LOG_FIELD_MAX_BYTES: usize = 512;
+
+/// Bytes of one log line; the rest is cut and ends with `…`.
+pub const LOG_LINE_MAX_BYTES: usize = 4 * 1024;
