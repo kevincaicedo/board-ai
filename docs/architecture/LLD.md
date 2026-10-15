@@ -363,25 +363,32 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 
 ```
 ~/BoardAI/                          the vault (source of truth, yours)
-  sessions/2026-10-14-request-path/
+  sessions/2026-10-14-request-path/ <date>-<time> while recording, renamed after the digest's title
     events.jsonl                    append-only session log
-    board.excalidraw                final board, one frame per layer
-    digest.md                       summary, diagrams, open questions, proposed memories
-  notes/<slug>.md                   one note per file; front matter: id, created, links
-  projects/<name>.md                tasks as checklist lines with ids: - [ ] Check Redis TTLs ^t27
-  memory/about-you.md               preferences and learner model, editable by hand
+    board.excalidraw                final board, one frame per layer (the core's export)
+    digest.md                       summary, diagrams, open questions, captured items, proposals, graph
+  notes/<slug>.md                   one note per file; front matter: id, created, session, links
+  projects/<name>.md                tasks as checklist lines with ids: - [ ] Check Redis TTLs [[session:…]] ^t27
+  memory/about-you.md               preferences and learner model, editable by hand: - … ^m12
   memory/facts.md                   facts about your systems
 ```
 
+- **The actor.** One tokio task owns every write, fed by one bounded inbox (4096). Blocking work (files, fsync, SQLite) runs on the blocking pool; the state moves into the blocking closure and back, so it has one owner and no lock. Shutdown flushes and closes a session still recording.
+  - Log entries never wait: the handle `try_send`s them, and a full inbox drops and counts them (a `dropped` line records the count). The orchestrator's latency matters more than a complete log, and a full inbox means the disk is stalled.
+  - Requests (start, end, remember, forget…) wait for room: their callers await a reply anyway.
+  - Reads (recall, library, Now, open session, recap) start in inbox order, so they see every earlier write, but run on a separate read-only connection (WAL) beside the actor, so a query never delays a flush.
+- **Redaction (I8).** Every write goes through `redact_text` or `redact_json_text` (string literals only, so the JSON shape and field order are unchanged), and writers take only a `Redacted`. A table of rules: API keys (`sk-ant-`, `sk-or-`, `sk-`, ElevenLabs `sk_`, Stripe, Google, Slack, GitHub), AWS key ids and secret assignments, PEM private keys (across a code card's lines too), JWTs, URL passwords, `Authorization`/`Bearer`/`x-api-key` headers, and `password=`-style assignments. Text you paste into your own files is redacted on its way into the index; your file is left as you wrote it.
 - **Event log.**
-  - One JSON record per line with a version: `{"v":1,"t":1234,"k":"input",…}`.
-  - It records core inputs, for re-simulating and debugging with the same build, and UI events, for replay that stays stable as the core changes.
-  - It is flushed every 250 ms and at session end, so a crash loses at most 250 ms.
-- **Vault writes.** Write a temporary file, fsync, then rename.
-- **Index.** `index.sqlite` lives in the app data folder.
-  - Tables for sessions, notes, tasks, entities and relations, plus full-text search over notes, digests and transcripts.
-  - Each row records its file's modification time and hash, and a mismatch re-indexes that file.
-  - A full rebuild is one scan of the vault.
+  - One JSON record per line: `{"v":1,"t":1234,"k":…}`. Kinds: `session` (first line: id, start), `ui` (exactly `UiLogLine`, which the UI replays), `input` (`{"input":…}`, a core `Input`, for re-simulation with the same build), `record` (a core `LogRecord`), `dropped` (reason and count) and `end`.
+  - Flushed every 250 ms (one `write`, no fsync) and at session end (fsynced), so a crash loses at most 250 ms. A line over 1 MiB (the UI's own limit) is replaced by a counted `dropped` marker, never cut mid-JSON. The reader streams, and skips and counts malformed, oversized and other-version lines.
+- **Sessions.** A session's id is `<date>-<time>` (UTC), kept in the log's first line and the digest's front matter, so renaming the folder after the title breaks no link. At the end the log is closed, the scribe writes the digest from the transcript (final captions), and `digest.md` and `board.excalidraw` are written. A session that ends without one (the app quit, the next session started) gets the minimal digest.
+- **Scribe.** Asks for one fixed JSON shape (title, summary, diagrams, open questions, proposed memories, entities, relations), parsed strictly with bounded lists. A provider failure, timeout (120 s), refusal or junk gives the minimal digest: a title (hint or first question), a transcript-derived summary line, and the captured items. It never creates tasks or kept memories.
+- **Memory writes.** The policy's action is carried out per kind: stated and learning memories to `about-you.md` or `facts.md` by subject, notes to `notes/`, tasks to `projects/` (`inbox` without a project), session records into the digest; `Propose` waits in the digest until `accept_proposal`. Raw audio, secrets and `Never` are refused. Each write is a capture: "forget that" undoes the last; "don't remember this session" (I10) undoes all of them, removes files the session created, deletes the session folder and its index rows, and drops the rest of the session.
+- **Vault writes.** Write a temporary file, fsync, rename, fsync the folder. Slugs are lowercase ASCII words, at most 60 bytes, with `-2`, `-3`… on collision. The vault path is validated at startup (absolute, a folder, not `/` or your home folder, writable), and temporary files a crash left are removed.
+- **Index.** `index.sqlite` lives in the app data folder; bundled SQLite with FTS5.
+  - Tables for sessions, notes, tasks, memories, proposals, entities and relations (`mentioned_in` added for every entity of a digest), plus full-text search over notes, digests, memories, tasks and transcripts.
+  - A `files` table holds each file's modification time, size and hash (FNV-1a); every row names its file, and a changed file re-indexes its unit (a session folder, a note, a project, a memory file).
+  - A full rebuild is one scan of the vault. The schema is versioned in `user_version` with ordered migrations; an index from a newer build, or a damaged file, is deleted and rebuilt.
 - **Replay audio.** BoardAI's voice will be stored as Opus in Phase 1. Your voice is never stored; replays show your words as captions.
 
 ### 3.7 Protocol (core ↔ UI)
@@ -459,7 +466,14 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Harness time | 10 min / 30 min | runtime::harness | Cancelled, with a spoken notice |
 | Provider retries | 2, jittered; 10 s deadline for the talker | runtime::llm | A spoken failure line plus a `Problem` event |
 | UI events per frame | 256 | runtime::bridge | Captions and levels coalesce |
-| Event log flush | 250 ms | runtime::store | |
+| Event log flush | 250 ms | runtime::store | A crash loses at most this much; earlier at 8192 buffered entries |
+| Store inbox | 4096 messages | runtime::store | Log entries are dropped and counted in a `dropped` line; requests wait |
+| Event log line | 1 MiB | runtime::store | Replaced by a counted `dropped` marker; the reader skips and counts longer lines |
+| Vault file read | 8 MiB | runtime::store | Not indexed; never edited by the store |
+| Captures per session | 500 | runtime::store | `remember` fails with `Limit` |
+| Recall answer | 8 hits / 4 KB | runtime::store | The rest are counted as "N more" |
+| Library / Now | 500 sessions / 12 tasks | runtime::store | The rest are counted |
+| Scribe | 48 KB transcript, 64 KB answer, 120 s | runtime::store | Transcript keeps its start and end; past the others, the minimal digest |
 
 ## 6. Errors
 

@@ -19,6 +19,9 @@ ignore = "0.4.33"
 regex = "1.13.1"
 # TLS through rustls with the ring provider (installed in `llm::http`): no OpenSSL, and ring's
 # license (ISC) is simpler than aws-lc's. HTTP/2 for the long-lived streams.
+# The derived index (LLD §3.6, D-012): SQLite compiled from source with FTS5, so the index
+# never depends on the system's SQLite version or its compile options.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }

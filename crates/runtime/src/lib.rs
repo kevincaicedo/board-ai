@@ -16,4 +16,5 @@ pub mod harness;
 pub mod limits;
 pub mod llm;
 pub mod settings;
+pub mod store;
 pub mod tools;
