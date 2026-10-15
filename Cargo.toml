@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/runtime", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+boardai-core = { path = "crates/core" }
+boardai-runtime = { path = "crates/runtime" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+# Exhaustive matches: a new state or error variant must be handled, never swallowed.
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+# Operational errors are values; an invariant-backed expect carries a reason.
+unwrap_used = "deny"
+expect_used = "deny"
+# Keep functions small enough to review (threshold in clippy.toml).
+too_many_lines = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# Audio, speech inference and the UI need optimized dependencies even in dev builds.
+[profile.dev.package."*"]
+opt-level = 2

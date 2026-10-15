@@ -1,0 +1,82 @@
+/* Design tokens, copied from the design canvas's design system page (10a).
+   The canvas is the source of truth: change it there first, then here. */
+:root {
+  /* Ground */
+  --bg: #ffffff;
+  --bg-soft: #fafafb;
+  --glass: rgba(255, 255, 255, 0.62);
+  --glass-blur: 32px;
+
+  /* Porcelain greys */
+  --grey-100: #eeeff2;
+  --grey-200: #d9dbe0;
+  --grey-300: #c5c8cf;
+
+  /* Ink */
+  --ink: #1d1d1f;
+  --ink-2: #6e6e73;
+  --ink-3: #a1a1a6;
+
+  /* Accents, used sparingly: signal marks live state, progress and the trace dot;
+     annotate is only for pen marks on the canvas. */
+  --signal: #d9548b;
+  --annotate: #e8913a;
+
+  /* Orb gradient (the orb only) */
+  --orb-1: #f6cfe0;
+  --orb-2: #e58bb4;
+  --orb-3: #b565d8;
+  --orb-4: #dcd3f7;
+
+  /* Sketch fills (hachure) */
+  --sketch-lilac: #d9c8f5;
+  --sketch-sky: #c4def6;
+  --sketch-mint: #cfefd9;
+  --sketch-blush: #f7d3e0;
+
+  /* Shape and depth */
+  --radius-card: 28px;
+  --radius-chip: 16px;
+  --size-button: 56px;
+  --shadow-surface: 0 24px 64px rgba(20, 20, 40, 0.08);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-micro: 160ms;
+  --duration-standard: 420ms;
+  --duration-scene: 900ms;
+
+  /* Type (fonts are bundled locally when the UI work starts; the CSP allows no remote fonts) */
+  --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-hand: "Excalifont", "Virgil", cursive;
+  --font-code: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 0ms;
+    --duration-standard: 0ms;
+    --duration-scene: 0ms;
+  }
+}

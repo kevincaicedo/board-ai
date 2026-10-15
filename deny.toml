@@ -1,0 +1,33 @@
+# cargo-deny: licenses, advisories and sources for the dependency graph we actually ship.
+[graph]
+targets = ["aarch64-apple-darwin"]
+
+[advisories]
+version = 2
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Permissive licenses only. Copyleft (GPL, LGPL, AGPL) would bind the app; that is why local
+# text-to-speech avoids espeak-ng (docs/architecture/LLD.md §3.4). The list holds only licenses in
+# the graph today; a new one is added with the dependency that brings it.
+allow = [
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

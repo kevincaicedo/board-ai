@@ -1,0 +1,14 @@
+[package]
+name = "boardai-runtime"
+description = "BoardAI's runtime: audio, speech engines, LLM providers, coding harnesses and storage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+boardai-core.workspace = true

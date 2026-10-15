@@ -1,0 +1,18 @@
+[package]
+name = "boardai-app"
+description = "BoardAI desktop shell: window, permissions, keychain and the UI transport."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+boardai-runtime.workspace = true
+tauri = { version = "=2.12.4", features = [] }

@@ -1,0 +1,15 @@
+# The core is deterministic: time and randomness arrive as inputs (AGENTS.md, law 2).
+# This file replaces the workspace clippy.toml for this crate, so it repeats those settings.
+too-many-lines-threshold = 70
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "core is deterministic: take SessionTime as an input" },
+    { path = "std::time::SystemTime::now", reason = "core is deterministic: take SessionTime as an input" },
+    { path = "std::thread::spawn", reason = "core owns no threads; the runtime schedules work" },
+    { path = "std::thread::sleep", reason = "core never waits; ask the runtime for a WakeAt effect" },
+]
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order must not depend on a random seed; use BTreeMap" },
+    { path = "std::collections::HashSet", reason = "iteration order must not depend on a random seed; use BTreeSet" },
+]

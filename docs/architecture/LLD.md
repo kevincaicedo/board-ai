@@ -1,0 +1,475 @@
+# BoardAI · Low-level design
+
+> Status: **draft for review** · 2026-10-15 · Diagrams: [`lld.excalidraw`](lld.excalidraw), panels A–F (open at [excalidraw.com](https://excalidraw.com) → menu → Open) · High level: [HLD.md](HLD.md)
+
+This document gives the types, algorithms, limits and invariants behind the [HLD](HLD.md). The Rust signatures are sketches: names and shapes are intended, details settle in code. When the code and this document disagree, the code is fixed or the document is updated in the same change.
+
+## 1. Repository and dependency rules (panel A)
+
+```
+boardai/
+├─ crates/
+│  ├─ core/      boardai-core     pure domain: no I/O, async, clock or randomness
+│  ├─ runtime/   boardai-runtime  all I/O adapters, actors, the session driver; no Tauri
+│  └─ app/       boardai-app      Tauri 2 shell: window, permissions, keychain, transport
+├─ ui/           Preact + TypeScript (Vite); the canvas and orb renderers are imperative TS
+├─ docs/         PRODUCT, PLAN, DECISIONS, architecture/
+└─ justfile      `just check` is the one entry point for every check
+```
+
+Dependencies only point one way: `app → runtime → core`. The UI never imports Rust; it gets protocol types generated from `core` (ts-rs) and talks to the runtime through the app's transport.
+
+How each rule is enforced, using the strongest mechanism available:
+
+| Rule | Enforced by |
+|---|---|
+| Core has no I/O, async or Tauri | Cargo: `core` has no such dependencies |
+| Core never reads the clock or randomness | `clippy.toml` `disallowed-methods` (`Instant::now`, `SystemTime::now`, `rand::*`) with `-D warnings` |
+| No `unsafe` outside the audio FFI leaf | `#![forbid(unsafe_code)]` in `core` and `app`. In `runtime`, `#![deny(unsafe_code)]` with a module-scoped allow on `audio::coreaudio` only. |
+| No wildcard `match` on our own enums | `clippy::wildcard_enum_match_arm` denied in all crates |
+| No `unwrap`/`expect` on operational errors | `clippy::unwrap_used` and `clippy::expect_used` denied outside tests; an invariant-backed `expect` carries a `reason` |
+| Functions ≤ 70 lines, files ≤ 800 lines | `clippy::too_many_lines` (threshold 70). The file limit is checked in `just check`. |
+| Protocol types are generated, never hand-written | `just check` regenerates them and fails on any diff |
+| Dependencies are few and deliberate | A new crate or npm package needs a row in [DECISIONS.md](../DECISIONS.md); `cargo deny` checks licenses and advisories |
+
+## 2. Core
+
+### 2.1 Shape
+
+```rust
+/// Milliseconds since the session started, on the runtime's monotonic clock.
+pub struct SessionTime(u64);
+
+pub struct Core { /* conversation, thread, board, schedule, memory candidates */ }
+
+impl Core {
+    pub fn new(config: CoreConfig) -> Self;
+    /// The only way state changes. Same inputs at the same times → same effects.
+    pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>);
+}
+```
+
+**Inputs** (runtime → core):
+
+| Input | From | Carries |
+|---|---|---|
+| `VoiceStart`, `VoiceEnd { voiced_ms }` | speech in (VAD) | |
+| `Transcript { text, is_final }` | speech in (STT) | |
+| `Pointer { target, at }` | UI | A board element, a code line, or nothing |
+| `TalkerDelta { text }` | talker | Streamed narration text |
+| `TalkerToolCall { id, call }` | talker | A validated tool call |
+| `TalkerDone { stop }` | talker | `EndTurn`, `ToolUse`, `MaxTokens`, `Refusal`, `Error` |
+| `ClauseReady { clause, timings }` | speech out | Word timings; exact or estimated |
+| `PlaybackAt { clause, offset_ms }` | speech out | Coalesced; at most one per 20 ms |
+| `PlaybackDrained` | speech out | |
+| `ToolResult { id, result }`, `HarnessEvent { task, event }` | runtime | |
+| `Command(UiCommand)` | UI | Mute, push-to-talk, open library… |
+| `Tick` | runtime | A deadline the core asked for |
+
+**Effects** (core → runtime): `Duck { gain }`, `StopVoice`, `Synthesize { clause }`, `Talk { request }`, `CancelTalk`, `RunTool { id, call }`, `RunHarness { task }`, `CancelHarness { task }`, `Ui(UiEvent)`, `Log(Record)`, `Remember(MemoryWrite)`, `WakeAt(SessionTime)`.
+
+The runtime applies effects in order. The core never waits: anything slow is an effect now and an input later.
+
+### 2.2 Conversation state machine (panel E)
+
+Detours are not states. They are a stack inside the thread (§2.6), and speaking inside a detour is still `Speaking`.
+
+| State | Input | Next | Effects |
+|---|---|---|---|
+| `Idle` | `VoiceStart` | `Listening` | orb → listening |
+| `Listening` | `Transcript` (partial) | `Listening` | caption |
+| `Listening` | `VoiceEnd`, and the turn sounds finished | `Thinking` | `Talk` |
+| `Listening` | `VoiceEnd`, and the turn sounds unfinished | `Listening` | `WakeAt(+1500 ms)` |
+| `Listening` | `Tick` (grace expired) | `Thinking` | `Talk` |
+| `Thinking` | first clause synthesized | `Speaking` | orb → speaking, captions start |
+| `Thinking` | `VoiceStart` | `Listening` | `CancelTalk`. The new words join the same turn. |
+| `Speaking` | `PlaybackAt` | `Speaking` | fire due ops (§2.4) |
+| `Speaking` | `VoiceStart` | `Ducked` | `Duck { gain: 0.25 }`, `WakeAt(+900 ms)` |
+| `Ducked` | classified as a backchannel | `Speaking` | `Duck { gain: 1.0 }`, orb acknowledges |
+| `Ducked` | classified as an interruption, or `Tick` | `Listening` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7) |
+| `Speaking` | `PlaybackDrained` and the talker is done | `Idle` | orb → idle |
+| any | `Command(Mute)` | `Muted` | `StopVoice`, `CancelTalk` |
+| `Muted` | `Command(Unmute)` | `Idle` | |
+
+**End of turn.** The turn ends after ≥ 600 ms of silence, unless the transcript ends on a continuation word ("and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "to", "of"). Then it waits up to 1500 ms. Utterances are capped at 30 s.
+
+**Backchannel or interruption.** The decision is deterministic, and every lexicon is a table in `conversation::cues` that its tests iterate.
+
+It is an **interruption** if any of these hold:
+
+- (a) The first words contain a cue: wait, stop, hold on, hang on, what, why, how, no, actually, sorry, pause, slower, repeat, back, skip.
+- (b) Four or more words.
+- (c) At least 700 ms of voice.
+- (d) A pointer target was set within the last 1.5 s.
+
+It is a **backchannel** if `VoiceEnd` arrives with less than 700 ms of voice and the transcript is empty or in the backchannel lexicon: mm-hm, uh-huh, yeah, yes, right, ok, okay, sure, got it, I see, nice.
+
+If neither applies within 900 ms of onset, it is an interruption. A person who keeps talking wants the floor.
+
+### 2.3 Narration script
+
+The talker writes spoken text with self-closing tags inline. Text outside tags is speech. A tag sits right before the word it should start on.
+
+```
+Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn" dir="right"/>
+<edge from="cdn" to="lb"/>load balancer, which spreads traffic across
+<node id="api" label="API pod" kind="service" near="lb" dir="right" stack="3"/>three API pods.
+```
+
+| Tag | Attributes | Effect |
+|---|---|---|
+| `plan` | `steps="Client\|Edge\|LB"` | Sets the thread's steps |
+| `step` | `n` | Advances the thread |
+| `node` | `id`, `label`, `kind` (service, db, queue, actor, group, note), `near`, `dir` (right, left, above, below), `in`, `stack` | Draws a node |
+| `edge` | `from`, `to`, `label`, `style` (solid, dashed) | Draws a connector |
+| `annotate` | `target`, `mark` (circle, underline, arrow, bracket), `text` | An orange pen mark |
+| `strike` | `target`, `text` | Strikes through the label and rewrites it |
+| `focus` | `target` | Moves the camera and the depth-of-field focus |
+| `detour` / `resume` | `title` / — | Pushes or pops a detour layer |
+| `code` | `path`, `lines="42-52"` | Opens a code card. The path must come from a read in this session. |
+| `line` | `n` | Moves the code highlight |
+| `trace` | `path="api>redis"` | A dot travels the edges in sync with the highlighted line |
+| `compare`, `cell` | `options`, `criteria` / `row`, `col`, `mark` (yes, no, depends, text) | Opens and fills a compare card |
+| `close` | `surface` | Dismisses a surface |
+
+**Parser.** A streaming character state machine (`Text → TagOpen → Name → Attributes → Value`) with an explicit bound.
+
+- **Split-invariant.** Feeding any split of the input gives the same result as feeding it whole. This is a property test over every golden file.
+- **Tolerant.** An unknown tag, a bad attribute or a tag over 512 bytes is dropped and counted. The surrounding speech continues.
+- **Never recursive, never blocking.** Tags carry no nesting. Text is released to text-to-speech as soon as a clause boundary is seen.
+
+**Speakable text.** Captions show the text as written. Text-to-speech gets a normalized version: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42". Normalization is table-driven and keeps an offset map, so timings in speakable offsets map back to caption offsets.
+
+**Clauses.** Text is cut at sentence ends, or at a comma after ≥ 40 characters, so the first clause reaches text-to-speech early. A clause is capped at 300 characters.
+
+### 2.4 Speech-to-stroke sync (panel C)
+
+1. Each op gets an **anchor**: `(clause, char_offset)`, the position of the first spoken character after the tag.
+2. Text-to-speech returns **word timings** per clause: `Vec<(char_offset, ms)>`.
+   - `Exact` timings come from provider alignment (ElevenLabs, Kokoro durations, system voice markers).
+   - `Estimated` timings come from character rate scaled to the real audio length.
+3. The runtime reports `PlaybackAt { clause, offset_ms }` from the audio sample counter, minus the device's output latency.
+4. The core maps the playback time to a spoken character offset. Every op whose anchor is at or before that offset fires as `OpStart { op, budget_ms }`.
+5. `budget_ms` is the estimated time until the next op's anchor, clamped to 150–2500 ms. The UI finishes the stroke within the budget, so drawing never piles up.
+6. Ops with no speech between them are spaced at least 120 ms apart.
+7. Ops anchored in a clause that never played (because it was cut) are never drawn.
+
+**Invariant:** an op never starts before the audio of its anchor word has played. The simulator checks this on every run.
+
+### 2.5 Board model and layout
+
+- A board is a stack of **layers**: the main layer, plus one per open detour.
+- Each **element** has a stable id, scoped to its layer, plus a kind, a label, geometry, and a state: `Pending`, `Drawing`, `Drawn`, `Frozen { progress }` or `Struck`.
+- A repeated id updates the element (a relabel or a strike); it never duplicates it.
+- **Layout** turns meaning into geometry on a grid of cells sized per kind.
+  - `near X dir right` takes the first free cell to the right of X in the same row. A collision nudges further along the same direction.
+  - Groups grow to bound their children.
+  - Edges join the nearest sides, either straight or with one curve.
+- **Stability:** layout only places new ids. It never moves an existing element. When the board outgrows the view, the camera pans instead of rearranging.
+- **Sizes:** label widths come from a metrics table for the handwritten font, kept in the core. The core outputs final geometry, and the UI only draws it.
+- **Talker summary.** The core builds a compact text form of the board for each request, for example `main: client(actor) → cdn → lb → api×3; detour 1 "cache-aside": api → redis (hit) …`.
+- **Export:** each layer becomes an `.excalidraw` frame at session end.
+
+### 2.6 Thread and detours
+
+- The **thread** is the plan (steps and the current step) plus a **detour stack** with a depth limit of 3. A fourth detour gets a spoken "let's finish this one first".
+- Each detour owns a board layer.
+- `resume` pops a detour. The UI returns the main board to focus, and then the frozen op continues (§2.7).
+
+### 2.7 Interruption and commit-what-was-heard (panel D)
+
+When an interruption is confirmed:
+
+1. `StopVoice`. The runtime fades out over 30 ms and reports the last spoken character offset. That offset defines the **heard prefix**.
+2. The board freezes. The op being drawn becomes `Frozen { progress }`, and ops not yet started are dropped.
+3. The conversation is committed. History is **append-only**, as Claude's preserved-thinking check and prompt caching both require. Two cases:
+   - **Generation still streaming:** cancel the stream. Append an assistant message containing only the heard prefix (text plus the tags of ops that were drawn, no thinking blocks), then the user's message.
+   - **Generation already complete** (the voice lagged behind): leave the stored assistant message untouched. Start the next user message with a note: `[You were interrupted. The user heard you up to: "…checks Re". Nothing after that was heard.]`
+4. The user's message carries the utterance, the pointer target (if any), the thread position, and the frozen op.
+5. The talker answers. It usually opens a `detour`, but it may also redirect, correct with a `strike`, or apply a control such as "slower".
+6. On `resume`:
+   - The UI pops the detour layer.
+   - The frozen op finishes first.
+   - The talker says a bridge sentence ("So, back to the load balancer…").
+   - New ops continue. Dropped ops are replanned by the talker, never replayed blindly.
+
+The `HeardPrefix` type can only be constructed from a playback offset, so no code path can commit text the user didn't hear.
+
+### 2.8 Memory policy
+
+The policy is a pure function from a candidate memory to an action. The table is in [PRODUCT §7.4](../PRODUCT.md); in code it is a single `match` on `MemoryKind`:
+
+- `Keep` covers the session record, learning signals, and what you stated about yourself or your systems.
+- `Propose` covers anything inferred. It lands in the digest and is kept after a "yes".
+- `OnRequest` covers notes and tasks.
+- `Never` covers raw audio and secrets.
+
+Secret redaction runs at the store boundary, so nothing reaches disk unredacted. It matches common key formats (`sk-…`, `ghp_…`, AWS keys, PEM blocks, `password=`), and a planted-secret test proves each pattern.
+
+### 2.9 Invariants
+
+| # | Invariant | Enforced by |
+|---|---|---|
+| I1 | An op never starts before its anchor word's audio has played | Simulator property |
+| I2 | Committed assistant text is exactly the heard prefix | Type (`HeardPrefix`) |
+| I3 | The LLM conversation is append-only | Type (`Conversation` has `push` and no edit or remove) |
+| I4 | Detour depth ≤ 3, and pushes and pops balance by session end | Type (bounded stack) + simulator |
+| I5 | At most one talker stream in flight | State owns `Option<TalkerTurn>`; `CancelTalk` precedes `Talk` (simulator) |
+| I6 | Existing board elements never move | Layout API places only new ids (test) |
+| I7 | A backchannel never stops the voice | Table test over the lexicon |
+| I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
+| I9 | A code change never runs without your spoken yes | Deterministic gate in core (§3.5) + test |
+| I10 | A "don't remember this session" leaves nothing in the vault | Store test |
+
+## 3. Runtime
+
+### 3.1 Actors and channels (panel B)
+
+| Actor | Runs on | Talks through | Notes |
+|---|---|---|---|
+| **Audio I/O** | CoreAudio's real-time thread | Single-producer, single-consumer rings (`rtrb`): mic in (16 kHz mono f32, 2 s), voice out (24 kHz, 4 s); atomics for samples played and the duck gain | No allocation, locks or system calls in the callback |
+| **Speech in** | tokio task + one inference thread | Mic ring → orchestrator inbox | Silero VAD on 32 ms windows. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. |
+| **Orchestrator** | tokio task | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps it, then sends the effects. Playback positions arrive on a `watch` (latest wins), never queued. |
+| **Talker** | tokio task | Effects in, inputs out | One stream; cancelled by dropping it |
+| **Speech out** | tokio task + one inference thread | Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings |
+| **Tools** | blocking pool | | Repo reads and search, bounded (§5) |
+| **Harness** | one subprocess per task | JSON lines on stdout | Cancel: SIGINT, then kill after 3 s |
+| **Store** | tokio task, the only writer | | Event log, vault files, SQLite index |
+| **Bridge** | tokio task | `Transport` trait (a Tauri channel now, a WebSocket later) | Batches UI events per 16 ms frame. Captions and orb levels coalesce, latest wins. |
+
+**Time.** All runtime time comes through a `Clock` trait, real or fake. The core's `SessionTime` is monotonic time since the session started. Sync with the voice uses the separate playback offset, which comes from the audio clock.
+
+### 3.2 Adapter interfaces
+
+```rust
+pub trait LlmProvider: Send + Sync {
+    fn capabilities(&self) -> LlmCapabilities; // mid-conversation system messages, tools…
+    fn stream(&self, conversation: &Conversation, cancel: CancelToken)
+        -> BoxStream<'static, Result<ChatEvent, ProviderError>>;
+}
+pub enum ChatEvent { TextDelta(String), ToolCall(ToolCall), Done { stop: StopReason, usage: Usage } }
+
+pub trait SpeechToText: Send {
+    fn push(&mut self, pcm: &[f32]);
+    fn partial(&mut self) -> Result<Option<String>, SttError>;
+    fn finish(&mut self) -> Result<String, SttError>;
+    fn set_vocabulary(&mut self, terms: &[String]); // repo symbols, recent terms
+}
+
+pub trait TextToSpeech: Send + Sync {
+    fn synthesize(&self, clause: &Clause, voice: &VoiceId, cancel: CancelToken)
+        -> BoxStream<'static, Result<TtsChunk, TtsError>>; // PCM + word timings
+}
+
+pub trait CodingHarness: Send + Sync {
+    fn run(&self, task: HarnessTask, cancel: CancelToken) -> BoxStream<'static, HarnessEvent>;
+}
+```
+
+Dynamic dispatch at these seams is fine: it happens per request or per clause, never per audio sample. Errors are hand-written enums that keep their category (`Auth`, `RateLimited { retry_after }`, `Network`, `Refused`, `BadOutput`, …).
+
+### 3.3 LLM adapters
+
+**Anthropic** (raw HTTPS and SSE; Rust has no official SDK):
+
+- **Session setup:**
+  - The system prompt is frozen for the session and identical across sessions, so it caches.
+  - The full tool set is declared once at session start, with `eager_input_streaming: true`. Tool inputs are validated against their schema before running.
+- **Every request:**
+  - `stream: true`
+  - `tool_choice` auto (forced tool choice is rejected by current models)
+  - No assistant prefill
+- **Stop reasons:** `refusal` becomes a short spoken line, and the talker opts into server-side fallbacks where the model supports them. `max_tokens` finishes the current sentence.
+- **Context injection:** the session recap, board and thread updates, and research results are appended as `role: "system"` messages, which keeps the cached prefix intact. Models without that feature get the same text as a block in the next user message.
+- **History is append-only** (I3); interruptions follow §2.7. Assistant turns are stored exactly as returned, thinking blocks included, and echoed back unchanged.
+- **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5`. Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in DECISIONS.
+
+**OpenAI-compatible** (`/v1/chat/completions`, streaming): OpenRouter, Ollama (`http://localhost:11434/v1`), LM Studio and similar. Text, tools and stop reasons map to the same `ChatEvent`.
+
+**Talker tools.** The set is fixed per session:
+
+| Tool | What it does |
+|---|---|
+| `read_file { path, start_line, end_line }` | Reads from the open repo; bounded |
+| `search_code { query, glob }` | Regex search that respects `.gitignore`; bounded |
+| `list_dir { path }` | Lists a directory |
+| `research { question, depth }` | Starts a harness task and returns at once with a task id. The result arrives later as an appended system message, and the core starts a turn to report it when the conversation is idle. |
+| `review { scope }` | A harness review, read-only |
+| `propose_change { instruction }` | Puts the core into `AwaitingConfirmation` (§3.5) |
+| `remember { kind, text, links }` | Passes through the memory policy |
+| `add_task { title, project, links }` | Adds a task |
+| `recall { query }` | Searches the index for memories, notes and digests |
+| `open_session { id }` | Brings back a past board |
+
+### 3.4 Speech
+
+- **Audio I/O.** The `AUVoiceIO` unit, through objc2 and CoreAudio bindings, gives echo cancellation, noise suppression and gain control. Capture runs at 16 kHz mono, playback at 24 kHz. Ducking of other apps' audio is set to minimum (macOS 14+).
+- **Voice activity detection.** Silero v5 on ONNX Runtime (`ort`) with 512-sample windows: speech above 0.5, silence below 0.35, a 150 ms minimum, 250 ms hangover.
+- **Speech-to-text.** whisper.cpp through `whisper-rs`, using Metal.
+  - The default model is `base.en`; `small.en` is optional.
+  - A partial is decoded every 500 ms while you speak, over the current utterance only. The final is decoded at `VoiceEnd`.
+  - Vocabulary goes in as Whisper's initial prompt: repo symbols and recent terms, capped at 200 tokens.
+- **Text-to-speech:**
+  - **Kokoro** (82M, ONNX, Apache-2.0) is the local default. English pronunciation uses a lexicon with rule-based fallback, deliberately avoiding espeak-ng, whose GPL would bind the app. Word timings come from the model's predicted durations. Spike S2 gates this.
+  - **ElevenLabs** uses HTTP streaming with timestamps (character alignment). Exact timings.
+  - **macOS system voice:** `AVSpeechSynthesizer` writing to a buffer with markers (macOS 14+). Exact timings, no download. It is used during first-run model downloads and whenever the others fail.
+- **Model files** download to the app's data folder on first run. Downloads are resumable and SHA-256 verified, the size is shown before downloading, and nothing is bundled.
+
+### 3.5 Coding harness adapters
+
+| | Claude Code | pi |
+|---|---|---|
+| **Process** | `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages --session-id <uuid> --append-system-prompt <brief>`, run in the repo | `pi --mode rpc` (strict LF-delimited JSON lines), run in the repo |
+| **Research / review** | `--permission-mode plan`, `--allowedTools Read Grep Glob` | `--tools read,grep,find,ls` |
+| **Change** | `--permission-mode acceptEdits`, on branch `boardai/<slug>` | Default tools, on branch `boardai/<slug>` |
+| **Output we read** | init, assistant text and tool use, tool results, final result | The RPC event stream |
+
+- **Common output.** Both map to `HarnessEvent`: `Progress(text)`, `FileTouched(path)`, `Finished { summary, citations }` or `Failed`.
+- **Confirmation gate (I9).** `propose_change` makes BoardAI say what will happen and on which branch. The core accepts the change only if the **next user utterance** matches the affirmative lexicon (yes, go, go ahead, do it, sure, okay). A tool result or repo content can never confirm a change, which blocks prompt injection from files.
+- **Limits.**
+  - Concurrency: 2 research or review tasks and 1 change task at a time; up to 4 more queue, and beyond that a task is refused out loud.
+  - Timeouts: 10 minutes for research, 30 for a change.
+  - Captured output is bounded to the last 256 KB.
+- **Discovery.** The harnesses are found on `PATH` at startup. Settings choose the default.
+
+### 3.6 Store (panel F)
+
+```
+~/BoardAI/                          the vault (source of truth, yours)
+  sessions/2026-10-14-request-path/
+    events.jsonl                    append-only session log
+    board.excalidraw                final board, one frame per layer
+    digest.md                       summary, diagrams, open questions, proposed memories
+  notes/<slug>.md                   one note per file; front matter: id, created, links
+  projects/<name>.md                tasks as checklist lines with ids: - [ ] Check Redis TTLs ^t27
+  memory/about-you.md               preferences and learner model, editable by hand
+  memory/facts.md                   facts about your systems
+```
+
+- **Event log.**
+  - One JSON record per line with a version: `{"v":1,"t":1234,"k":"input",…}`.
+  - It records core inputs, for re-simulating and debugging with the same build, and UI events, for replay that stays stable as the core changes.
+  - It is flushed every 250 ms and at session end, so a crash loses at most 250 ms.
+- **Vault writes.** Write a temporary file, fsync, then rename.
+- **Index.** `index.sqlite` lives in the app data folder.
+  - Tables for sessions, notes, tasks, entities and relations, plus full-text search over notes, digests and transcripts.
+  - Each row records its file's modification time and hash, and a mismatch re-indexes that file.
+  - A full rebuild is one scan of the vault.
+- **Replay audio.** BoardAI's voice will be stored as Opus in Phase 1. Your voice is never stored; replays show your words as captions.
+
+### 3.7 Protocol (core ↔ UI)
+
+- **Events (core → UI):**
+  - `Orb { state, level }`, `Caption { who, text, is_final }`, `Thread { steps, current, detours }`
+  - `OpStart { layer, op, budget_ms }`, `Freeze { layer }`, `Resume { layer, op, budget_ms }`
+  - `Layer { push | pop, title }`, `Camera { focus }`
+  - `Surface { show | update | dismiss }`, `Chip { kind, text }`
+  - `Library { … }`, `Brain { … }`, `Problem { spoken, detail }`
+- **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `OpenLibrary`, `OpenBrain`, `ReplaySeek { ms }`, `SaveSettings { … }`.
+- **Types** are defined in `core::protocol` and exported to `ui/src/protocol/generated/` by ts-rs. A stale export fails `just check`.
+- **Transport.** A Tauri `Channel` carries events in batches per frame. One `invoke("command", …)` carries commands. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
+
+### 3.8 Settings and secrets
+
+- **Settings** live in `settings.toml` in the app's config folder:
+  - providers per role (kind, model, base URL)
+  - voice
+  - vault path
+  - code roots, which are where "open the boardai repo" looks
+  - mic mode
+- **Secrets** are stored in the Keychain (`keyring`) under names that the settings reference. A secret is never put in settings, logs or the event log.
+- **First run.** The first run is the one screen that needs typing: choose providers, paste keys, watch the model downloads, and grant mic permission. It is not on the design canvas yet and gets designed in Phase 0.
+
+## 4. UI
+
+- **Structure.** One stage. Preact components for the surfaces and views, signals for captions and the thread.
+- **Renderers.** The canvas and orb renderers are plain imperative TypeScript on `requestAnimationFrame`, writing SVG directly. There is no virtual DOM on the hot path.
+- **Canvas.** The stroke engine is ported from the design prototype:
+  - generators for rough lines, ellipses, arrowheads and hachure fills
+  - stroke reveal with human pacing (slower into corners)
+  - handwriting revealed letter by letter
+
+  Randomness is seeded by element id, so a replay draws identical strokes.
+- **Freeze and resume.** The UI owns each stroke's progress. `Freeze` stops it in place, and `Resume` continues from there.
+- **Orb.** A port of the design's orb component: five blurred gradient blobs, plus the listening dot field. Its state targets are eased per frame. It pauses when the window is hidden.
+- **Animation clock.** UI time follows the session time stamped on each event batch, so strokes start where the core scheduled them.
+- **Replay mode.** `?replay=<file>` plays an `events.jsonl` with no backend. It drives UI development and side-by-side checks against the design canvas. The design's demo becomes fixture `fixtures/demo.events.jsonl`.
+- **Budgets.** At most 4 ms of script per frame. One SVG path per stroke and one per hachure fill.
+
+## 5. Limits
+
+Every bound is a named constant in its crate's `limits` module, documenting what happens when it is crossed. A limit that exists only as a literal is a defect.
+
+| Limit | Value | Owner | When crossed |
+|---|---|---|---|
+| Mic ring | 2 s | runtime::audio | Oldest frames are dropped and counted. The real-time thread never blocks. |
+| Utterance | 30 s | core | The turn ends |
+| Talker streams | 1 | core | A new request cancels the old one |
+| Speech lookahead | 4 clauses / 15 s | runtime::speech | Synthesis waits for playback |
+| Narration tag | 512 bytes | core::narration | The tag is dropped and counted |
+| Ops per response | 200 | core | The rest are dropped, and the talker is told in the next turn |
+| Detour depth | 3 | core | A spoken "let's finish this one first" |
+| Tool result | 400 lines / 64 KB | runtime::tools | Truncated, with an explicit "(N more lines)" marker |
+| Harness tasks | 2 read + 1 change, queue 4 | runtime::harness | Refused out loud |
+| Harness time | 10 min / 30 min | runtime::harness | Cancelled, with a spoken notice |
+| Provider retries | 2, jittered; 10 s deadline for the talker | runtime::llm | A spoken failure line plus a `Problem` event |
+| UI events per frame | 256 | runtime::bridge | Captions and levels coalesce |
+| Event log flush | 250 ms | runtime::store | |
+
+## 6. Errors
+
+- **Operational errors are values.** Network, auth, a provider refusal, a missing model or a bad tool input never panic. A panic means a broken invariant.
+- **The user hears the failure.** A failure becomes a short spoken line plus a caption, for example: "I lost the connection to Claude. Want me to switch to the local model?" The detail goes to the log.
+- **Errors keep their meaning.** A timeout is never reported as success, and a refusal is never reported as "no answer".
+
+## 7. Testing
+
+| Layer | How |
+|---|---|
+| Core | Unit and table tests, plus the **conversation simulator**: scripted timelines of inputs on a fake clock, asserting effects and UI events. For example, "mm-hm" at 3.2 s never stops the voice, and an interruption at word 9 commits exactly 9 words. A seeded fuzzer explores input interleavings and checks I1–I10 with no panics. |
+| Narration parser | Golden files, the split-invariance property, and random bytes (never panics, bounded memory) |
+| Runtime adapters | Recorded fixtures: SSE transcripts, stream-json and RPC logs, short WAV clips. CI uses no network. `just live` runs real-provider smoke tests with your keys, never in CI. |
+| UI | `node --test` on pure TypeScript modules (stroke generators are deterministic per seed; clock math), plus visual review in replay mode against the design |
+| End to end (Phase 1) | The app with a WAV file as the mic and fake providers, asserting `events.jsonl` |
+
+`just check` runs:
+
+- Rust: fmt, clippy with `-D warnings`, tests, `cargo deny`
+- UI: biome, typecheck, `node --test`
+- The protocol freshness check and the file-length check
+
+CI runs the same command on macOS.
+
+## 8. Observability
+
+- `tracing` spans cover each turn, with marks at voice start, final transcript, talker first token, first audio, first op, barge-in duck and barge-in stop.
+- A dev overlay (toggle with `⌘⇧L`) shows live latencies. Each session's digest records a latency summary locally.
+- Logs never contain secrets or full transcripts. Fields are bounded, and redaction runs on the log sink.
+
+## 9. Security
+
+- **API keys** live in the Keychain only, and the redaction filter covers every sink.
+- **Repo access.** Every path is canonicalized into a `RepoPath` at the boundary and must sit under a folder you opened. There is no access outside it.
+- **Prompt injection.** Repo content, docs and tool results are data. Nothing they say can trigger a change (I9). The system prompt says so, and the confirmation gate enforces it.
+- **Webview.** A strict CSP, no remote content, and minimal Tauri capabilities (the event channel and one command).
+
+## 10. Dependencies
+
+New entries need a row in [DECISIONS.md](../DECISIONS.md).
+
+| Where | Crates or packages |
+|---|---|
+| core | `serde`, `ts-rs` |
+| runtime | `tokio`, `reqwest` (rustls), `serde_json`, `rtrb`, objc2 + CoreAudio/AVFAudio bindings (audio leaf), `ort`, `whisper-rs`, `rusqlite` (bundled), `ignore`, `regex`, `tracing` |
+| app | `tauri`, `tauri-build`, `keyring`, `tracing-subscriber` |
+| ui | `preact`, `@preact/signals`, `@tauri-apps/api`; dev only: `vite`, `typescript`, `@types/node`, `@biomejs/biome`, `@tauri-apps/cli` |
+
+## 11. Phase 0 build order
+
+1. **Core skeleton.** `SessionTime`, inputs and effects, the state machine with the cue tables, and the simulator with its first scenarios.
+2. **Narration.** The parser, speakable text, clauses, the op scheduler, and board layout. All pure and fully tested.
+3. **UI.** Port the orb and stroke engine from the design, and build replay mode. The design demo as a fixture must look like the canvas.
+4. **Talker.** The Anthropic and OpenAI-compatible adapters, plus `just converse`, a text-only dev loop that prints the narration and ops (no audio).
+5. **Audio.** VoiceProcessingIO, Silero VAD and Whisper (spikes S1 and S4).
+6. **Voice.** The system voice first, then Kokoro and ElevenLabs (spike S2). The playback clock drives ops.
+7. **Steel thread.** Speak → draw → interrupt → resume, end to end. Exit when the product's Phase 0 criteria are met.
