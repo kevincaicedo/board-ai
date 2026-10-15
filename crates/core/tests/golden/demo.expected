@@ -1,0 +1,23 @@
+clause 0 [talker@0]
+  caption: "Sure."
+  speech:  "Sure."
+op 0 at clause 0 byte 0: Plan { steps: ["Client", "Edge", "LB", "API"] }
+clause 1 [talker@6]
+  caption: "It starts in the browser, then hits the CDN at the edge."
+  speech:  "It starts in the browser, then hits the CDN at the edge."
+op 1 at clause 1 byte 17: Node { id: ElementId("client"), label: "Browser", shape: Actor, placement: Auto, stack: 1 }
+op 2 at clause 1 byte 31: Step { step: Number(2) }
+op 3 at clause 1 byte 40: Node { id: ElementId("cdn"), label: "CDN", shape: Service, placement: Near { target: ElementId("client"), direction: Right }, stack: 1 }
+op 4 at clause 1 byte 40: Edge { from: ElementId("client"), to: ElementId("cdn"), label: None, style: Solid }
+clause 2 [talker@63]
+  caption: "Then the load balancer spreads it across three API pods."
+  speech:  "Then the load balancer spreads it across three API pods."
+op 5 at clause 2 byte 9: Step { step: Number(3) }
+op 6 at clause 2 byte 9: Node { id: ElementId("lb"), label: "Load balancer", shape: Service, placement: Near { target: ElementId("cdn"), direction: Right }, stack: 1 }
+op 7 at clause 2 byte 9: Edge { from: ElementId("cdn"), to: ElementId("lb"), label: None, style: Solid }
+op 8 at clause 2 byte 41: Node { id: ElementId("api"), label: "API pod", shape: Service, placement: Near { target: ElementId("lb"), direction: Right }, stack: 3 }
+op 9 at clause 2 byte 41: Edge { from: ElementId("lb"), to: ElementId("api"), label: None, style: Solid }
+clause 3 [talker@120]
+  caption: "Before touching Postgres, the service checks Redis."
+  speech:  "Before touching Postgres, the service checks Redis."
+op 10 at clause 3 byte 45: Node { id: ElementId("redis"), label: "Redis", shape: Db, placement: Near { target: ElementId("api"), direction: Below }, stack: 1 }

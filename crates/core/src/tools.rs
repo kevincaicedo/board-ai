@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{TaskId, ToolCallId};
 use crate::limits::{TOOL_ARGUMENT_MAX_BYTES, TOOL_INPUT_MAX_BYTES};
 
+mod schema;
+pub use schema::{ToolSchema, schemas};
+
 /// A validated tool call.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "tool", rename_all = "snake_case")]

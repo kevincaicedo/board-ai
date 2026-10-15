@@ -1,0 +1,42 @@
+clause 0 [talker@0]
+  caption: "Short."
+  speech:  "Short."
+clause 1 [talker@7]
+  caption: "A first clause that runs long enough, past forty bytes,"
+  speech:  "A first clause that runs long enough, past forty bytes,"
+clause 2 [talker@63]
+  caption: "then cuts at this comma, and keeps going."
+  speech:  "then cuts at this comma, and keeps going."
+clause 3 [talker@105]
+  caption: "Abbreviations like e.g. this one, i.e. that one,"
+  speech:  "Abbreviations like for example this one, that is that one,"
+clause 4 [talker@154]
+  caption: "and etc. do not end sentences."
+  speech:  "and et cetera do not end sentences."
+clause 5 [talker@185]
+  caption: "Does a question end one?"
+  speech:  "Does a question end one?"
+clause 6 [talker@210]
+  caption: "Yes!"
+  speech:  "Yes!"
+clause 7 [talker@215]
+  caption: "An ellipsis does too…"
+  speech:  "An ellipsis does too…"
+clause 8 [talker@239]
+  caption: "And a closing paren (like this.)"
+  speech:  "And a closing paren (like this.)"
+clause 9 [talker@272]
+  caption: "ends one as well."
+  speech:  "ends one as well."
+clause 10 [talker@290]
+  caption: "A newline ends a clause too"
+  speech:  "A newline ends a clause too"
+clause 11 [talker@318]
+  caption: "even without punctuation."
+  speech:  "even without punctuation."
+clause 12 [talker@344]
+  caption: "Here is a clause with no punctuation at all that keeps going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and"
+  speech:  "Here is a clause with no punctuation at all that keeps going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and going and"
+clause 13 [talker@639]
+  caption: "going and going and going until the cap cuts it on a space somewhere along the way"
+  speech:  "going and going and going until the cap cuts it on a space somewhere along the way"

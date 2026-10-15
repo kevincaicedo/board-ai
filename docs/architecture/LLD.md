@@ -44,10 +44,14 @@ pub struct Core { /* conversation, thread, board, schedule, memory candidates */
 
 impl Core {
     pub fn new(config: CoreConfig) -> Self;
+    /// Once, when the session opens: the initial orb and thread, and the session context.
+    pub fn start(&mut self, now: SessionTime, effects: &mut Vec<Effect>);
     /// The only way state changes. Same inputs at the same times → same effects.
     pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>);
 }
 ```
+
+The runtime must not deliver talker inputs from a stream after it applied that stream's `CancelTalk`; inputs carry no stream id, so the talker actor drops them.
 
 **Inputs** (runtime → core):
 
@@ -106,6 +110,16 @@ It is a **backchannel** if `VoiceEnd` arrives with less than 700 ms of voice and
 
 If neither applies within 900 ms of onset, it is an interruption. A person who keeps talking wants the floor.
 
+A cue said too fast for a partial ("wait" in 300 ms) is first taken for a backchannel; its final transcript, arriving within 600 ms of that decision, still interrupts.
+
+**Push-to-talk.** While the key is held the user keeps the floor through pauses; releasing it ends the turn as soon as the final transcript is in. Pressing it while BoardAI speaks interrupts at once, without ducking. In push-to-talk mode, voice without the key is ignored.
+
+**Joining a turn.** Thinking + `VoiceStart` joins the new words to the same turn only when nothing of the answer was heard yet. The user's message enters the history right before the turn's first assistant content, so joined words become one message.
+
+**Mute** stops the voice and the stream and drops the utterance in progress. If that utterance had words, it closes a pending change gate (I9): words cut off by mute can cancel a change, never confirm one.
+
+**Orb.** Ducked shows Listening. While speaking, the orb shows Drawing from a stroke's start until 800 ms after the last stroke's budget ends, so the nib doesn't flicker between ops.
+
 ### 2.3 Narration script
 
 The talker writes spoken text with self-closing tags inline. Text outside tags is speech. A tag sits right before the word it should start on.
@@ -135,12 +149,12 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 **Parser.** A streaming character state machine (`Text → TagOpen → Name → Attributes → Value`) with an explicit bound.
 
 - **Split-invariant.** Feeding any split of the input gives the same result as feeding it whole. This is a property test over every golden file.
-- **Tolerant.** An unknown tag, a bad attribute or a tag over 512 bytes is dropped and counted. The surrounding speech continues.
+- **Tolerant.** An unknown tag, a bad attribute or a tag over 512 bytes is dropped and counted. The surrounding speech continues. Text that only resembles a tag ("a < b", "count<limit then") is given back as speech: a malformed tag is dropped only when its name is a known tag or it already has an attribute.
 - **Never recursive, never blocking.** Tags carry no nesting. Text is released to text-to-speech as soon as a clause boundary is seen.
 
 **Speakable text.** Captions show the text as written. Text-to-speech gets a normalized version: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42". Normalization is table-driven and keeps an offset map, so timings in speakable offsets map back to caption offsets.
 
-**Clauses.** Text is cut at sentence ends, or at a comma after ≥ 40 characters, so the first clause reaches text-to-speech early. A clause is capped at 300 characters.
+**Clauses.** Text is cut at sentence ends, at a newline, or at a comma after ≥ 40 bytes, so the first clause reaches text-to-speech early. A clause is capped at 300 bytes, cut at its last space. An op is released right after the clause holding its anchor, so an anchor never names a clause that could still change.
 
 ### 2.4 Speech-to-stroke sync (panel C)
 
@@ -151,7 +165,7 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 3. The runtime reports `PlaybackAt { clause, offset_ms }` from the audio sample counter, minus the device's output latency.
 4. The core maps the playback time to a spoken character offset. Every op whose anchor is at or before that offset fires as `OpStart { op, budget_ms }`.
 5. `budget_ms` is the estimated time until the next op's anchor, clamped to 150–2500 ms. The UI finishes the stroke within the budget, so drawing never piles up.
-6. Ops with no speech between them are spaced at least 120 ms apart.
+6. Drawing ops start at least 120 ms apart (whether or not speech separates them), and strictly in narration order.
 7. Ops anchored in a clause that never played (because it was cut) are never drawn.
 
 **Invariant:** an op never starts before the audio of its anchor word has played. The simulator checks this on every run.
@@ -159,11 +173,11 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 ### 2.5 Board model and layout
 
 - A board is a stack of **layers**: the main layer, plus one per open detour.
-- Each **element** has a stable id, scoped to its layer, plus a kind, a label, geometry, and a state: `Pending`, `Drawing`, `Drawn`, `Frozen { progress }` or `Struck`.
+- Each **element** has a stable id, scoped to its layer, plus a kind, a label, geometry, and a state: `Pending` (laid out, waiting for its drawing slot), `Drawing`, `Drawn`, `Frozen { progress }` or `Struck`. An interruption removes `Pending` elements; the user never saw them.
 - A repeated id updates the element (a relabel or a strike); it never duplicates it.
 - **Layout** turns meaning into geometry on a grid of cells sized per kind.
   - `near X dir right` takes the first free cell to the right of X in the same row. A collision nudges further along the same direction.
-  - Groups grow to bound their children.
+  - Groups grow to bound their children. A grown group is sent again as a `Node` op with the same id and op, which the UI treats as a redraw of that element.
   - Edges join the nearest sides, either straight or with one curve.
 - **Stability:** layout only places new ids. It never moves an existing element. When the board outgrows the view, the camera pans instead of rearranging.
 - **Sizes:** label widths come from a metrics table for the handwritten font, kept in the core. The core outputs final geometry, and the UI only draws it.
@@ -180,7 +194,7 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 
 When an interruption is confirmed:
 
-1. `StopVoice`. The runtime fades out over 30 ms and reports the last spoken character offset. That offset defines the **heard prefix**.
+1. `StopVoice`. The runtime fades out over 30 ms and reports the last spoken character offset. That offset defines the **heard prefix**; inside a word it is interpolated from the word timings ("…checks Re"). If no answer comes within 500 ms, the last reported playback position is used; it is never ahead of the audio.
 2. The board freezes. The op being drawn becomes `Frozen { progress }`, and ops not yet started are dropped.
 3. The conversation is committed. History is **append-only**, as Claude's preserved-thinking check and prompt caching both require. Two cases:
    - **Generation still streaming:** cancel the stream. Append an assistant message containing only the heard prefix (text plus the tags of ops that were drawn, no thinking blocks), then the user's message.
@@ -215,7 +229,7 @@ Secret redaction runs at the store boundary, so nothing reaches disk unredacted.
 | I3 | The LLM conversation is append-only | Type (`Conversation` has `push` and no edit or remove) |
 | I4 | Detour depth ≤ 3, and pushes and pops balance by session end | Type (bounded stack) + simulator |
 | I5 | At most one talker stream in flight | State owns `Option<TalkerTurn>`; `CancelTalk` precedes `Talk` (simulator) |
-| I6 | Existing board elements never move | Layout API places only new ids (test) |
+| I6 | Existing board elements never move (a group's box only grows) | Layout API places only new ids (test) + simulator |
 | I7 | A backchannel never stops the voice | Table test over the lexicon |
 | I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
 | I9 | A code change never runs without your spoken yes | Deterministic gate in core (§3.5) + test |

@@ -1,0 +1,37 @@
+clause 0 [talker@0]
+  caption: "If count<limit then a < b and c <= d."
+  speech:  "If count<limit then a < b and c at most d."
+dropped NarrationTag
+dropped NarrationTag
+dropped NarrationTag
+clause 1 [talker@38]
+  caption: "Broken  tags drop,  unknown tags drop, and  closing tags drop."
+  speech:  "Broken  tags drop,  unknown tags drop, and  closing tags drop."
+dropped NarrationTag
+clause 2 [talker@101]
+  caption: "An unfinished tag gives way to the next one."
+  speech:  "An unfinished tag gives way to the next one."
+op 0 at clause 2 byte 14: Edge { from: ElementId("x"), to: ElementId("y"), label: None, style: Solid }
+clause 3 [talker@146]
+  caption: "Entities work: R and D."
+  speech:  "Entities work: R and D."
+op 1 at clause 3 byte 15: Node { id: ElementId("q"), label: "R&D \"lab\"", shape: Service, placement: Auto, stack: 1 }
+dropped NarrationTag
+dropped NarrationTag
+dropped NarrationTag
+dropped NarrationTag
+clause 4 [talker@170]
+  caption: "Bad values drop too: still speaking."
+  speech:  "Bad values drop too: still speaking."
+clause 5 [talker@207]
+  caption: "Extra attributes are fine: look here."
+  speech:  "Extra attributes are fine: look here."
+op 2 at clause 5 byte 27: Focus { target: ElementId("lb") }
+dropped NarrationTag
+clause 6 [talker@245]
+  caption: "A tag far too long is dropped."
+  speech:  "A tag far too long is dropped."
+dropped NarrationTag
+clause 7 [talker@276]
+  caption: "And the end"
+  speech:  "And the end"

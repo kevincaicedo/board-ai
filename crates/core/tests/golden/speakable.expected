@@ -1,0 +1,15 @@
+clause 0 [talker@0]
+  caption: "It calls getUserByID() in internal/user/service.go:42,"
+  speech:  "It calls get user by ID in internal slash user slash service dot go line 42,"
+clause 1 [talker@55]
+  caption: "see L42-58."
+  speech:  "see lines 42 to 58."
+clause 2 [talker@67]
+  caption: "The HTTPServer reads MAX_RETRIES from user_id,"
+  speech:  "The HTTP server reads max retries from user id,"
+clause 3 [talker@114]
+  caption: "e.g. 3.5 seconds, then std::sync takes over and `redis` -> postgres."
+  speech:  "for example 3.5 seconds, then std sync takes over and redis to postgres."
+clause 4 [talker@183]
+  caption: "The APIs and IDs stay as written."
+  speech:  "The APIs and IDs stay as written."

@@ -7,14 +7,28 @@
 //! conversations testable in a simulator and sessions replayable (docs/architecture/LLD.md §2).
 #![forbid(unsafe_code)]
 
+pub mod board;
+pub mod conversation;
 pub mod effect;
+pub mod engine;
 pub mod geometry;
 pub mod harness;
+pub mod heard;
 pub mod history;
 pub mod ids;
 pub mod input;
 pub mod limits;
 pub mod memory;
+pub mod memory_policy;
+pub mod narration;
+pub mod prompt;
 pub mod protocol;
+#[cfg(feature = "sim")]
+pub mod sim;
+pub mod surfaces;
+pub mod thread;
 pub mod time;
 pub mod tools;
+pub mod voice;
+
+pub use engine::{Core, CoreConfig, MicMode};

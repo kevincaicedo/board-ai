@@ -161,6 +161,7 @@ dependencies = [
 name = "boardai-core"
 version = "0.1.0"
 dependencies = [
+ "boardai-core",
  "serde",
  "serde_json",
  "ts-rs",

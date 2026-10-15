@@ -1,0 +1,1 @@
+It calls getUserByID() in internal/user/service.go:42, see L42-58. The HTTPServer reads MAX_RETRIES from user_id, e.g. 3.5 seconds, then std::sync takes over and `redis` -> postgres. The APIs and IDs stay as written.
