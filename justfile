@@ -27,6 +27,30 @@ files:
 live:
     BOARDAI_LIVE=1 cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1
 
+# Model files (Whisper, Silero, Kokoro, lexicon) in the app's data folder: status, or download
+# and verify the named ones (`all` for every one). `BOARDAI_MODELS_DIR` overrides the folder.
+models *names:
+    cargo run -q -p boardai-runtime --example models -- {{names}}
+
+# Plays two clauses through VoiceProcessingIO with the system voice and prints the reported
+# playback positions. Options: --text "…", --voice <id>, --list-voices, --input builtin.
+audio-probe *args:
+    cargo run -q -p boardai-runtime --example audio_probe -- {{args}}
+
+# Spike S4 (HLD §11): Whisper partial cadence and final latency on `say` speech.
+spike-s4:
+    cargo test -q -p boardai-runtime --test spikes -- --ignored --nocapture --test-threads=1 spike_s4
+
+# Spike S2 (HLD §11): Kokoro real-time factor and timing accuracy; writes sample WAVs.
+spike-s2:
+    cargo test -q -p boardai-runtime --test spikes -- --ignored --nocapture --test-threads=1 spike_s2
+
+# Spike S1 (HLD §11): the system voice plays through VoiceProcessingIO while the VAD listens on
+# its mic; counts false voice starts. Needs speakers and microphone permission for the terminal.
+# Pass `--minutes N` (default 10) and `--input builtin` to use the Mac's own microphone.
+spike-s1 *args:
+    cargo run -q -p boardai-runtime --example spike_s1 -- {{args}}
+
 # Run the desktop app with hot reload.
 dev:
     cd crates/app && ../../ui/node_modules/.bin/tauri dev

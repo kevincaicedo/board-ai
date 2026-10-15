@@ -243,7 +243,7 @@ Secret redaction runs at the store boundary, so nothing reaches disk unredacted.
 | Actor | Runs on | Talks through | Notes |
 |---|---|---|---|
 | **Audio I/O** | CoreAudio's real-time thread | Single-producer, single-consumer rings (`rtrb`): mic in (16 kHz mono f32, 2 s), voice out (24 kHz, 4 s); atomics for samples played and the duck gain | No allocation, locks or system calls in the callback |
-| **Speech in** | tokio task + one inference thread | Mic ring → orchestrator inbox | Silero VAD on 32 ms windows. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. |
+| **Speech in** | two dedicated threads (VAD, Whisper) | Mic ring → orchestrator inbox | Silero VAD on 32 ms windows. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. |
 | **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, then flushes the store. |
 | **Talker** | tokio task | Effects in, inputs out | One stream, tagged with a generation; `CancelTalk` drops it, and the orchestrator drops any of its inputs still in the inbox |
 | **Speech out** | tokio task + one inference thread | `SpeechOut` port; answers through a `SpeechOutLink`. Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings. Until it lands, `VirtualVoice` stands in: estimated timings, real-time playback, the same reports |
@@ -329,17 +329,27 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 
 ### 3.4 Speech
 
-- **Audio I/O.** The `AUVoiceIO` unit, through objc2 and CoreAudio bindings, gives echo cancellation, noise suppression and gain control. Capture runs at 16 kHz mono, playback at 24 kHz. Ducking of other apps' audio is set to minimum (macOS 14+).
-- **Voice activity detection.** Silero v5 on ONNX Runtime (`ort`) with 512-sample windows: speech above 0.5, silence below 0.35, a 150 ms minimum, 250 ms hangover.
+- **Audio I/O.** The `AUVoiceIO` unit (VoiceProcessingIO), through the objc2 bindings (`objc2-audio-toolbox`, `objc2-core-audio`, `objc2-core-audio-types`), gives echo cancellation, noise suppression and gain control. All `unsafe` lives in `runtime::audio::coreaudio`.
+  - **Rates.** The unit only initializes at its own client rate (44.1 kHz on a MacBook Pro running macOS 26; asking for 16, 22.05, 24 or 48 kHz fails with `kAudioUnitErr_FailedInitialization`). It runs mono `f32` at that rate, and an allocation-free polyphase windowed-sinc converter sits at each ring boundary: capture to the 16 kHz mic ring, the 24 kHz voice ring to the unit.
+  - **Rings.** The mic ring (2 s) overwrites its oldest frames when speech in falls behind and counts them; it is a seqlock over atomics, because `rtrb` can only refuse new items. The voice ring (4 s) is `rtrb`. A counting-allocator test proves the callbacks never allocate (law 7).
+  - **Playback clock.** The renderer counts frames taken from the voice ring (never silence or dropped frames). `PlaybackAt` = that counter minus the output latency (device latency + safety offset + IO buffer + stream latency + the unit's latency + the converter's delay; 27.6 ms on the built-in speakers). When the ring runs dry, the heard position follows the clock for one latency so `PlaybackDrained` comes when the last frame is heard.
+  - **Duck and stop.** The duck gain ramps per sample over 10 ms. `StopVoice` fades out over 30 ms, drops the rest of the ring, and answers with the counter at the end of the fade: every frame up to it reaches the speaker, nothing after it does.
+  - **Other apps.** Ducking of other apps' audio is set to the minimum (`kAUVoiceIOProperty_OtherAudioDuckingConfiguration`, macOS 14+).
+  - **Input.** The system default input, or the Mac's built-in microphone when the default is a virtual device that hears nothing. Without microphone permission macOS delivers silence, not an error.
+- **Voice activity detection.** Silero v5.1.2 on ONNX Runtime (`ort`), 512-sample windows with the model's recurrent state and 64 samples of context carried between windows: speech at or above 0.5, silence below 0.35 (in between keeps the state), a 150 ms minimum, 250 ms hangover. whisper.cpp's built-in Silero was rejected: it resets the recurrent state on every call, so it cannot follow a stream in 32 ms steps.
 - **Speech-to-text.** whisper.cpp through `whisper-rs`, using Metal.
-  - The default model is `base.en`; `small.en` is optional.
-  - A partial is decoded every 500 ms while you speak, over the current utterance only. The final is decoded at `VoiceEnd`.
-  - Vocabulary goes in as Whisper's initial prompt: repo symbols and recent terms, capped at 200 tokens.
-- **Text-to-speech:**
-  - **Kokoro** (82M, ONNX, Apache-2.0) is the local default. English pronunciation uses a lexicon with rule-based fallback, deliberately avoiding espeak-ng, whose GPL would bind the app. Word timings come from the model's predicted durations. Spike S2 gates this.
-  - **ElevenLabs** uses HTTP streaming with timestamps (character alignment). Exact timings.
-  - **macOS system voice:** `AVSpeechSynthesizer` writing to a buffer with markers (macOS 14+). Exact timings, no download. It is used during first-run model downloads and whenever the others fail.
-- **Model files** download to the app's data folder on first run. Downloads are resumable and SHA-256 verified, the size is shown before downloading, and nothing is bundled.
+  - Two dedicated threads: the VAD thread (so barge-in never waits behind a decode) and the speech-to-text thread. `VoiceStart`/`VoiceEnd` reach the orchestrator before the speech-to-text thread hears of them, so a transcript never precedes its `VoiceEnd`.
+  - The default model is `base.en`; `small.en` is optional (its decodes are 2–3× slower; see S4).
+  - A partial is decoded on a fixed 500 ms grid from the onset, over the current utterance only; a slot that comes while a decode is busy is skipped. The utterance includes 300 ms of audio before the onset.
+  - **Early final.** After 96 ms of quiet inside speech the final is decoded at once; speech that resumes discards it. The hangover (256 ms) usually hides the whole decode, so the final arrives with `VoiceEnd` (spike S4: 0–1 ms after it on `base.en`).
+  - The encoder always sees its full 30 s window. Fitting it to the utterance (`audio_ctx`) was measured and rejected: repetition loops and slower decodes.
+  - Vocabulary goes in as Whisper's initial prompt: repo symbols and recent terms, whole terms only, capped at 200 tokens.
+- **Text-to-speech.** Engines return 24 kHz audio and word timings as byte offsets into the clause's speakable text. A clause an engine fails on is retried with the system voice; if that fails too it is skipped (logged), since the core has no input for a failed clause yet.
+  - **Kokoro** (82M v1.0, ONNX, Apache-2.0) is the local default, voice `af_heart`, on one inference thread. The export used (`onnx-community/Kokoro-82M-v1.0-ONNX-timestamped`) returns each token's predicted duration (600 samples per frame), so word timings are exact. The model gives the leading pad token ~350 ms of silence; all but 50 ms is trimmed so clauses join without a stammer. Clauses over 510 phoneme tokens are split at a word.
+  - **English pronunciation without espeak-ng** (GPL): misaki's `us_gold` lexicon (Apache-2.0), then what misaki derives from it (possessives, plurals, past tenses, gerunds), unknown acronyms spelled out, camelCase and compound words split into known words, numbers read as words (a short function; `num2words` is LGPL), and table-driven letter-to-sound rules last. misaki's `us_silver` is left out: its author generated it by running espeak-ng.
+  - **ElevenLabs** uses `POST /v1/text-to-speech/{voice}/stream/with-timestamps?output_format=pcm_24000`: newline-delimited JSON with base64 16-bit PCM and the original text's character alignment, which becomes exact word timings (estimated if the alignment does not spell the clause).
+  - **macOS system voice:** `AVSpeechSynthesizer` writing to buffers with word markers (macOS 14+; 22.05 kHz, converted). Exact timings, no download. Its callbacks run on the main dispatch queue whatever thread asks, so the process's main thread must run an event loop (the app's does; headless binaries call `audio::run_main_loop_until`). It is used during first-run model downloads and whenever the others fail.
+- **Model files** download to `~/Library/Application Support/ai.boardai.desktop/models` on demand, from URLs pinned to a commit. Downloads resume with HTTP `Range` (a server that ignores it restarts the file), are SHA-256 verified before they are renamed into place, report progress, and show their size before downloading. Nothing is bundled. `just models` shows and fetches them.
 
 ### 3.5 Coding harness adapters
 
@@ -458,9 +468,21 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Limit | Value | Owner | When crossed |
 |---|---|---|---|
 | Mic ring | 2 s | runtime::audio | Oldest frames are dropped and counted. The real-time thread never blocks. |
+| Voice ring | 4 s | runtime::audio | Synthesized audio waits in speech out until playback frees room |
+| Real-time cycle | 8,192 frames | runtime::audio | A larger cycle gets silence and is counted; buffers are never grown on the real-time thread |
 | Utterance | 30 s | core | The turn ends |
 | Talker streams | 1 | core | A new request cancels the old one |
-| Speech lookahead | 4 clauses / 15 s | runtime::speech | Synthesis waits for playback |
+| Speech lookahead | 4 clauses / 15 s | runtime::speech_out | Synthesis waits for playback |
+| Playback reports | one per 20 ms | runtime::speech_out | Latest wins (`watch`) |
+| Stop acknowledgement | 250 ms | runtime::speech_out | `VoiceStopped` is answered from the counter; new audio waits for the device |
+| Clause synthesis | 15 s, 40 s of audio | runtime::speech_out | Fails with `Timeout` and the system voice is tried; audio past 40 s is cut and counted |
+| Kokoro sequence | 510 tokens | runtime::speech_out | The clause is synthesized in parts, split at a word |
+| ElevenLabs response | 16 MB, 4 MB per line | runtime::speech_out | The clause fails with `BadOutput` |
+| Speech-to-text audio | 30 s | runtime::speech_in | The rest is dropped and counted (the core ends the turn at the same length) |
+| Speech-to-text queue | 1,024 windows (~32 s) | runtime::speech_in | A window is dropped and counted |
+| Speech-in inputs | 64 | runtime::speech_in | A partial transcript is dropped and counted; voice start, end and finals wait |
+| Vocabulary prompt | 200 tokens | runtime::speech_in | Later terms are left out |
+| Model download silence | 30 s | runtime::models | Fails with `Network`; the partial file is kept for resuming |
 | Narration tag | 512 bytes | core::narration | The tag is dropped and counted |
 | Ops per response | 200 | core | The rest are dropped, and the talker is told in the next turn |
 | Detour depth | 3 | core | A spoken "let's finish this one first" |
@@ -524,7 +546,7 @@ New entries need a row in [DECISIONS.md](../DECISIONS.md).
 | Where | Crates or packages |
 |---|---|
 | core | `serde`, `ts-rs` |
-| runtime | `tokio`, `reqwest` (rustls with ring), `rustls`, `futures-util`, `serde`/`serde_json`, `toml`, `ignore`, `regex`, `tracing` (D-020); to come: `rtrb`, objc2 + CoreAudio/AVFAudio bindings (audio leaf), `ort`, `whisper-rs`, `rusqlite` (bundled) |
+| runtime | `tokio`, `reqwest` (rustls with ring), `rustls`, `futures-util`, `serde`/`serde_json`, `toml`, `ignore`, `regex`, `tracing` (D-020); `rusqlite` bundled (D-039); objc2 + CoreAudio/AVFAudio bindings and `rtrb` (audio leaf, D-054); `ort` (D-055); `whisper-rs` (D-056) |
 | app | `tauri`, `tauri-build`, `keyring-core` + `apple-native-keyring-store` (D-045); logging is the runtime's own subscriber (D-046) |
 | ui | `preact`, `@preact/signals`, `@tauri-apps/api`; dev only: `vite`, `typescript`, `@types/node`, `@biomejs/biome`, `@tauri-apps/cli` |
 

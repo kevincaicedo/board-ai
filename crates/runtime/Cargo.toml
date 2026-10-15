@@ -12,16 +12,32 @@ workspace = true
 
 [dependencies]
 boardai-core.workspace = true
+# The audio FFI leaf (`audio::coreaudio`): VoiceProcessingIO, device queries and the system voice
+# (D-040). objc2, objc2-foundation and block2 were already in the graph through Tauri.
+block2 = "0.6.2"
+objc2 = "0.6.5"
+objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = ["std", "AUComponent", "AudioComponent", "AudioOutputUnit", "AudioUnitProperties", "objc2-core-audio-types"] }
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "block2", "AVAudioBuffer", "AVAudioFormat", "AVAudioTypes", "AVSpeechSynthesis", "objc2-core-audio-types"] }
+objc2-core-audio = { version = "0.3.2", default-features = false, features = ["std", "AudioHardware", "objc2-core-audio-types"] }
+objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDate", "NSEnumerator", "NSRange", "NSRunLoop", "NSString", "NSThread"] }
 # Stream combinators and `BoxStream` for the provider and harness seams; already in the graph
 # through reqwest and hyper.
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 ignore = "0.4.33"
+# ONNX Runtime for Silero VAD and Kokoro (D-041). Exact pin: 2.0 is still a release candidate. The
+# build script downloads a prebuilt static ONNX Runtime (MIT) once and caches it.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "download-binaries", "tls-native"] }
 regex = "1.13.1"
+# The voice ring: single-producer single-consumer, wait-free, no allocation after creation (D-040).
+rtrb = "0.4.0"
 # TLS through rustls with the ring provider (installed in `llm::http`): no OpenSSL, and ring's
 # license (ISC) is simpler than aws-lc's. HTTP/2 for the long-lived streams.
 # The derived index (LLD §3.6, D-012): SQLite compiled from source with FTS5, so the index
 # never depends on the system's SQLite version or its compile options.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+# SHA-256 for model downloads; already in the graph as rustls's crypto provider (D-040).
+ring = "0.17.14"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -29,6 +45,8 @@ serde_json = "1.0.154"
 tokio = { version = "1.53.3", features = ["rt", "macros", "time", "sync", "process", "io-util", "fs"] }
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
 tracing = "0.1.44"
+# whisper.cpp with Metal for speech-to-text (D-042); its logs go to `tracing`.
+whisper-rs = { version = "0.16.0", default-features = false, features = ["metal", "tracing_backend"] }
 
 [dev-dependencies]
 # `io-std` reads typed lines in the `converse` example.

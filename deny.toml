@@ -24,6 +24,12 @@ allow = [
     "Unlicense",
     "Zlib",
 ]
+# Mozilla's root certificates as data, compiled into ureq for ort-sys's build-time download of the
+# prebuilt ONNX Runtime (it verifies against the system's trust store; the data is never linked
+# into the app). Allowed for this crate only (D-041).
+exceptions = [
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+]
 
 [bans]
 multiple-versions = "allow"

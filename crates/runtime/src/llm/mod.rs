@@ -7,7 +7,7 @@
 
 pub mod anthropic;
 mod error;
-mod http;
+pub(crate) mod http;
 pub mod openai;
 mod session;
 pub mod sse;
@@ -26,6 +26,7 @@ use crate::limits::{
     TALKER_FIRST_TOKEN_DEADLINE_MS, TALKER_MAX_TOKENS_DEFAULT,
 };
 
+pub(crate) use error::bounded_detail;
 pub use error::{ProviderError, TimeoutKind};
 
 /// The default talker (D-017). Spike S3 may change it; that is the owner's call.

@@ -375,3 +375,134 @@ pub const LOG_FIELD_MAX_BYTES: usize = 512;
 
 /// Bytes of one log line; the rest is cut and ends with `…`.
 pub const LOG_LINE_MAX_BYTES: usize = 4 * 1024;
+
+// ---------------------------------------------------------------------------------------------
+// Audio I/O (owner: runtime::audio)
+
+/// The mic ring, at 16 kHz. When speech in falls this far behind, the oldest frames are
+/// overwritten and counted as dropped; the real-time thread never waits.
+pub const MIC_RING_MS: u32 = 2_000;
+
+/// The voice ring, at 24 kHz. When it is full, synthesized audio waits in the speech-out actor
+/// until playback frees room.
+pub const VOICE_RING_MS: u32 = 4_000;
+
+/// A gain change (a duck, or its release) reaches its target over this time, ramped per sample
+/// so it never clicks.
+pub const VOICE_GAIN_RAMP_MS: u32 = 10;
+
+/// `StopVoice` fades the voice out over this time, then drops whatever is left in the ring.
+pub const VOICE_FADE_MS: u32 = 30;
+
+/// Phases of the sample-rate converter (the reduced up-sampling factor). A device rate that
+/// needs more is refused with `AudioError::UnsupportedRate`; every common rate needs at most 441.
+pub const RESAMPLER_PHASES_MAX: u32 = 1_024;
+
+/// Frames one CoreAudio callback may ask for; a larger request is answered with silence and
+/// counted, never with an allocation on the real-time thread.
+pub const AUDIO_CALLBACK_FRAMES_MAX: usize = 8_192;
+
+/// Audio devices read when looking for the built-in microphone; devices past it are not
+/// considered (a Mac has a handful).
+pub const AUDIO_DEVICES_MAX: usize = 256;
+
+// ---------------------------------------------------------------------------------------------
+// Speech out (owner: runtime::speech_out)
+
+/// Clauses synthesized ahead of what has been heard; past it synthesis waits for playback.
+pub const SPEECH_LOOKAHEAD_CLAUSES_MAX: usize = 4;
+
+/// Audio synthesized ahead of what has been heard; past it synthesis waits for playback.
+pub const SPEECH_LOOKAHEAD_MS_MAX: u32 = 15_000;
+
+/// Playback positions are reported at most this often (latest wins, through a `watch`).
+pub const PLAYBACK_REPORT_INTERVAL_MS: u64 = 20;
+
+/// Commands waiting for the speech-out actor; a sender waits when it is full.
+pub const SPEECH_OUT_COMMAND_QUEUE: usize = 64;
+
+/// Speech-out inputs (`ClauseReady`, `PlaybackDrained`, `VoiceStopped`) waiting for the
+/// orchestrator; the actor waits when it is full, so none is ever dropped.
+pub const SPEECH_OUT_EVENT_QUEUE: usize = 64;
+
+/// Time for the audio device to acknowledge a stop. Past it `VoiceStopped` is answered from the
+/// sample counter, and new audio waits until the device answers.
+pub const VOICE_STOP_ACK_TIMEOUT_MS: u64 = 250;
+
+/// Longest audio of one clause; the rest is cut and counted (a 300-byte clause is ~25 s).
+pub const TTS_CLAUSE_AUDIO_MAX_MS: u32 = 40_000;
+
+/// Time to synthesize one clause; past it the engine fails with `Timeout` and the fallback
+/// voice is tried.
+pub const TTS_CLAUSE_TIMEOUT_MS: u64 = 15_000;
+
+/// The macOS system voice must deliver its first audio within this time. Its callbacks run on
+/// the main thread, so a process whose main thread runs no event loop fails here, out loud,
+/// instead of hanging.
+pub const SYSTEM_VOICE_FIRST_AUDIO_TIMEOUT_MS: u64 = 3_000;
+
+// ---------------------------------------------------------------------------------------------
+// Speech in (owner: runtime::speech_in)
+
+/// How often the VAD thread looks for new mic audio when it has none (it sleeps in between).
+pub const VAD_POLL_INTERVAL_MS: u64 = 8;
+
+/// Audio kept before the voice onset and handed to speech-to-text with the utterance, so the
+/// first word is not clipped.
+pub const SPEECH_PREROLL_MS: u32 = 300;
+
+/// A partial transcript is decoded at most this often while you speak; a partial whose turn
+/// comes while a decode is busy is skipped.
+pub const STT_PARTIAL_INTERVAL_MS: u64 = 500;
+
+/// Longest utterance kept for speech-to-text (Whisper's window). Audio past it is dropped and
+/// counted; the core ends the turn at the same length.
+pub const STT_UTTERANCE_MAX_MS: u32 = 30_000;
+
+/// Whisper tokens of vocabulary given as the initial prompt; terms past it are left out.
+pub const STT_VOCABULARY_TOKENS_MAX: usize = 200;
+
+/// Messages (32 ms windows and controls) waiting for the speech-to-text thread: about 32 s.
+/// Past it a window is dropped and counted.
+pub const STT_QUEUE_MESSAGES: usize = 1_024;
+
+/// Speech-in inputs waiting for the orchestrator. When full, a partial transcript is dropped
+/// and counted (a newer one follows); voice start and end and final transcripts wait.
+pub const SPEECH_IN_EVENT_QUEUE: usize = 64;
+
+// ---------------------------------------------------------------------------------------------
+// Model files (owner: runtime::models)
+
+/// Silence from the server during a model download; past it the download fails with `Network`
+/// and the partial file is kept for resuming.
+pub const MODEL_DOWNLOAD_IDLE_TIMEOUT_MS: u64 = 30_000;
+
+/// Progress is reported at most every this many bytes (and at the end).
+pub const MODEL_PROGRESS_STEP_BYTES: u64 = 1024 * 1024;
+
+/// Bytes of one ElevenLabs response; past it the clause fails with `BadOutput` (a 300-byte
+/// clause is about 2 MB of base64 audio).
+pub const ELEVENLABS_RESPONSE_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// Longest line of an ElevenLabs response; a longer line fails the clause with `BadOutput`.
+pub const ELEVENLABS_LINE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Longest ElevenLabs voice id (theirs are 20 characters); a longer or non-alphanumeric id is
+/// refused with `Provider` before anything is sent.
+pub const ELEVENLABS_VOICE_ID_MAX_BYTES: usize = 64;
+
+/// Phoneme tokens in one Kokoro run (the model's 512 positions minus the two pads). A longer
+/// clause is split at a word boundary and synthesized in parts.
+pub const KOKORO_TOKENS_MAX: usize = 510;
+
+/// Largest pronunciation lexicon read (the pinned file is 3 MB); a larger file makes Kokoro
+/// unavailable and the system voice speaks instead.
+pub const LEXICON_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// How many times an unknown word is split (camelCase, compounds) before the letter-to-sound
+/// rules take what is left.
+pub const G2P_SPLIT_DEPTH_MAX: u32 = 3;
+
+/// Digit runs longer than this are read digit by digit (a phone number, an id), not as one
+/// number.
+pub const NUMBER_DIGITS_MAX: usize = 15;
