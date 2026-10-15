@@ -6,3 +6,15 @@
 //! feeds it time and inputs and carries out the effects it returns. That is what makes whole
 //! conversations testable in a simulator and sessions replayable (docs/architecture/LLD.md §2).
 #![forbid(unsafe_code)]
+
+pub mod effect;
+pub mod geometry;
+pub mod harness;
+pub mod history;
+pub mod ids;
+pub mod input;
+pub mod limits;
+pub mod memory;
+pub mod protocol;
+pub mod time;
+pub mod tools;

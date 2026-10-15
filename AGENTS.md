@@ -131,6 +131,7 @@ Design goals, in order: **correctness, then latency and performance, then develo
 just check      # everything CI runs: UI lint, typecheck, tests and build; cargo fmt, clippy -D warnings, tests, cargo deny; file lengths
 just dev        # run the desktop app with hot reload
 just fmt        # format Rust and TypeScript
+just protocol-write  # regenerate ui/src/protocol/generated after changing core::protocol
 ```
 
 The first time, run `npm --prefix ui install`. CI runs `just check` on macOS.

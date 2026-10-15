@@ -6,3 +6,6 @@ node_modules/
 *.log
 # Local run output (latency dumps, recordings) never gets committed.
 /.artifacts/
+
+# Parallel work streams (git worktrees), one per branch wip/<stream>
+/.worktrees/

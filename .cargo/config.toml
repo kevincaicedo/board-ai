@@ -1,0 +1,6 @@
+# ts-rs writes TypeScript bindings whenever `cargo test` runs. By default they go to a scratch
+# folder under target/, so a test run never touches the committed protocol. `just protocol`
+# exports into ui/src/protocol/generated, and `just check` fails when that copy is stale.
+[env]
+TS_RS_EXPORT_DIR = { value = "target/ts-rs", relative = true }
+TS_RS_IMPORT_EXTENSION = "ts"
