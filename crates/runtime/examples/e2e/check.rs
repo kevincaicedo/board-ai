@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use boardai_core::CoreConfig;
 use boardai_core::effect::{LogRecord, Milestone};
 use boardai_core::history::{AssistantPart, Message, UserPart};
-use boardai_core::input::Input;
+use boardai_core::input::{Input, StopReason};
 use boardai_core::protocol::UiEvent;
 use boardai_core::sim::check::{squash, strip_tags};
 use boardai_core::time::SessionTime;
@@ -64,6 +64,7 @@ pub fn report(
     let mut checks = vec![matches(record, &replay), anchors(&replay)];
     checks.extend(transcripts(record, clips, played));
     checks.push(answers(record, clips.len()));
+    checks.push(answers_end(record));
     checks.push(clauses_play(record, clips.len()));
     if let Some(index) = clips.iter().position(Clip::is_barge_in) {
         checks.extend(barge_in(record, &replay, clips, played, index));
@@ -222,6 +223,33 @@ fn answers(record: &Record, lines: usize) -> Check {
         Class::Pipeline,
         first_tokens >= lines && requested >= lines,
         format!("{requested} requests, {first_tokens} first tokens for {lines} lines"),
+    )
+}
+
+/// Answers that stopped at the token limit were cut off. With Ollama's default 4,096-token
+/// context and a 3,653-token system prompt and tools, that is the context filling up, not the
+/// talker's output budget.
+fn answers_end(record: &Record) -> Check {
+    let stops: Vec<&StopReason> = inputs(record)
+        .filter_map(|(_, input)| {
+            let Input::TalkerDone { stop, .. } = input else {
+                return None;
+            };
+            Some(stop)
+        })
+        .collect();
+    let cut = stops
+        .iter()
+        .filter(|stop| matches!(stop, StopReason::MaxTokens))
+        .count();
+    check(
+        "answers end on their own",
+        Class::Model,
+        cut == 0,
+        format!(
+            "{cut} of {} answers stopped at the token limit (a full context window)",
+            stops.len()
+        ),
     )
 }
 

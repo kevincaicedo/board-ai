@@ -66,7 +66,10 @@ fn speech_and_command_inputs() -> Vec<Input> {
     vec![
         Input::VoiceOnset,
         Input::VoiceStart,
-        Input::VoiceEnd { voiced_ms: 640 },
+        Input::VoiceEnd {
+            voiced_ms: 640,
+            silence_ms: 256,
+        },
         Input::Transcript {
             text: "wait, why".into(),
             is_final: true,

@@ -19,6 +19,7 @@ use super::inbox::Inbox;
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
 use crate::llm::anthropic::{AnthropicOptions, AnthropicProvider};
+use crate::llm::ollama_chat::{OllamaChatOptions, OllamaChatProvider, is_local_ollama};
 use crate::llm::openai::{OLLAMA_BASE_URL, OpenAiCompatibleProvider, OpenAiOptions};
 use crate::llm::{
     ChatEvent, ChatStream, LlmCapabilities, LlmProvider, ProviderError, TalkerConfig, ToolSpec,
@@ -253,11 +254,23 @@ fn provider_from_settings(
             Arc::new(AnthropicProvider::new(config, options).map_err(TalkerSetupError::Provider)?)
         }
         LlmKind::OpenAiCompatible => {
+            let base_url = settings
+                .base_url
+                .clone()
+                .unwrap_or_else(|| OLLAMA_BASE_URL.to_owned());
+            // Ollama on this machine is spoken to natively, so it can be asked for a context
+            // window the system prompt and a conversation fit in (D-148).
+            if is_local_ollama(&base_url) {
+                let options = OllamaChatOptions {
+                    base_url,
+                    clock,
+                    policy: None,
+                };
+                let provider = OllamaChatProvider::new(config, options);
+                return Ok(Arc::new(provider.map_err(TalkerSetupError::Provider)?));
+            }
             let options = OpenAiOptions {
-                base_url: settings
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| OLLAMA_BASE_URL.to_owned()),
+                base_url,
                 api_key: secret,
                 clock,
                 policy: None,

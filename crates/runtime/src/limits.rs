@@ -49,6 +49,24 @@ pub const SSE_LINE_MAX_BYTES: usize = 1024 * 1024;
 /// `BadOutput`.
 pub const SSE_EVENT_MAX_BYTES: usize = 1024 * 1024;
 
+/// Longest line of a newline-delimited JSON stream (Ollama's native chat); a longer line fails
+/// the stream with `BadOutput`.
+pub const NDJSON_LINE_MAX_BYTES: usize = 1024 * 1024;
+
+/// The context window the talker asks a local Ollama model for, in tokens. Ollama loads models
+/// with 4,096 by default, and the system prompt and tool schemas alone take ~3,600 of them
+/// (`boardai_core::limits::PROMPT_AND_TOOLS_MAX_BYTES`): with
+/// a conversation on top, Ollama dropped the front of the prompt (no drawing at all) or stopped
+/// answers at the window (26 of 49 `just e2e` answers). 16,384 leaves ~12,700 tokens of history,
+/// about 25 voice turns; past it Ollama drops the oldest messages and keeps the system prompt.
+/// Changing it reloads the model, so it is one value for every request.
+pub const OLLAMA_CONTEXT_TOKENS: u32 = 16_384;
+
+/// How long Ollama keeps the talker's model loaded after a request, in seconds: the session's
+/// idle limit, so a pause within a session never pays a ~5 s reload and a ~5 s prefill of the
+/// system prompt (past the talker's 10 s first-token deadline, the answer would fail).
+pub const OLLAMA_KEEP_ALIVE_SECONDS: u64 = SESSION_IDLE_TIMEOUT_MS / 1_000;
+
 /// Default output budget of a talker response, thinking included. Crossing it ends the
 /// response with `StopReason::MaxTokens` and the core finishes the current sentence.
 pub const TALKER_MAX_TOKENS_DEFAULT: u32 = 16_000;
@@ -567,9 +585,18 @@ pub const VAD_POLL_INTERVAL_MS: u64 = 8;
 /// first word is not clipped.
 pub const SPEECH_PREROLL_MS: u32 = 300;
 
-/// A partial transcript is decoded at most this often while you speak; a partial whose turn
-/// comes while a decode is busy is skipped.
+/// A partial transcript is decoded at most this often while you speak, after the early ones; a
+/// partial whose turn comes while a decode is busy is skipped.
 pub const STT_PARTIAL_INTERVAL_MS: u64 = 500;
+
+/// The first partials, in ms after the voice onset, decoded over the short audio so far, so a
+/// cue word ("wait", "stop") can stop BoardAI within the 400 ms barge-in budget (HLD §8). Then
+/// one every [`STT_PARTIAL_INTERVAL_MS`] from the last of these. Measured with `say` (five
+/// voices, ten cue phrases, `spike_turns`): a partial 256 ms after the onset hears the cue in 27
+/// of 50 clips and one of these three in 45; a Metal decode takes 37 ms (57 ms while Ollama
+/// generates). Earlier slots hear little more and misread more backchannels. A slot already
+/// past when the decode before it ends is decoded at once.
+pub const STT_EARLY_PARTIALS_AFTER_ONSET_MS: [u64; 3] = [256, 320, 384];
 
 /// Longest utterance kept for speech-to-text (Whisper's window). Audio past it is dropped and
 /// counted; the core ends the turn at the same length.

@@ -364,6 +364,27 @@ mod tests {
         assert_eq!(clauses(&out).join(" "), long.trim_end());
     }
 
+    /// The first clause, which the user waits on, ends at a comma from 16 bytes; the rest keep
+    /// the 40-byte minimum.
+    #[test]
+    fn the_first_clause_ends_at_an_earlier_comma() {
+        let out = run(
+            "Good question, it starts at the browser, then the API checks Redis, and returns.",
+            0,
+        );
+        assert_eq!(
+            clauses(&out),
+            vec![
+                "Good question, it starts at the browser,",
+                "then the API checks Redis, and returns."
+            ]
+        );
+        assert_eq!(
+            clauses(&run("A request starts at the client, then the API.", 0)),
+            vec!["A request starts at the client,", "then the API."]
+        );
+    }
+
     #[test]
     fn an_op_anchors_on_the_first_spoken_char_after_its_tag() {
         let out = run(

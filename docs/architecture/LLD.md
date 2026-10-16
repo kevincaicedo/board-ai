@@ -65,7 +65,7 @@ The runtime must not deliver talker inputs from a stream after it applied that s
 
 | Input | From | Carries |
 |---|---|---|
-| `VoiceStart`, `VoiceEnd { voiced_ms }` | speech in (VAD) | |
+| `VoiceStart`, `VoiceEnd { voiced_ms, silence_ms }` | speech in (VAD) | `silence_ms`: the silence the detector heard before it could call the end (its hangover), so the core counts the turn's silence once, from the last voiced moment |
 | `VoiceOnset` | speech in (VAD) | The first window above the speech threshold after silence, ~160 ms before `VoiceStart` can confirm speech; the voice ducks on it (§2.2) |
 | `Transcript { text, is_final }` | speech in (STT) | |
 | `Pointer { target, at }` | UI | A board element, a code line, or nothing |
@@ -93,15 +93,15 @@ Detours are not states. They are a stack inside the thread (§2.6), and speaking
 |---|---|---|---|
 | `Idle` | `VoiceStart` | `Listening` | orb → listening |
 | `Listening` | `Transcript` (partial) | `Listening` | caption |
-| `Listening` | `VoiceEnd`, and the turn sounds finished | `Thinking` | `Talk` |
-| `Listening` | `VoiceEnd`, and the turn sounds unfinished | `Listening` | `WakeAt(+1500 ms)` |
+| `Listening` | `VoiceEnd` or the final, and the final sounds finished | `Thinking` | `Talk` |
+| `Listening` | `VoiceEnd` or the final, otherwise | `Listening` | `WakeAt` 600 ms (1500 ms if it sounds unfinished) after the last voiced moment |
 | `Listening` | `Tick` (grace expired) | `Thinking` | `Talk` |
 | `Thinking` | first clause synthesized | `Speaking` | orb → speaking, captions start |
 | `Thinking` | `VoiceStart` | `Listening` | `CancelTalk`. The new words join the same turn when nothing of the answer was heard. |
 | `Speaking` | `PlaybackAt` | `Speaking` | fire due ops (§2.4) |
 | `Speaking` | `VoiceOnset` | `Speaking` | `Duck { gain: 0.25 }` at once, `WakeAt(+300 ms)`: a tentative duck |
 | `Speaking` | `Tick` (onset hold over, no `VoiceStart`) | `Speaking` | `Duck { gain: 1.0 }`, nothing else |
-| `Speaking` | `VoiceStart` | `Ducked` | `Duck { gain: 0.25 }`, `WakeAt(+900 ms)` |
+| `Speaking` | `VoiceStart` | `Ducked` | `Duck { gain: 0.25 }`, `WakeAt(+1200 ms)` |
 | `Ducked` | classified as a backchannel | `Speaking` | `Duck { gain: 1.0 }`, orb acknowledges |
 | `Ducked` | classified as an interruption, or `Tick` | `Listening` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7) |
 | `Speaking` | `PlaybackDrained` and the talker is done | `Idle` | orb → idle |
@@ -111,22 +111,29 @@ Detours are not states. They are a stack inside the thread (§2.6), and speaking
 | `Ducked` | `Command(Stop)` | `Listening` | Confirms the interruption: as the row above for an interruption |
 | `Muted` | `Command(Unmute)` | `Idle` | |
 
-**End of turn.** The turn ends after ≥ 600 ms of silence, unless the transcript ends on a continuation word ("and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "to", "of"). Then it waits up to 1500 ms. Utterances are capped at 30 s.
+**End of turn.** Silence is counted once, from the last voiced moment: `VoiceEnd` carries the silence the detector already heard (its 256 ms hangover). How long it must last depends on how the words sound (PRODUCT §6.1):
+
+- **Finished**: the segment's final transcript closes with a sentence end (`.`, `?`, `!`) and no continuation word. 250 ms, so with the real detector the turn ends the moment `VoiceEnd` and its final are in (the final is decoded during the hangover). Only a final counts: Whisper punctuates partials as if they were the end ("How does a request get?").
+- **Unfinished**: the words end on a continuation word ("and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "an", "to", "of", "is", "are", "was", "were", "when", "if", "with", "for", "my", "your", "our", "their", "into", "than", "which", "whether") or a trailing-off mark (`…`, `...`, `,`). 1500 ms.
+- **Unclear** (no punctuation, or no final yet): 600 ms.
+
+Whisper closes a fragment cut by a pause with a period or a question mark often enough ("So the leader.", measured on 18 of 40 `say` sentences paused mid-way; `spike_turns`) that a finished-sounding final can end the turn early. Nothing is lost then: the user's next words reach the core in `Thinking`, the request is cancelled, and the words join the same turn (below). The continuation list holds the function words those measurements ended on. Utterances are capped at 30 s.
 
 **Backchannel or interruption.** The decision is deterministic, and every lexicon is a table in `conversation::cues` that its tests iterate.
 
 It is an **interruption** if any of these hold:
 
-- (a) The first words contain a cue: wait, stop, hold on, hang on, what, why, how, no, actually, sorry, pause, slower, repeat, back, skip.
+- (a) The first words contain a cue: wait, stop, hold on, hang on, what, why, how, no, actually, sorry, pause, slower, repeat, back, skip. Partials count, and speech in decodes the first ones 256, 320 and 384 ms after the onset (§3.4), so a cue usually stops the voice within the 400 ms budget.
 - (b) Four or more words.
-- (c) At least 700 ms of voice.
-- (d) A pointer target was set no earlier than 1.5 s before the onset, and the words are not a backchannel. The UI reports a hover as a pointer, so a mouse drifting over a node while you say "mm-hm" must not take the floor (I7). While the pointer counts, the decision waits for the segment's final transcript: "this" said in 300 ms has no partial, and a partial ("got" of "got it") can look like more than a backchannel. Rules (a)–(c) still decide at once.
+- (c) At least 1200 ms of voice, counted live from `VoiceStart`.
+- (d) The voice ended, its final transcript is in, the words are not a backchannel, and a pointer target was set no earlier than 1.5 s before the onset.
+- (e) The same without a pointer: a short remark ("Redis?") is said to BoardAI.
 
-It is a **backchannel** if `VoiceEnd` arrives with less than 700 ms of voice and the transcript is empty or in the backchannel lexicon: mm-hm, uh-huh, yeah, yes, right, ok, okay, sure, got it, I see, nice. With a pointer target as in (d), the final transcript decides: a backchannel (or nothing) stays a backchannel, anything else interrupts.
+It is a **backchannel** when the voice ended and its final transcript is empty or in the backchannel lexicon: mm-hm, uh-huh, yeah, yes, right, ok, okay, sure, got it, I see, nice, and the spellings Whisper writes for them ("MMHM", "Mm-hum.", "Hum", "Aha!", "Yup"). The final decides, never a partial: "got" of "got it" looks like more than a backchannel, and "yes" of "yes go ahead" like one. It costs nothing: the final is decoded during the detector's hangover and arrives with `VoiceEnd`. A pointer changes only the reason: the UI reports a hover as a pointer, and a mouse drifting over a node while you say "mm-hm" must not take the floor (I7).
 
-If neither applies within 900 ms of onset, it is an interruption. A person who keeps talking wants the floor.
+If nothing decided within 1200 ms of `VoiceStart`, it is an interruption: a person who keeps talking wants the floor.
 
-A cue said too fast for a partial ("wait" in 300 ms) is first taken for a backchannel; its final transcript, arriving within 600 ms of that decision, still interrupts. That holds in `Thinking` too: a backchannel decided between clauses, while no audio was ready, leaves the core thinking, and the late cue stops the reply there.
+**Why 1200 ms** (rule (c) and the window). Measured with `say` (`spike_turns`: every phrase of the lexicon, five voices, 150 wpm to 220 wpm, the clips Whisper heard as the phrase), the detector reports up to 960 ms of voice for a backchannel (a slow "mhm"; a slow "all right" 800 ms), and the core counts its 256 ms hangover as voice until `VoiceEnd` comes, 96 ms past the voice on the `VoiceStart` clock. The old 700 ms let a slow "all right" or "mhm" stop the voice (I7). A cue no longer waits for either: the early partials decide it.
 
 **Voice onset.** `VoiceStart` can only come ~160 ms after you start talking (the detector's 150 ms minimum, counted in 32 ms windows), which would miss the 100 ms duck budget. So the detector also reports its first window above the speech threshold as `VoiceOnset`. While speaking, the core ducks on it at once and holds the duck for 300 ms (`VOICE_ONSET_DUCK_HOLD_MS`). A `VoiceStart` within the hold takes the duck over and the barge-in proceeds exactly as above; without one (a cough, a click) the gain comes back when the hold ends and nothing else changes. Onsets in any other state, and without the key in push-to-talk mode, do nothing. The core remembers the gain it last set, so a stop always leaves the voice at full gain, even when nothing was playing (a barge-in decided while the talker was still writing the next clause).
 
@@ -186,11 +193,11 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 
 **Speakable text.** Captions show the text as written. Text-to-speech gets a normalized version: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42", `client->CDN` and `API→Redis` → "client to CDN", "API to Redis". Markdown never reaches the voice: emphasis marks (`*hot path*`, `**Redis**`, `_cache_`), code marks and lone list or heading marks (`-`, `•`, `#`) are silent. Normalization is table-driven and keeps an offset map, so timings in speakable offsets map back to caption offsets.
 
-**Prompt size.** The frozen system prompt and the tool schemas together stay under `PROMPT_AND_TOOLS_MAX_BYTES` (14,400 bytes, about 3,600 gemma4 tokens), a test holds them to it: Ollama loads gemma4 with a 4,096-token context and cuts an over-long request from the front, which loses the system prompt (a 4,774-token version drew nothing in any live answer). Growing the prompt needs the runtime to ask for a larger context first.
+**Prompt size.** The frozen system prompt and the tool schemas together stay under `PROMPT_AND_TOOLS_MAX_BYTES` (14,400 bytes, about 3,600 gemma4 tokens), a test holds them to it: Ollama loads gemma4 with a 4,096-token context and cuts an over-long request from the front, which loses the system prompt (a 4,774-token version drew nothing in any live answer). A local Ollama is now asked for 16,384 tokens (§3.3), so the limit bounds the prompt's cold prefill (~5 s) and keeps Ollama reached through its OpenAI-compatible endpoint (any other address) answering.
 
 **Narration quality.** `narration::quality::assess` scores a response against the drawing rules the system prompt teaches (the drawing tags are `node`, `edge`, `annotate`, `strike`, `trace`, `participant`, `message`, `cells` and `write`): words spoken before the first drawing tag, tags standing in for a word ("Next is the `<edge …/>` from the client"), the most drawing tags piled before one word, and Markdown in speech. `just converse` prints the numbers per answer, and the prompt's tests hold its own examples to them. They are measurements, never decisions.
 
-**Clauses.** Text is cut at sentence ends, at a newline, or at a comma after ≥ 40 bytes, so the first clause reaches text-to-speech early. A clause is capped at 300 bytes, cut at its last space. An op is released right after the clause holding its anchor, so an anchor never names a clause that could still change.
+**Clauses.** Text is cut at sentence ends, at a newline, or at a comma after ≥ 40 bytes (≥ 16 bytes for a response's first clause, which the user is waiting on: "A request starts on the browser," goes to text-to-speech while the talker still writes the rest of the sentence), so the first clause reaches text-to-speech early. A clause is capped at 300 bytes, cut at its last space. An op is released right after the clause holding its anchor, so an anchor never names a clause that could still change.
 
 ### 2.4 Speech-to-stroke sync (panel C)
 
@@ -312,7 +319,7 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 | I4 | Detour depth ≤ 3, and pushes and pops balance by session end | Type (bounded stack) + simulator |
 | I5 | At most one talker stream in flight | State owns `Option<TalkerTurn>`; `CancelTalk` precedes `Talk` (simulator) |
 | I6 | Existing board elements never move (a group's box only grows) | Layout API places only new ids (test) + simulator |
-| I7 | A backchannel never stops the voice, even with a pointer target set | Table test over the lexicon, with and without a pointer + simulator |
+| I7 | A backchannel never stops the voice, even with a pointer target set | Table test over the lexicon, with and without a pointer, and at the longest measured length (960 ms of voice) + simulator |
 | I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
 | I9 | A code change never runs without your spoken yes to BoardAI's own question naming it | Deterministic gate in core (§3.5) + simulator property: the yes began after the question with that branch and instruction played to its end |
 | I10 | A "don't remember this session" leaves nothing in the vault | Store test |
@@ -395,7 +402,9 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 - **Retries and deadlines:** at most 2 jittered retries, only while nothing has been delivered (a partly delivered stream is never replayed). The first-token deadline covers the retries: 10 s for the talker, 60 s for the scribe. After the first token, 30 s of silence is a timeout. Anthropic pings while the model thinks. Jitter comes from the clock mixed by splitmix64, with no RNG.
 - **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5` at effort `medium` (set explicitly, since the model's default could change). Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in DECISIONS.
 
-**OpenAI-compatible** (`/v1/chat/completions`, streaming): OpenRouter, Ollama (`http://localhost:11434/v1`), LM Studio and similar. Text, tools and stop reasons map to the same `ChatEvent`. Context stays a `role: "system"` message (these servers accept one anywhere). Tool results become `tool` messages, and tool-call argument fragments are joined by `index`. Effort goes out as `reasoning_effort`, and `none` turns thinking off. A local thinking model needs that to talk: at `low`, `qwen3.5:2b` spent a 400-token budget reasoning and never answered; at `none` its first token came in 278 ms. The key is optional.
+**Ollama, native** (`/api/chat`, newline-delimited JSON): used instead of the OpenAI-compatible endpoint when the base URL is Ollama as installed (`localhost`, `127.0.0.1` or `::1`, port 11434; elsewhere the OpenAI-compatible adapter speaks to it). That endpoint ignores `options.num_ctx`, and Ollama loads a model with 4,096 tokens: the system prompt and tools take ~3,600, so the answer stopped at the window (26 of 49 `just e2e` answers; in a ten-turn `converse` script, from the third turn on, with no drawing after the fourth) or Ollama cut the prompt's front. Every native request carries `options.num_ctx` (`OLLAMA_CONTEXT_TOKENS`, 16,384), `options.num_predict` (the output budget), `keep_alive` (`OLLAMA_KEEP_ALIVE_SECONDS`, the session's 30 min idle limit: a reload costs ~5 s and the prompt's prefill ~5 s more, past the talker's first-token deadline) and, at effort `none`, `think: false` (other efforts leave the model's default: a model that cannot think rejects `true`). The context is one value for every request, since changing it reloads the model; past it, Ollama drops the oldest messages and keeps the system prompt. Tool calls arrive whole, with ids and object arguments, and are delivered at `done` (`stop` after calls is a tool round); a tool result goes back as a `tool` message naming its tool. `thinking` is never spoken, an `error` line fails the stream as a server error, and a body that ends without `done` is a network failure. Assistant turns are stored as Ollama's own message (`ProviderFamily::Ollama`) and echoed unchanged.
+
+**OpenAI-compatible** (`/v1/chat/completions`, streaming): OpenRouter, Ollama elsewhere (`…/v1`), LM Studio and similar. Text, tools and stop reasons map to the same `ChatEvent`. Context stays a `role: "system"` message (these servers accept one anywhere). Tool results become `tool` messages, and tool-call argument fragments are joined by `index`. Effort goes out as `reasoning_effort`, and `none` turns thinking off. A local thinking model needs that to talk: at `low`, `qwen3.5:2b` spent a 400-token budget reasoning and never answered; at `none` its first token came in 278 ms. The key is optional.
 
 **Talker tools.** The set is fixed per session:
 
@@ -425,11 +434,11 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - **Duck and stop.** The duck gain ramps per sample over 10 ms. `StopVoice` fades out over 30 ms, drops the rest of the ring, and answers with the counter at the end of the fade: every frame up to it reaches the speaker, nothing after it does.
   - **Other apps.** Ducking of other apps' audio is set to the minimum (`kAUVoiceIOProperty_OtherAudioDuckingConfiguration`, macOS 14+).
   - **Input.** `[audio] input` in settings: `system_default`, `built_in` (for a default that is a virtual device hearing nothing), or a device's name as macOS shows it (`just audio-probe --list-inputs` lists them). Without microphone permission macOS delivers silence, not an error, so the app checks the permission first (§3.1).
-- **Voice activity detection.** Silero v5.1.2 on ONNX Runtime (`ort`), 512-sample windows with the model's recurrent state and 64 samples of context carried between windows: speech at or above 0.5, silence below 0.35 (in between keeps the state), a 150 ms minimum, 250 ms hangover. The first window at or above 0.5 after silence is reported at once as `VoiceOnset`, so a voice playing over the user ducks within budget; a `VoiceStart` for the same onset follows only once speech lasts the minimum. whisper.cpp's built-in Silero was rejected: it resets the recurrent state on every call, so it cannot follow a stream in 32 ms steps.
+- **Voice activity detection.** Silero v5.1.2 on ONNX Runtime (`ort`), 512-sample windows with the model's recurrent state and 64 samples of context carried between windows: speech at or above 0.5, silence below 0.35 (in between keeps the state), a 150 ms minimum, 250 ms hangover (256 ms in windows). `VoiceEnd` carries that hangover as `silence_ms`. The hangover is the shortest that never split a `say` sentence at its commas (their pauses measured 160–224 ms; 192 ms would split 13 of 53); Silero's own tail adds p50 82 ms, p90 250 ms after the sound's end (`spike_turns`). The first window at or above 0.5 after silence is reported at once as `VoiceOnset`, so a voice playing over the user ducks within budget; a `VoiceStart` for the same onset follows only once speech lasts the minimum. whisper.cpp's built-in Silero was rejected: it resets the recurrent state on every call, so it cannot follow a stream in 32 ms steps.
 - **Speech-to-text.** whisper.cpp through `whisper-rs`, using Metal.
   - Two dedicated threads: the VAD thread (so barge-in never waits behind a decode) and the speech-to-text thread. `VoiceStart`/`VoiceEnd` reach the orchestrator before the speech-to-text thread hears of them, so a transcript never precedes its `VoiceEnd`.
   - The default model is `base.en`; `small.en` is optional (its decodes are 2–3× slower; see S4).
-  - A partial is decoded on a fixed 500 ms grid from the onset, over the current utterance only; a slot that comes while a decode is busy is skipped. The utterance includes 300 ms of audio before the onset.
+  - Partials are decoded 256, 320 and 384 ms after the onset, then every 500 ms (`STT_EARLY_PARTIALS_AFTER_ONSET_MS`), over the current utterance only; a grid slot that comes while a decode is busy is skipped. The utterance includes 300 ms of audio before the onset. The early slots let a cue word stop BoardAI within the 400 ms budget: over ten cue phrases in five voices, the partial at 256 ms hears the cue in 27 of 50 clips and one of the three in 45; they misread 2 of 450 backchannel clips ("nice" as "No", one voice). Decodes stay on Metal: 37 ms p50 (57 ms while Ollama generates) against 166 ms (195 ms) on the CPU, with the same words.
   - **Early final.** After 96 ms of quiet inside speech the final is decoded at once; speech that resumes discards it. The hangover (256 ms) usually hides the whole decode, so the final arrives with `VoiceEnd` (spike S4: 0–1 ms after it on `base.en`).
   - The encoder always sees its full 30 s window. Fitting it to the utterance (`audio_ctx`) was measured and rejected: repetition loops and slower decodes.
   - Vocabulary goes in as Whisper's initial prompt, whole terms only, capped at 200 tokens: first the board's recent labels (node and edge labels, newest first, 32 kept), then the opened repos' symbols (each folder's name, then names the code defines that look like symbols, by how often they appear; 64 kept, from a bounded scan that respects `.gitignore`). Without them Whisper heard `say`'s "Redis" as "re-dispersed".
@@ -437,7 +446,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - **Kokoro** (82M v1.0, ONNX, Apache-2.0) is the local default, voice `af_heart`, on one inference thread. The export used (`onnx-community/Kokoro-82M-v1.0-ONNX-timestamped`) returns each token's predicted duration (600 samples per frame), so word timings are exact. The model gives the leading pad token ~350 ms of silence; all but 50 ms is trimmed so clauses join without a stammer. Clauses over 510 phoneme tokens are split at a word.
   - **English pronunciation without espeak-ng** (GPL): misaki's `us_gold` lexicon (Apache-2.0), then what misaki derives from it (possessives, plurals, past tenses, gerunds), unknown acronyms spelled out, camelCase and compound words split into known words, numbers read as words (a short function; `num2words` is LGPL), and table-driven letter-to-sound rules last. misaki's `us_silver` is left out: its author generated it by running espeak-ng.
   - **ElevenLabs** uses `POST /v1/text-to-speech/{voice}/stream/with-timestamps?output_format=pcm_24000`: newline-delimited JSON with base64 16-bit PCM and the original text's character alignment, which becomes exact word timings (estimated if the alignment does not spell the clause).
-  - **macOS system voice:** `AVSpeechSynthesizer` writing to buffers with word markers (macOS 14+; 22.05 kHz, converted). Exact timings, no download. Its callbacks run on the main dispatch queue whatever thread asks, so the process's main thread must run an event loop (the app's does; headless binaries call `audio::run_main_loop_until`). It is used during first-run model downloads and whenever the others fail.
+  - **macOS system voice:** `AVSpeechSynthesizer` writing to buffers with word markers (macOS 14+; 22.05 kHz, converted). Exact timings, no download. Its callbacks run on the main dispatch queue whatever thread asks, so the process's main thread must run an event loop (the app's does; headless binaries call `audio::run_main_loop_until`). It is used during first-run model downloads and whenever the others fail. Its first utterance in a process loads the voice (512–628 ms for the first clause in `just e2e`, 43–122 ms for later ones), so choosing it queues a throwaway word first (`SystemVoice::warm_up`).
 - **Model files** download to `~/Library/Application Support/ai.boardai.desktop/models` on demand, from URLs pinned to a commit. Downloads resume with HTTP `Range` (a server that ignores it restarts the file), are SHA-256 verified before they are renamed into place, report progress, and show their size before downloading. Nothing is bundled. `just models` shows and fetches them.
 
 ### 3.5 Coding harness adapters
@@ -655,6 +664,7 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | ElevenLabs response | 16 MB, 4 MB per line | runtime::speech_out | The clause fails with `BadOutput` |
 | Speech-to-text audio | 30 s | runtime::speech_in | The rest is dropped and counted (the core ends the turn at the same length) |
 | Speech-to-text queue | 1,024 windows (~32 s) | runtime::speech_in | A window is dropped and counted |
+| Early partials | 256 / 320 / 384 ms after the onset, then every 500 ms | runtime::speech_in | A grid slot that comes during a decode is skipped; an early one is decoded as soon as the previous decode ends |
 | Speech-in inputs | 64 | runtime::speech_in | A partial transcript is dropped and counted; voice start, end and finals wait |
 | Vocabulary prompt | 200 tokens | runtime::speech_in | Later terms are left out |
 | Voice onset duck | 300 ms | core | The gain comes back; nothing else changes |
@@ -667,6 +677,9 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Pasted key | 1,024 bytes | runtime::settings | Refused before it reaches the Keychain |
 | Waiting for the microphone prompt's answer | 120 s | app::permission | The card shows what macOS reports then |
 | Ollama probe | 800 ms; 256 KiB, 64 models, 200-byte names | runtime::llm | Ollama counts as not running; past the size, a malformed answer; extra or longer names are left out |
+| Ollama context window | 16,384 tokens | runtime::llm | Ollama drops the oldest messages and keeps the system prompt |
+| Ollama keep-alive | 30 min (the session idle limit) | runtime::llm | Ollama unloads the model; the next request reloads it |
+| Newline-delimited JSON line | 1 MiB | runtime::llm | The stream fails with `BadOutput` |
 | Narration tag | 512 bytes | core::narration | The tag is dropped and counted |
 | Ops per response | 200 | core | The rest are dropped, and the talker is told in the next turn |
 | Detour depth | 3 | core | A spoken "let's finish this one first" |
@@ -703,7 +716,7 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 |---|---|---|---|
 | Talker response text | 32 KiB | core::engine | The stream is cancelled and treated as `MaxTokens`: the current sentence finishes |
 | Utterance transcript | 4 KiB | core::conversation | Cut at a char boundary |
-| Clause | 300 bytes | core::narration | Cut at its last space; a comma ends a clause from 40 bytes |
+| Clause | 300 bytes | core::narration | Cut at its last space; a comma ends a clause from 40 bytes (16 for a response's first clause) |
 | Skip after a bad tag | 2 KiB | core::narration | The parser gives up on the tag's `>` and returns to speech |
 | Element id | 64 bytes | core::narration | The tag is dropped and counted |
 | Label / title or plan step | 80 / 60 bytes | core::narration | Cut, ending with "…" |
@@ -724,9 +737,8 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 | Change instruction | 200 bytes | core::engine | `propose_change` gets an error result asking for one short sentence; nothing is proposed |
 | Tool call id / tool input / one string argument | 128 bytes / 64 KiB / 16 KiB | core::tools | The call is invalid and answered with an error |
 | Op budget / spacing | 150–2,500 ms / 120 ms | core::engine | Budgets are clamped; drawing ops wait for their slot |
-| End of turn: silence / grace / cap | 600 ms / 1,500 ms / 30 s | core::conversation | The turn ends |
-| Barge-in: decision / voice / words / pointer window / cue words | 900 ms / 700 ms / 4 / 1.5 s / 3 | core::conversation | Past any of them it is an interruption (§2.2) |
-| Late cue after a backchannel | 600 ms | core::conversation | Later finals are ignored |
+| End of turn: finished / unclear / unfinished silence, cap | 250 ms / 600 ms / 1,500 ms from the last voiced moment, 30 s | core::conversation | The turn ends |
+| Barge-in: decision / voice / words / pointer window / cue words | 1,200 ms / 1,200 ms / 4 / 1.5 s / 3 | core::conversation | Past any of them it is an interruption (§2.2) |
 | `StopVoice` answer | 500 ms | core::engine | The last reported playback position defines the heard prefix |
 | Orb drawing linger | 800 ms | core::engine | The orb returns to Speaking |
 | Captures per session | 500 | core::engine | `remember` and `add_task` answer "Not stored" and send nothing, so the core and the store agree on what "that" is |
@@ -747,7 +759,7 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 | Narration parser | Golden files, the split-invariance property, and random bytes (never panics, bounded memory) |
 | Runtime adapters | Recorded fixtures: SSE transcripts, stream-json and RPC logs, short WAV clips. CI uses no network. `just live` runs real-provider smoke tests with your keys, never in CI. |
 | UI | `node --test` on pure TypeScript modules (stroke generators are deterministic per seed; clock math), plus visual review in replay mode against the design |
-| End to end | `just e2e`, local only (it needs Ollama and the speech models, so never in `just check`). macOS `say` speaks the user's lines into a file mic that writes the mic ring in real time; everything after is the real pipeline: Silero VAD and Whisper, the core, the talker (Ollama, gemma4), the voice (system or Kokoro), the playback clock and the ops. The voice plays into a null output (real time, silent) or the speakers. It writes `events.jsonl` (replayable) and `trace.jsonl`, replays the recorded inputs through a fresh core (it must rebuild the same UI events, and gives each op's anchor for I1 against the real voice's positions), checks that each line is transcribed and answered, clauses play, the barge-in ducks, stops and commits what was heard, and reports the talker's detour separately (it depends on the model). It prints the HLD §8 latencies per turn. |
+| End to end | `just e2e`, local only (it needs Ollama and the speech models, so never in `just check`). macOS `say` speaks the user's lines into a file mic that writes the mic ring in real time; everything after is the real pipeline: Silero VAD and Whisper, the core, the talker (Ollama, gemma4), the voice (system or Kokoro), the playback clock and the ops. The voice plays into a null output (real time, silent) or the speakers. It writes `events.jsonl` (replayable) and `trace.jsonl`, replays the recorded inputs through a fresh core (it must rebuild the same UI events, and gives each op's anchor for I1 against the real voice's positions), checks that each line is transcribed and answered, clauses play, the barge-in ducks, stops and commits what was heard, and reports what depends on the model separately: the talker's detour, and answers cut at the token limit (through the OpenAI-compatible endpoint, Ollama's 4,096-token context cut 26 of 49 answers; through the native API's 16,384, none of 13, §3.3). It prints the HLD §8 latencies per turn. Measuring the speech-in rules themselves, without a talker, is `spike_turns` (`cargo test -p boardai-runtime --test spike_turns -- --ignored --nocapture --test-threads=1`). |
 
 `just check` runs:
 

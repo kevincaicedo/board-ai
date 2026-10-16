@@ -10,7 +10,8 @@
 //! - Speech must last [`MIN_SPEECH_MS`] before `Start` is reported; a shorter burst (a click, a
 //!   cough) is dropped.
 //! - Speech ends after [`HANGOVER_MS`] of silence; `voiced_ms` runs from the onset to the end of
-//!   the last speech window, without the hangover.
+//!   the last speech window, without the hangover, and `silence_ms` is the hangover itself, so
+//!   the core counts the turn's silence from the last speech window (LLD §2.2).
 
 use crate::audio::MIC_RATE_HZ;
 
@@ -45,8 +46,9 @@ pub enum VadEvent {
     Onset { onset_frame: u64 },
     /// Speech started at `onset_frame` (the first frame of its first window).
     Start { onset_frame: u64 },
-    /// Speech ended; `voiced_ms` is its length without the hangover.
-    End { voiced_ms: u32 },
+    /// Speech ended; `voiced_ms` is its length without the hangover, `silence_ms` the silence
+    /// heard since its last speech window.
+    End { voiced_ms: u32, silence_ms: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,8 +149,10 @@ impl VadMachine {
                 if silent_frames >= u64::from(HANGOVER_MS) * FRAMES_PER_MS {
                     self.state = State::Silence;
                     let voiced_ms = (last_speech_end - onset) / FRAMES_PER_MS;
+                    let silence_ms = (end - last_speech_end) / FRAMES_PER_MS;
                     return Some(VadEvent::End {
                         voiced_ms: u32::try_from(voiced_ms).unwrap_or(u32::MAX),
+                        silence_ms: u32::try_from(silence_ms).unwrap_or(u32::MAX),
                     });
                 }
                 self.state = State::Speech {
@@ -204,7 +208,16 @@ mod tests {
         // 150 ms needs 5 windows (160 ms): reported at window 3 + 4.
         assert_eq!(events[1], (7, VadEvent::Start { onset_frame }));
         // 250 ms of silence needs 8 windows (256 ms): window 13 + 7.
-        assert_eq!(events[2], (20, VadEvent::End { voiced_ms: 320 }));
+        assert_eq!(
+            events[2],
+            (
+                20,
+                VadEvent::End {
+                    voiced_ms: 320,
+                    silence_ms: 256
+                }
+            )
+        );
         assert_eq!(events.len(), 3);
     }
 
@@ -252,7 +265,16 @@ mod tests {
         // Speech, then the band: speech goes on and the band counts as voiced.
         let sequence = [repeat(0.9, 6), repeat(0.4, 10), repeat(0.1, 8)].concat();
         let events = run(&sequence);
-        assert_eq!(events[2], (23, VadEvent::End { voiced_ms: 512 }));
+        assert_eq!(
+            events[2],
+            (
+                23,
+                VadEvent::End {
+                    voiced_ms: 512,
+                    silence_ms: 256
+                }
+            )
+        );
         // A candidate that dips into the band but not below silence still starts.
         let sequence = [repeat(0.9, 2), repeat(0.4, 3), repeat(0.9, 1)].concat();
         assert_eq!(
@@ -276,7 +298,13 @@ mod tests {
         let events = run(&sequence);
         assert_eq!(events.len(), 3, "{events:?}");
         // 6 + 7 + 6 windows from onset to the last speech: 19 × 32 ms.
-        assert_eq!(events[2].1, VadEvent::End { voiced_ms: 608 });
+        assert_eq!(
+            events[2].1,
+            VadEvent::End {
+                voiced_ms: 608,
+                silence_ms: 256
+            }
+        );
     }
 
     #[test]

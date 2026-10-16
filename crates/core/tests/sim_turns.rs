@@ -6,7 +6,8 @@ mod common;
 use boardai_core::effect::{Effect, Gain};
 use boardai_core::input::Input;
 use boardai_core::limits::{
-    END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS, OP_SPACING_MIN_MS, UTTERANCE_MAX_MS,
+    END_OF_TURN_FINISHED_SILENCE_MS, END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS,
+    OP_SPACING_MIN_MS, UTTERANCE_MAX_MS,
 };
 use boardai_core::protocol::{MicAction, OrbState, Speaker, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
@@ -29,8 +30,12 @@ fn a_plain_explain_turn_draws_in_sync_with_speech() {
     sim.run_until(30_000);
     // I1 is checked on every op by the simulator.
     assert_clean(&sim);
+    // The final ends with a period: the sentence sounds finished.
     let voice_end = 9 * USER_MS_PER_WORD;
-    assert_eq!(talks(&sim), vec![voice_end + END_OF_TURN_SILENCE_MS]);
+    assert_eq!(
+        talks(&sim),
+        vec![voice_end + END_OF_TURN_FINISHED_SILENCE_MS]
+    );
     let starts = op_starts(&sim);
     assert_eq!(starts.len(), 7, "four nodes and three edges");
     for pair in starts.windows(2) {

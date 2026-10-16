@@ -39,8 +39,20 @@ const LEAD_IN_KEEP_FRAMES: usize = 2;
 /// Style vectors in a voice file: one per token count from 1 to 510.
 const STYLE_ROWS: usize = 510;
 const STYLE_VALUES: usize = 256;
-/// CPU threads for one inference.
-const INTRA_THREADS: usize = 4;
+/// CPU threads for one inference: the cores beyond four (Apple's efficiency cores, and room for
+/// Whisper's and the detector's threads), within these bounds. Measured with spike S2 on an M4
+/// Pro (14 cores): 4 threads RTF 0.182, 6 0.143, 7 0.139, 8 0.126, so the first clause of an
+/// answer ("Then the request reaches the load balancer,", 2.6 s) takes 348 ms instead of 494 ms.
+/// An 8-core M1 keeps the 4 threads it had (S2 has not run on one).
+const INTRA_THREADS_MIN: usize = 4;
+const INTRA_THREADS_MAX: usize = 8;
+
+fn intra_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(INTRA_THREADS_MIN, |cores| cores.get().saturating_sub(4))
+        .clamp(INTRA_THREADS_MIN, INTRA_THREADS_MAX)
+}
+
 /// The only voice this build ships with (D-011: one default voice).
 pub const KOKORO_VOICE: &str = "af_heart";
 
@@ -149,7 +161,7 @@ impl Engine {
         let model = |error: ort::Error| unavailable(&format!("Kokoro model: {error}"));
         let session = Session::builder()
             .map_err(model)?
-            .with_intra_threads(INTRA_THREADS)
+            .with_intra_threads(intra_threads())
             .map_err(|error| model(error.into()))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|error| model(error.into()))?

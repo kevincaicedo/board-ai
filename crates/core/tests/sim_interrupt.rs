@@ -34,7 +34,13 @@ fn interrupt_at_word(sim: &mut Sim, word: usize) {
             is_final: false,
         },
     );
-    sim.at(begin + 700, Input::VoiceEnd { voiced_ms: 690 });
+    sim.at(
+        begin + 700,
+        Input::VoiceEnd {
+            voiced_ms: 690,
+            silence_ms: 0,
+        },
+    );
     sim.at(
         begin + 820,
         Input::Transcript {
@@ -147,6 +153,8 @@ fn an_interruption_at_word_nine_after_the_reply_is_stored_adds_a_note() {
     );
 }
 
+/// "wait" in 280 ms has no partial: its final decides, and the voice is never brought back up
+/// first (it used to be acknowledged as a backchannel, then stopped by the late final).
 #[test]
 fn a_cue_said_too_fast_for_a_partial_still_interrupts() {
     let mut sim = Sim::new(config());
@@ -163,7 +171,10 @@ fn a_cue_said_too_fast_for_a_partial_still_interrupts() {
         .map(|(at, _)| at.as_ms())
         .collect();
     assert_eq!(stops.len(), 1);
-    assert!(count(&sim, |effect| *effect == Effect::Ui(UiEvent::Acknowledge)) == 1);
+    assert_eq!(
+        count(&sim, |effect| *effect == Effect::Ui(UiEvent::Acknowledge)),
+        0
+    );
 }
 
 /// Rule (d): pointing interrupts as soon as the words are known not to be a backchannel. "this"
@@ -280,7 +291,13 @@ fn resume_finishes_the_frozen_op_first() {
     let at = sim.now().as_ms() + 200;
     sim.mic(at, MicAction::TalkDown);
     sim.at(at + 50, Input::VoiceStart);
-    sim.at(at + 800, Input::VoiceEnd { voiced_ms: 750 });
+    sim.at(
+        at + 800,
+        Input::VoiceEnd {
+            voiced_ms: 750,
+            silence_ms: 0,
+        },
+    );
     sim.mic(at + 850, MicAction::TalkUp);
     sim.at(
         at + 900,
@@ -393,9 +410,8 @@ fn the_gain_is_restored_after_an_interruption_over_a_silent_voice() {
     );
 }
 
-/// Review finding 10: a cue said too fast for a partial is taken for a backchannel; when no
-/// clause was ready at that moment the backchannel left the core in Thinking, and the final
-/// "wait" that came next was ignored (LLD §2.2 says it still interrupts).
+/// Review finding 10: a cue said too fast for a partial, while no clause is ready (between
+/// clauses), still interrupts: its final decides, so it is never taken for a backchannel first.
 #[test]
 fn a_late_cue_interrupts_even_between_clauses() {
     let mut sim = Sim::new(config());
@@ -418,7 +434,7 @@ fn a_late_cue_interrupts_even_between_clauses() {
     let acknowledged = sim
         .effects()
         .any(|(_, effect)| *effect == Effect::Ui(UiEvent::Acknowledge));
-    assert!(acknowledged, "first taken for a backchannel");
+    assert!(!acknowledged, "never taken for a backchannel");
     let stopped = sim
         .effects()
         .any(|(at_effect, effect)| at_effect.as_ms() > at && *effect == Effect::CancelTalk);

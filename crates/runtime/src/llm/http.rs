@@ -85,13 +85,16 @@ async fn read_bounded(mut response: reqwest::Response) -> Vec<u8> {
     body
 }
 
-/// The provider's `error.message` when the body is the usual JSON error, else the body text.
+/// The provider's `error.message` when the body is the usual JSON error (Ollama's native API
+/// sends `error` as a string), else the body text.
 pub(crate) fn error_message(body: &[u8]) -> String {
     let parsed: Option<serde_json::Value> = serde_json::from_slice(body).ok();
-    let message = parsed
-        .as_ref()
-        .and_then(|value| value.pointer("/error/message"))
-        .and_then(serde_json::Value::as_str);
+    let message = parsed.as_ref().and_then(|value| {
+        value
+            .pointer("/error/message")
+            .or_else(|| value.pointer("/error"))
+            .and_then(serde_json::Value::as_str)
+    });
     match message {
         Some(message) => bounded_detail(message),
         None => bounded_detail(&String::from_utf8_lossy(body)),

@@ -1,8 +1,9 @@
 //! One user utterance: transcript segments, voice activity, and when the turn ends (LLD §2.2).
 
-use crate::conversation::cues;
+use crate::conversation::cues::{self, Completeness};
 use crate::limits::{
-    END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS, UTTERANCE_MAX_BYTES, UTTERANCE_MAX_MS,
+    END_OF_TURN_FINISHED_SILENCE_MS, END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS,
+    UTTERANCE_MAX_BYTES, UTTERANCE_MAX_MS,
 };
 use crate::time::SessionTime;
 
@@ -15,6 +16,8 @@ pub struct Utterance {
     partial: String,
     voice_started_at: Option<SessionTime>,
     voiced_ms: u64,
+    /// The last voiced moment of the last segment: `VoiceEnd` minus the silence the detector
+    /// already heard. The turn's silence counts from here.
     last_voice_end: Option<SessionTime>,
     final_after_voice_end: bool,
     released: bool,
@@ -48,10 +51,12 @@ impl Utterance {
     }
 
     /// `voiced_ms` comes from the voice detector; it is more exact than our own clock span.
-    pub fn voice_end(&mut self, now: SessionTime, voiced_ms: u32) {
+    /// `silence_ms` is the silence it heard before calling the end, so the silence that ends the
+    /// turn is counted once (it never reaches back before the utterance began).
+    pub fn voice_end(&mut self, now: SessionTime, voiced_ms: u32, silence_ms: u32) {
         self.voice_started_at = None;
         self.voiced_ms = self.voiced_ms.saturating_add(u64::from(voiced_ms));
-        self.last_voice_end = Some(now);
+        self.last_voice_end = Some(now.minus_ms(u64::from(silence_ms)).max(self.started_at));
         self.final_after_voice_end = false;
     }
 
@@ -125,7 +130,10 @@ impl Utterance {
     }
 
     /// When the turn ends if nothing else happens, or `None` while the user is speaking.
-    /// Silence ends it; a transcript that sounds unfinished earns the grace period instead.
+    /// Silence from the last voiced moment ends it, as long as the words sound (PRODUCT §6.1):
+    /// a final transcript that sounds finished ends it soonest, words that sound unfinished
+    /// earn the grace period, and anything else waits the usual silence. Only a final can
+    /// sound finished: Whisper punctuates partials as if they were the end.
     #[must_use]
     pub fn end_of_turn_at(&self) -> Option<SessionTime> {
         if self.is_voice_active() {
@@ -135,10 +143,10 @@ impl Utterance {
         if self.released && self.final_after_voice_end {
             return Some(base);
         }
-        let wait_ms = if cues::ends_unfinished(&self.text()) {
-            END_OF_TURN_GRACE_MS
-        } else {
-            END_OF_TURN_SILENCE_MS
+        let wait_ms = match cues::completeness(&self.text()) {
+            Completeness::Unfinished => END_OF_TURN_GRACE_MS,
+            Completeness::Finished if self.final_after_voice_end => END_OF_TURN_FINISHED_SILENCE_MS,
+            Completeness::Finished | Completeness::Unclear => END_OF_TURN_SILENCE_MS,
         };
         Some(base.plus_ms(wait_ms))
     }
@@ -165,7 +173,10 @@ pub fn truncate_at_char(text: &mut String, max_bytes: usize) {
 #[cfg(test)]
 mod tests {
     use super::{Utterance, truncate_at_char};
-    use crate::limits::{END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS, UTTERANCE_MAX_MS};
+    use crate::limits::{
+        END_OF_TURN_FINISHED_SILENCE_MS, END_OF_TURN_GRACE_MS, END_OF_TURN_SILENCE_MS,
+        UTTERANCE_MAX_MS,
+    };
     use crate::time::SessionTime;
 
     fn at(ms: u64) -> SessionTime {
@@ -176,14 +187,14 @@ mod tests {
     fn silence_ends_a_finished_sentence_and_grace_covers_an_unfinished_one() {
         let mut utterance = Utterance::start(at(0), true);
         assert_eq!(utterance.end_of_turn_at(), None);
-        utterance.voice_end(at(1_000), 1_000);
+        utterance.voice_end(at(1_000), 1_000, 0);
         utterance.transcript("how does the leader get elected", true);
         assert_eq!(
             utterance.end_of_turn_at(),
             Some(at(1_000 + END_OF_TURN_SILENCE_MS))
         );
         utterance.voice_start(at(1_200));
-        utterance.voice_end(at(2_000), 800);
+        utterance.voice_end(at(2_000), 800, 0);
         utterance.transcript("so the leader and", true);
         assert_eq!(
             utterance.text(),
@@ -195,6 +206,50 @@ mod tests {
         );
         assert_eq!(utterance.voiced_ms(at(5_000)), 1_800);
         assert_eq!(utterance.cap_at(), at(UTTERANCE_MAX_MS));
+    }
+
+    /// The detector's hangover is silence already heard: the turn counts it once (the bug
+    /// measured in T-010: 250 ms of hangover, then 600 ms more).
+    #[test]
+    fn the_detectors_silence_counts_toward_the_end_of_the_turn() {
+        let mut utterance = Utterance::start(at(0), true);
+        utterance.voice_end(at(1_256), 1_000, 256);
+        utterance.transcript("show me the code", true);
+        assert_eq!(
+            utterance.end_of_turn_at(),
+            Some(at(1_000 + END_OF_TURN_SILENCE_MS))
+        );
+        // Never before the utterance began, whatever the detector says.
+        let mut short = Utterance::start(at(500), true);
+        short.voice_end(at(600), 100, 400);
+        assert_eq!(
+            short.end_of_turn_at(),
+            Some(at(500 + END_OF_TURN_SILENCE_MS))
+        );
+    }
+
+    /// PRODUCT §6.1: a final that sounds finished ends the turn soonest; a partial never does,
+    /// and a trailing-off mark or a continuation word earns the grace.
+    #[test]
+    fn a_finished_final_ends_the_turn_soonest() {
+        let cases: [(&str, bool, u64); 6] = [
+            ("Why Redis first?", true, END_OF_TURN_FINISHED_SILENCE_MS),
+            ("Okay, go on.", true, END_OF_TURN_FINISHED_SILENCE_MS),
+            ("How does a request get?", false, END_OF_TURN_SILENCE_MS),
+            ("OK go on", true, END_OF_TURN_SILENCE_MS),
+            ("So the leader...", true, END_OF_TURN_GRACE_MS),
+            ("So the leader and the.", true, END_OF_TURN_GRACE_MS),
+        ];
+        for (text, is_final, wait_ms) in cases {
+            let mut utterance = Utterance::start(at(0), true);
+            utterance.voice_end(at(1_256), 1_000, 256);
+            utterance.transcript(text, is_final);
+            assert_eq!(
+                utterance.end_of_turn_at(),
+                Some(at(1_000 + wait_ms)),
+                "{text} (final: {is_final})"
+            );
+        }
     }
 
     #[test]

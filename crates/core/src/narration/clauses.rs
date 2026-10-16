@@ -1,14 +1,16 @@
 //! Cutting speech into clauses and anchoring ops to them (LLD §2.3, §2.4).
 //!
-//! A clause ends at a sentence end, at a comma once it is [`CLAUSE_COMMA_MIN_BYTES`] long, at a
-//! newline, or at [`CLAUSE_MAX_BYTES`] (on the last space when there is one). Each boundary needs
-//! only the whitespace after it, so a clause is released the moment that whitespace arrives.
+//! A clause ends at a sentence end, at a comma once it is [`CLAUSE_COMMA_MIN_BYTES`] long
+//! ([`CLAUSE_FIRST_COMMA_MIN_BYTES`] for the stream's first clause, which the user is waiting
+//! on), at a newline, or at [`CLAUSE_MAX_BYTES`] (on the last space when there is one). Each
+//! boundary needs only the whitespace after it, so a clause is released the moment that
+//! whitespace arrives.
 //!
 //! An op's anchor is the first spoken char after its tag. Ops are held until their clause is cut
 //! and then released right after it, so an anchor never names a clause that could still change.
 
 use crate::conversation::cues;
-use crate::limits::{CLAUSE_COMMA_MIN_BYTES, CLAUSE_MAX_BYTES};
+use crate::limits::{CLAUSE_COMMA_MIN_BYTES, CLAUSE_FIRST_COMMA_MIN_BYTES, CLAUSE_MAX_BYTES};
 use crate::narration::ops::NarrationOp;
 use crate::narration::speakable::Speakable;
 use crate::narration::{Clause, ClauseOrigin, NarrationOutput, StreamAnchor, StreamOp};
@@ -73,7 +75,12 @@ impl ClauseCutter {
         self.caption_len += ch.len_utf8();
         if ch.is_whitespace() {
             let before = &self.open[..self.open.len() - ch.len_utf8()];
-            let comma = before.ends_with(',') && before.len() >= CLAUSE_COMMA_MIN_BYTES;
+            let comma_min_bytes = if self.next_clause == 0 {
+                CLAUSE_FIRST_COMMA_MIN_BYTES
+            } else {
+                CLAUSE_COMMA_MIN_BYTES
+            };
+            let comma = before.ends_with(',') && before.len() >= comma_min_bytes;
             if ch == '\n' || comma || ends_sentence(before) {
                 self.cut(out);
             }

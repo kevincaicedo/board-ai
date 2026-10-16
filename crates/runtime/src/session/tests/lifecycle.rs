@@ -116,7 +116,7 @@ async fn a_muted_session_rests_and_wakes_only_on_unmute() {
     assert_eq!(recorder.lifecycle(), vec!["start", "digest"]);
     // Noise while muted and resting opens nothing.
     assert!(link.voice_start().await.is_ok());
-    assert!(link.voice_end(400).await.is_ok());
+    assert!(link.voice_end(400, 0).await.is_ok());
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(recorder.lifecycle(), vec!["start", "digest"]);
     let unmute = UiCommand::Mic {

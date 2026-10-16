@@ -66,10 +66,12 @@ impl Checker {
         self.violations.push(format!("{} ms: {what}", now.as_ms()));
     }
 
-    /// A backchannel was scripted at `start`; I7 says no `StopVoice` may follow it.
+    /// A backchannel was scripted at `start`; I7 says no `StopVoice` may follow it while it is
+    /// decided (by its final, or the window's end). Past that, a stop belongs to whatever the
+    /// user says next.
     pub fn expect_backchannel(&mut self, start: SessionTime, core: &Core) {
         if *core.state() == ConversationState::Speaking {
-            let end = start.plus_ms(BARGE_IN_DECISION_MS * 2);
+            let end = start.plus_ms(BARGE_IN_DECISION_MS);
             self.backchannels.push((start, end));
         }
     }

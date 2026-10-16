@@ -8,7 +8,9 @@
 pub mod anthropic;
 mod error;
 pub(crate) mod http;
+mod ndjson;
 pub mod ollama;
+pub mod ollama_chat;
 pub mod openai;
 mod session;
 pub mod sse;

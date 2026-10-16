@@ -37,6 +37,9 @@ pub struct SystemVoice {
     synthesizer: Arc<SystemSynthesizer>,
 }
 
+/// What the voice says, into nowhere, to warm up.
+const WARM_UP_TEXT: &str = "Hello.";
+
 impl SystemVoice {
     /// Starts the synthesizer thread.
     pub fn new() -> Result<Self, TtsError> {
@@ -46,6 +49,18 @@ impl SystemVoice {
         Ok(Self {
             synthesizer: Arc::new(synthesizer),
         })
+    }
+
+    /// Says a word into nowhere, so loading `voice` does not delay the first clause: the first
+    /// utterance of a process took 512–628 ms to synthesize in `just e2e`, later ones 43–122 ms.
+    /// It returns at once; the synthesizer thread does it before any clause queued after it.
+    pub fn warm_up(&self, voice: &VoiceId) {
+        let identifier = (!voice.is_default()).then(|| voice.as_str().to_owned());
+        // The events are not wanted: the receiver is dropped, and the thread's sends fail
+        // silently.
+        let _events =
+            self.synthesizer
+                .speak(WARM_UP_TEXT.to_owned(), identifier, CancelToken::new());
     }
 }
 

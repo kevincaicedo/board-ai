@@ -98,7 +98,10 @@ async fn inputs_and_records_round_trip_for_re_simulation() {
                 text: "Found in your vault".into(),
             },
         },
-        Input::VoiceEnd { voiced_ms: 900 },
+        Input::VoiceEnd {
+            voiced_ms: 900,
+            silence_ms: 256,
+        },
     ];
     for (index, input) in inputs.iter().enumerate() {
         store.log_input(at(index as u64 * 10), input.clone());

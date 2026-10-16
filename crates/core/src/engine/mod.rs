@@ -120,7 +120,6 @@ pub struct Core {
     suggesting: bool,
     wakes: BTreeSet<SessionTime>,
     push_to_talk_held: bool,
-    backchannel_at: Option<SessionTime>,
     /// A voice onset ducked the voice tentatively; the gain comes back at this time unless a
     /// barge-in takes the duck over first.
     onset_duck_until: Option<SessionTime>,
@@ -162,7 +161,6 @@ impl Core {
             suggesting: false,
             wakes: BTreeSet::new(),
             push_to_talk_held: false,
-            backchannel_at: None,
             onset_duck_until: None,
             gain: Gain::FULL,
             next_task: 0,
@@ -200,7 +198,10 @@ impl Core {
         match input {
             Input::VoiceOnset => self.on_voice_onset(now, effects),
             Input::VoiceStart => self.on_voice_start(now, effects),
-            Input::VoiceEnd { voiced_ms } => self.on_voice_end(now, voiced_ms, effects),
+            Input::VoiceEnd {
+                voiced_ms,
+                silence_ms,
+            } => self.on_voice_end(now, voiced_ms, silence_ms, effects),
             Input::Transcript { text, is_final } => {
                 self.on_transcript(now, &text, is_final, effects);
             }

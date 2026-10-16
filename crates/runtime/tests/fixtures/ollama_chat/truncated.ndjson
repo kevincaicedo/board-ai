@@ -1,0 +1,4 @@
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.495664Z","message":{"role":"assistant","content":"A"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.514843Z","message":{"role":"assistant","content":" load"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.531629Z","message":{"role":"assistant","content":" balancer"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.548524Z","message":{"role":"assistant","content":" distributes"},"done":false}

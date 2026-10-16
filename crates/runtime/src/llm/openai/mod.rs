@@ -13,7 +13,7 @@ use self::decode::OpenAiDecoder;
 use self::request::FrozenRequest;
 use super::error::ProviderError;
 use super::http::{RequestSpec, build_client, endpoint};
-use super::session::{self, SessionParts};
+use super::session::{self, Framing, SessionParts};
 use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig};
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
@@ -83,6 +83,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
             policy: self.policy,
             clock: Arc::clone(&self.clock),
             provider: "openai_compatible",
+            framing: Framing::Sse,
         };
         session::open(parts, OpenAiDecoder::default(), cancel)
     }

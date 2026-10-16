@@ -1,5 +1,6 @@
-//! The streaming session both providers share: connect, retry before the first token, read the
-//! SSE body under deadlines, and hand events to a provider-specific [`Decoder`].
+//! The streaming session every provider shares: connect, retry before the first token, read the
+//! body (SSE, or newline-delimited JSON for Ollama's native API) under deadlines, and hand events
+//! to a provider-specific [`Decoder`].
 //!
 //! The stream owns the HTTP response, so dropping the stream drops the connection: that is the
 //! cancellation path, and no task is spawned.
@@ -15,6 +16,7 @@ use tokio::time::Instant;
 
 use super::error::{ProviderError, TimeoutKind, bounded_detail};
 use super::http::{self, RequestSpec};
+use super::ndjson::NdjsonParser;
 use super::sse::{SseEvent, SseParser};
 use super::{ChatEvent, ChatStream, RetryPolicy};
 use crate::cancel::CancelToken;
@@ -42,12 +44,60 @@ pub(crate) enum Flow {
     Done,
 }
 
+/// How a provider frames its streamed body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Framing {
+    /// Server-Sent Events (Anthropic, OpenAI-compatible servers).
+    Sse,
+    /// One JSON object per line (Ollama's native API); each line reaches the decoder as an
+    /// event's data.
+    NdJson,
+}
+
+/// The framing's parser.
+#[derive(Debug)]
+enum Framer {
+    Sse(SseParser),
+    NdJson(NdjsonParser),
+}
+
+impl Framer {
+    fn new(framing: Framing) -> Self {
+        match framing {
+            Framing::Sse => Self::Sse(SseParser::new()),
+            Framing::NdJson => Self::NdJson(NdjsonParser::new()),
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8], out: &mut Vec<SseEvent>) -> Result<(), String> {
+        match self {
+            Self::Sse(parser) => parser.push(bytes, out).map_err(|error| error.to_string()),
+            Self::NdJson(parser) => parser.push(bytes, out).map_err(|error| error.to_string()),
+        }
+    }
+
+    fn finish(&mut self) {
+        let _discarded = match self {
+            Self::Sse(parser) => parser.finish(),
+            Self::NdJson(parser) => parser.finish(),
+        };
+    }
+
+    fn framing(&self) -> Framing {
+        match self {
+            Self::Sse(_) => Framing::Sse,
+            Self::NdJson(_) => Framing::NdJson,
+        }
+    }
+}
+
 pub(crate) struct SessionParts {
     pub client: reqwest::Client,
     pub request: Result<RequestSpec, ProviderError>,
     pub policy: RetryPolicy,
     pub clock: Arc<dyn Clock>,
     pub provider: &'static str,
+    pub framing: Framing,
 }
 
 /// Starts a stream. Nothing happens until it is polled.
@@ -63,7 +113,7 @@ pub(crate) fn open<D: Decoder>(parts: SessionParts, decoder: D, cancel: CancelTo
         clock: parts.clock,
         provider: parts.provider,
         decoder,
-        parser: SseParser::new(),
+        parser: Framer::new(parts.framing),
         scratch: Vec::new(),
         pending: VecDeque::new(),
         deferred_error: None,
@@ -89,7 +139,7 @@ struct Session<D> {
     clock: Arc<dyn Clock>,
     provider: &'static str,
     decoder: D,
-    parser: SseParser,
+    parser: Framer,
     scratch: Vec<SseEvent>,
     pending: VecDeque<ChatEvent>,
     /// An error that arrived after events still to be delivered; it goes out after them.
@@ -163,7 +213,7 @@ impl<D: Decoder> Session<D> {
             () = tokio::time::sleep(delay) => {
                 self.attempt += 1;
                 self.body = None;
-                self.parser = SseParser::new();
+                self.parser = Framer::new(self.parser.framing());
                 self.decoder.reset();
                 self.received_bytes = 0;
                 Some(())
@@ -262,10 +312,8 @@ impl<D: Decoder> Session<D> {
                 Err(error) => step = Step::Failed(error),
             }
         }
-        if let (Step::Continue, false, Err(error)) = (&step, self.finished, parsed) {
-            step = Step::Failed(ProviderError::BadOutput {
-                detail: error.to_string(),
-            });
+        if let (Step::Continue, false, Err(detail)) = (&step, self.finished, parsed) {
+            step = Step::Failed(ProviderError::BadOutput { detail });
         }
         events.clear();
         self.scratch = events;
@@ -277,7 +325,7 @@ impl<D: Decoder> Session<D> {
         self.body = None;
         // A trailing unterminated event cannot complete a response, so it is dropped; whether
         // the response is complete is the decoder's call.
-        let _discarded = self.parser.finish();
+        self.parser.finish();
         let step = match self.decoder.on_end_of_body(&mut self.pending) {
             Ok(()) => {
                 self.finished = true;

@@ -276,7 +276,12 @@ fn ollama(model: &str) -> Result<Arc<dyn LlmProvider>, String> {
     talker_from_settings(&settings, &MemorySecretStore::new(), clock).map_err(|e| e.to_string())
 }
 
-/// Loads the model before the clock matters: a cold Ollama model takes seconds to answer.
+/// Warm-up requests before giving up: a cold Ollama loads the model (~5 s) and prefills the
+/// system prompt (~5 s) behind the talker's 10 s first-token deadline, and keeps going after a
+/// request that timed out, so the next one finds it ready.
+const WARM_UP_ATTEMPTS: usize = 4;
+
+/// Loads the model and its prompt before the clock matters, so line 1 measures a warm talker.
 async fn warm_up(talker: &Arc<dyn LlmProvider>) {
     let mut conversation = Conversation::new();
     conversation.push(Message::User {
@@ -284,13 +289,18 @@ async fn warm_up(talker: &Arc<dyn LlmProvider>) {
             text: "Say OK.".to_owned(),
         }],
     });
-    let mut stream = talker.stream(&conversation, CancelToken::new());
-    let first = tokio::time::timeout(Duration::from_secs(60), stream.next()).await;
-    match first {
-        Ok(Some(Ok(ChatEvent::TextDelta(_) | ChatEvent::ToolCall(_) | ChatEvent::Done { .. }))) => {
+    for attempt in 1..=WARM_UP_ATTEMPTS {
+        let mut stream = talker.stream(&conversation, CancelToken::new());
+        let first = tokio::time::timeout(Duration::from_secs(60), stream.next()).await;
+        match first {
+            Ok(Some(Ok(
+                ChatEvent::TextDelta(_) | ChatEvent::ToolCall(_) | ChatEvent::Done { .. },
+            ))) => return,
+            Ok(Some(Err(error))) => {
+                println!("e2e: the talker's warm-up {attempt} failed: {error}");
+            }
+            Ok(None) | Err(_) => println!("e2e: the talker did not answer warm-up {attempt}"),
         }
-        Ok(Some(Err(error))) => println!("e2e: the talker's warm-up failed: {error}"),
-        Ok(None) | Err(_) => println!("e2e: the talker did not answer its warm-up"),
     }
 }
 

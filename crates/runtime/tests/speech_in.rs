@@ -142,7 +142,13 @@ fn an_utterance_gives_start_end_and_a_final_with_its_preroll() {
     // 1.8 s in all: within the 2 s ring even if the VAD thread has not read any of it yet.
     writer.write(&audio(400, 0.0));
     expect_start(&mut events);
-    assert_eq!(next(&mut events), Input::VoiceEnd { voiced_ms: 1_024 });
+    assert_eq!(
+        next(&mut events),
+        Input::VoiceEnd {
+            voiced_ms: 1_024,
+            silence_ms: 256,
+        }
+    );
     let Input::Transcript { text, is_final } = next(&mut events) else {
         panic!("a transcript")
     };
@@ -163,7 +169,13 @@ fn speaking_again_after_a_pause_discards_the_early_final() {
     writer.write(&audio(512, 0.5));
     writer.write(&audio(320, 0.0));
     expect_start(&mut events);
-    assert_eq!(next(&mut events), Input::VoiceEnd { voiced_ms: 1_184 });
+    assert_eq!(
+        next(&mut events),
+        Input::VoiceEnd {
+            voiced_ms: 1_184,
+            silence_ms: 256,
+        }
+    );
     let Input::Transcript { text, is_final } = next(&mut events) else {
         panic!("a transcript")
     };
@@ -196,8 +208,9 @@ fn partials_arrive_while_you_speak() {
         };
         partials.push(text);
     }
-    // 1.8 s of speech at one partial per 500 ms: three, each over more audio than the last.
-    assert!((2..=4).contains(&partials.len()), "{partials:?}");
+    // 1.8 s of speech: three early partials, then one per 500 ms, each over more audio than
+    // the last.
+    assert!((4..=7).contains(&partials.len()), "{partials:?}");
     let counts: Vec<usize> = partials
         .iter()
         .filter_map(|text| text.strip_prefix("heard ")?.parse().ok())
@@ -210,6 +223,36 @@ fn partials_arrive_while_you_speak() {
         next(&mut events),
         Input::Transcript { is_final: true, .. }
     ));
+    speech.shutdown();
+}
+
+/// The first partials come 256, 320 and 384 ms after the onset, over the short audio so far, so
+/// a cue word can stop BoardAI within its 400 ms budget (HLD §8); the 500 ms grid follows.
+#[test]
+fn the_first_partials_come_soon_after_the_onset() {
+    let (speech, mut events, mut writer, _stt) = start(false);
+    speak_in_real_time(&mut writer, &audio(300, 0.0));
+    speak_in_real_time(&mut writer, &audio(1_000, 0.5));
+    speak_in_real_time(&mut writer, &audio(320, 0.0));
+    expect_start(&mut events);
+    let mut partials = Vec::new();
+    while let Input::Transcript {
+        text,
+        is_final: false,
+    } = next(&mut events)
+    {
+        partials.push(text);
+    }
+    let counts: Vec<usize> = partials
+        .iter()
+        .filter_map(|text| text.strip_prefix("heard ")?.parse().ok())
+        .collect();
+    // Early partials at 256, 320 and 384 ms, then 884 ms: four within the second of speech
+    // (the old grid, 500 ms from `VoiceStart`, gave two).
+    assert!(counts.len() >= 4, "{partials:?}");
+    // The first covers the 300 ms pre-roll and about 256 ms of speech; the old first partial,
+    // ~660 ms after the onset, covered 960 ms.
+    assert!(counts[0] < (300 + 500) * FRAMES_PER_MS, "{counts:?}");
     speech.shutdown();
 }
 

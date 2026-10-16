@@ -182,8 +182,13 @@ impl SpeechInLink {
         self.inbox.send(Input::VoiceStart).await
     }
 
-    pub async fn voice_end(&self, voiced_ms: u32) -> Result<(), SessionClosed> {
-        self.inbox.send(Input::VoiceEnd { voiced_ms }).await
+    /// `silence_ms`: the silence the detector heard before calling the end.
+    pub async fn voice_end(&self, voiced_ms: u32, silence_ms: u32) -> Result<(), SessionClosed> {
+        let end = Input::VoiceEnd {
+            voiced_ms,
+            silence_ms,
+        };
+        self.inbox.send(end).await
     }
 
     /// A partial (`is_final: false`) replaces the previous partial; a final closes it.

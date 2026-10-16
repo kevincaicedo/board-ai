@@ -5,9 +5,13 @@
 use crate::limits::BARGE_IN_CUE_WORDS;
 
 /// Last words that mean the speaker isn't done ("so the leader… and"): the end of turn waits for
-/// the grace period instead of the usual silence.
+/// the grace period instead of the usual silence. Whisper closes a sentence cut by a pause with
+/// a period or a question mark ("I think the problem is.", "What happens when?", `spike_turns`),
+/// so words that rarely end one count whatever the punctuation.
 pub const CONTINUATION_WORDS: &[&str] = &[
-    "and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "to", "of",
+    "and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "an", "to", "of",
+    "is", "are", "was", "were", "when", "if", "with", "for", "my", "your", "our", "their", "into",
+    "than", "which", "whether",
 ];
 
 /// Transcript endings that mean the same: speech-to-text marks a trailing-off sentence with an
@@ -21,18 +25,27 @@ pub const INTERRUPTION_CUES: &[&str] = &[
 ];
 
 /// A short utterance made only of these keeps BoardAI going (LLD §2.2). The LLD's list plus the
-/// spellings speech-to-text produces for them.
+/// spellings speech-to-text produces for them: Whisper `base.en` wrote "MMHM", "MHMM", "Mm-hum.",
+/// "Hum", "Hmmm.", "Aha!" and "Yup" for `say`'s backchannels (`spike_turns`).
 pub const BACKCHANNELS: &[&str] = &[
     "mm-hm",
     "mm-hmm",
     "mhm",
+    "mmhm",
+    "mmhmm",
+    "mhmm",
+    "mm-hum",
     "mm",
     "mm hmm",
     "hmm",
+    "hmmm",
+    "hum",
     "uh-huh",
     "uh huh",
+    "aha",
     "yeah",
     "yep",
+    "yup",
     "yes",
     "right",
     "all right",
@@ -375,6 +388,40 @@ pub fn is_close_view(text: &str) -> bool {
 #[must_use]
 pub fn is_open_settings(text: &str) -> bool {
     made_of(text, OPEN_SETTINGS_PHRASES, CONTROL_FILLERS)
+}
+
+/// Marks speech-to-text closes a sentence with. An ellipsis ends with `.` too, but it trails
+/// off: [`CONTINUATION_ENDINGS`] is checked first.
+pub const SENTENCE_END_MARKS: &[char] = &['.', '?', '!'];
+
+/// Closing marks that may follow a sentence end in a transcript ("it fails.)").
+const TRANSCRIPT_CLOSERS: &[char] = &['"', '\'', ')', ']', '”', '’'];
+
+/// How the words so far sound, for the end of the turn (PRODUCT §6.1, LLD §2.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Completeness {
+    /// Closed with a sentence end, and not on a continuation word: "Why Redis first?"
+    Finished,
+    /// Neither: no punctuation ("ok go on"), or nothing said.
+    Unclear,
+    /// A continuation word or a trailing-off mark: "so the leader…", "and then the".
+    Unfinished,
+}
+
+/// Whether `text` sounds finished, unfinished, or neither. Partial transcripts are not to be
+/// trusted with this: Whisper punctuates a partial as if it were the end ("How does a request
+/// get?"), so the caller asks only of a final.
+#[must_use]
+pub fn completeness(text: &str) -> Completeness {
+    if ends_unfinished(text) {
+        return Completeness::Unfinished;
+    }
+    let closed = text.trim_end().trim_end_matches(TRANSCRIPT_CLOSERS);
+    if closed.ends_with(SENTENCE_END_MARKS) {
+        Completeness::Finished
+    } else {
+        Completeness::Unclear
+    }
 }
 
 /// The utterance sounds unfinished: it ends on a continuation word or a trailing-off mark.

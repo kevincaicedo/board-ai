@@ -7,6 +7,7 @@ mod support;
 use boardai_runtime::models::{DownloadProgress, ModelError, ModelFile, ModelStatus, ModelStore};
 use ring::digest::{SHA256, digest};
 use support::{Scripted, TempFolder, TestServer};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn body(size: usize) -> Vec<u8> {
     (0..size).map(|index| (index * 31 % 251) as u8).collect()
@@ -181,6 +182,67 @@ async fn a_short_download_keeps_its_partial_for_later() {
             size_bytes: 1_000
         }
     );
+}
+
+/// The flake in `a_short_download_keeps_its_partial_for_later`, made certain: tokio writes a
+/// file on its blocking pool, and under load the write of the 600 bytes had not landed when the
+/// failed fetch returned, so the partial read as missing. Here the only blocking thread is busy
+/// while the body arrives; the fetch must still return with the bytes on disk.
+#[test]
+fn a_failed_download_returns_only_once_its_bytes_are_on_disk() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let content = body(1_000);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let served = content[..600].to_vec();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0_u8; 4_096];
+            let _ = socket.read(&mut request).await;
+            // Holds the blocking pool while the client writes what it received.
+            let _busy = tokio::task::spawn_blocking(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            });
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                served.len()
+            );
+            socket.write_all(head.as_bytes()).await.expect("head");
+            socket.write_all(&served).await.expect("body");
+            socket.shutdown().await.expect("close");
+        });
+        let folder = TempFolder::new("models-pool");
+        let url = format!("http://{address}/models/file.bin");
+        let sha = sha256(&content);
+        let file = ModelFile {
+            file_name: "file.bin",
+            url: &url,
+            size_bytes: 1_000,
+            sha256: &sha,
+            license: "MIT",
+        };
+        let store = ModelStore::new(folder.path.clone()).expect("client");
+        let result = store.fetch(&file, &mut |_| {}).await;
+        assert!(
+            matches!(result, Err(ModelError::Network { .. })),
+            "{result:?}"
+        );
+        assert_eq!(
+            store.status(&file),
+            ModelStatus::Partial {
+                have_bytes: 600,
+                size_bytes: 1_000
+            }
+        );
+        server.await.expect("server");
+    });
 }
 
 #[tokio::test]

@@ -1,5 +1,5 @@
 //! Speech in (LLD §3.1, §3.4): voice activity detection and speech-to-text on the mic ring,
-//! producing `VoiceOnset`, `VoiceStart`, `VoiceEnd { voiced_ms }` and
+//! producing `VoiceOnset`, `VoiceStart`, `VoiceEnd { voiced_ms, silence_ms }` and
 //! `Transcript { text, is_final }`.
 //!
 //! Two dedicated threads, never async tasks, since both run inference:
@@ -29,7 +29,7 @@ use std::fmt;
 pub use setup::{SpeechInSetupError, load_speech_in};
 pub use silero::SileroVad;
 pub use vocabulary::repo_terms;
-pub use whisper::WhisperStt;
+pub use whisper::{WhisperDevice, WhisperStt};
 pub use worker::{SpeechIn, SpeechInCounters};
 
 /// Samples per VAD window at 16 kHz (32 ms): what Silero v5 takes.

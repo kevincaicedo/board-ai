@@ -10,9 +10,7 @@ use crate::effect::{Effect, Gain, Milestone};
 use crate::engine::gate::GateClosed;
 use crate::engine::{Core, MicMode, TurnMarks, milestone};
 use crate::history::{Message, UserPart};
-use crate::limits::{
-    BACKCHANNEL_LATE_FINAL_MS, DETOUR_QUESTION_MAX_BYTES, VOICE_ONSET_DUCK_HOLD_MS,
-};
+use crate::limits::{DETOUR_QUESTION_MAX_BYTES, VOICE_ONSET_DUCK_HOLD_MS};
 use crate::narration::tags::bounded;
 use crate::protocol::{MicAction, PointerTarget, Speaker, UiEvent};
 use crate::time::SessionTime;
@@ -139,15 +137,18 @@ impl Core {
         &mut self,
         now: SessionTime,
         voiced_ms: u32,
+        silence_ms: u32,
         effects: &mut Vec<Effect>,
     ) {
         let deadline = match &mut self.state {
             ConversationState::Listening(utterance) => {
-                utterance.voice_end(now, voiced_ms);
+                utterance.voice_end(now, voiced_ms, silence_ms);
                 utterance.end_of_turn_at()
             }
             ConversationState::Ducked(barge_in) => {
-                barge_in.utterance_mut().voice_end(now, voiced_ms);
+                barge_in
+                    .utterance_mut()
+                    .voice_end(now, voiced_ms, silence_ms);
                 None
             }
             ConversationState::Idle
@@ -156,9 +157,19 @@ impl Core {
             | ConversationState::Muted => None,
         };
         if let Some(deadline) = deadline {
-            self.wake(deadline, effects);
+            self.end_turn_at(now, deadline, effects);
         }
         self.evaluate_barge_in(now, effects);
+    }
+
+    /// The turn ends at `deadline`: now, when the silence the detector already heard covers it
+    /// (a finished sentence at `VoiceEnd`), else at a wake-up.
+    fn end_turn_at(&mut self, now: SessionTime, deadline: SessionTime, effects: &mut Vec<Effect>) {
+        if deadline <= now {
+            self.check_turn_deadlines(now, effects);
+        } else {
+            self.wake(deadline, effects);
+        }
     }
 
     pub(super) fn on_transcript(
@@ -171,13 +182,12 @@ impl Core {
         let utterance = match &mut self.state {
             ConversationState::Listening(utterance) => utterance,
             ConversationState::Ducked(barge_in) => barge_in.utterance_mut(),
-            // A backchannel between clauses leaves the core Thinking, and a cue in its final
-            // transcript still interrupts there.
-            ConversationState::Speaking | ConversationState::Thinking => {
-                self.late_cue(now, text, is_final, effects);
-                return;
-            }
-            ConversationState::Idle | ConversationState::Muted => return,
+            // A barge-in is decided only once its final is in, so no transcript of the user's
+            // can arrive after it: speech in starts each segment with `VoiceStart`.
+            ConversationState::Speaking
+            | ConversationState::Thinking
+            | ConversationState::Idle
+            | ConversationState::Muted => return,
         };
         utterance.transcript(text, is_final);
         let caption = UiEvent::Caption {
@@ -191,35 +201,9 @@ impl Core {
             milestone(effects, Milestone::FinalTranscript);
         }
         if let (Some(deadline), ConversationState::Listening(_)) = (deadline, &self.state) {
-            self.wake(deadline, effects);
+            self.end_turn_at(now, deadline, effects);
         }
         self.evaluate_barge_in(now, effects);
-    }
-
-    /// A cue word said too fast for a partial ("wait") was taken for a backchannel at
-    /// `VoiceEnd`; its final transcript, arriving just after, still interrupts.
-    fn late_cue(
-        &mut self,
-        now: SessionTime,
-        text: &str,
-        is_final: bool,
-        effects: &mut Vec<Effect>,
-    ) {
-        let recent = self
-            .backchannel_at
-            .is_some_and(|at| now.ms_since(at) <= BACKCHANNEL_LATE_FINAL_MS);
-        if !(is_final && recent && cues::has_interruption_cue(text)) {
-            return;
-        }
-        self.backchannel_at = None;
-        let mut utterance = Utterance::start(now, false);
-        utterance.transcript(text, true);
-        effects.push(Effect::Ui(UiEvent::Caption {
-            who: Speaker::User,
-            text: utterance.text(),
-            is_final: true,
-        }));
-        self.interrupt(now, utterance, effects);
     }
 
     pub(super) fn evaluate_barge_in(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
@@ -231,7 +215,6 @@ impl Core {
             Decision::Backchannel => {
                 self.set_gain(Gain::FULL, effects);
                 effects.push(Effect::Ui(UiEvent::Acknowledge));
-                self.backchannel_at = Some(now);
                 self.state = if self.voice.is_audible() {
                     ConversationState::Speaking
                 } else {
@@ -281,11 +264,19 @@ impl Core {
             }
             MicAction::TalkUp => {
                 self.push_to_talk_held = false;
-                if let ConversationState::Listening(utterance) = &mut self.state {
-                    utterance.release(now);
-                    if let Some(deadline) = utterance.end_of_turn_at() {
-                        self.wake(deadline, effects);
+                let deadline = match &mut self.state {
+                    ConversationState::Listening(utterance) => {
+                        utterance.release(now);
+                        utterance.end_of_turn_at()
                     }
+                    ConversationState::Idle
+                    | ConversationState::Thinking
+                    | ConversationState::Speaking
+                    | ConversationState::Ducked(_)
+                    | ConversationState::Muted => None,
+                };
+                if let Some(deadline) = deadline {
+                    self.end_turn_at(now, deadline, effects);
                 }
             }
         }

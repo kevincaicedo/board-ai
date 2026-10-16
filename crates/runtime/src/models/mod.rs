@@ -155,7 +155,8 @@ impl ModelStore {
     }
 
     /// The file's path, downloading (or resuming) and verifying it first if needed. Dropping
-    /// the future stops the download and keeps the partial file.
+    /// the future stops the download and keeps the partial file (a write in flight then lands
+    /// on its own; were a resume to start before it, the SHA-256 check would catch the file).
     pub async fn fetch(
         &self,
         file: &ModelFile<'_>,
@@ -185,9 +186,14 @@ impl ModelStore {
                 });
             }
         } else {
-            writer
-                .receive(response, file, &mut hasher, progress)
-                .await?;
+            let received = writer.receive(response, file, &mut hasher, progress).await;
+            // Tokio writes a file on its blocking pool: the last chunk may still be in flight
+            // when `receive` returns, on success or failure. Waiting for it on every path means
+            // the partial file holds what was received when this returns (under load the 600
+            // bytes of a short download were not there yet, and a resume would hash too few).
+            let flushed = writer.flush().await;
+            received?;
+            flushed?;
         }
         if writer.received != file.size_bytes {
             return Err(ModelError::Network {
@@ -335,8 +341,13 @@ impl Download {
         Ok(())
     }
 
+    /// Waits until every write handed to the blocking pool has reached the file.
+    async fn flush(&mut self) -> Result<(), ModelError> {
+        self.file.flush().await.map_err(|error| io_error(&error))
+    }
+
     async fn finish(mut self) -> Result<(), ModelError> {
-        self.file.flush().await.map_err(|error| io_error(&error))?;
+        self.flush().await?;
         self.file.sync_all().await.map_err(|error| io_error(&error))
     }
 }

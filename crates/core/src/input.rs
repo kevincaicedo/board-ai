@@ -15,9 +15,14 @@ use crate::tools::{ToolInvocation, ToolOutput};
 pub enum Input {
     /// Voice activity started (VAD onset, after the minimum-speech filter).
     VoiceStart,
-    /// Voice activity ended; `voiced_ms` is the length of the voiced span.
+    /// Voice activity ended; `voiced_ms` is the length of the voiced span. `silence_ms` is the
+    /// silence the detector already heard before it could call the end (its hangover), so the
+    /// core counts the turn's silence from the last voiced moment, not from this input. Logs
+    /// written before it existed read as 0.
     VoiceEnd {
         voiced_ms: u32,
+        #[serde(default)]
+        silence_ms: u32,
     },
     /// A transcript of the current utterance. Partials replace each other; the final closes it.
     Transcript {

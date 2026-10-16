@@ -21,6 +21,12 @@ pub const CLAUSE_MAX_BYTES: usize = 300;
 /// A comma ends a clause once the clause is at least this long, so first audio comes early.
 pub const CLAUSE_COMMA_MIN_BYTES: usize = 40;
 
+/// The same for a response's first clause, which the user waits on: "A request starts on the
+/// browser," (32 bytes) goes to text-to-speech while the talker is still writing the rest of the
+/// sentence. Shorter than about a second of speech, the next clause might not be synthesized
+/// before this one has played.
+pub const CLAUSE_FIRST_COMMA_MIN_BYTES: usize = 16;
+
 /// Longest utterance; the turn ends when it is reached.
 pub const UTTERANCE_MAX_MS: u64 = 30_000;
 
@@ -30,14 +36,26 @@ pub const OPS_PER_RESPONSE_MAX: usize = 200;
 /// Open detours; a fourth gets a spoken "let's finish this one first".
 pub const DETOUR_DEPTH_MAX: usize = 3;
 
-/// Silence that ends a turn when the sentence sounds finished.
+/// Silence, from the last voiced moment, that ends a turn whose final transcript sounds
+/// finished (terminal punctuation, no continuation word). The runtime's detector reports
+/// `VoiceEnd` after 256 ms of silence, so such a turn ends as soon as `VoiceEnd` and the final
+/// are in.
+pub const END_OF_TURN_FINISHED_SILENCE_MS: u64 = 250;
+
+/// Silence, from the last voiced moment, that ends a turn whose words neither sound finished
+/// nor unfinished (no punctuation, or no final yet).
 pub const END_OF_TURN_SILENCE_MS: u64 = 600;
 
-/// How long to wait when the turn ends on a continuation word.
+/// Silence, from the last voiced moment, that ends a turn ending on a continuation word or a
+/// trailing-off mark ("so the leader…").
 pub const END_OF_TURN_GRACE_MS: u64 = 1_500;
 
-/// Barge-in: undecided speech becomes an interruption after this long.
-pub const BARGE_IN_DECISION_MS: u64 = 900;
+/// Barge-in: speech still undecided this long after `VoiceStart` is an interruption. It must
+/// outlast the longest backchannel: measured with `say` (five voices, 150 wpm to 220 wpm, every
+/// phrase of the lexicon Whisper heard as itself), the detector reports up to 960 ms of voice,
+/// and its `VoiceEnd` and final come 96 ms past that on this clock (the 256 ms hangover less the
+/// 160 ms `VoiceStart` lags its onset). 1,200 ms leaves ~140 ms for the final (LLD §2.2).
+pub const BARGE_IN_DECISION_MS: u64 = 1_200;
 
 /// A voice onset while speaking ducks the voice for this long. `VoiceStart` confirms speech about
 /// 160 ms after its onset (the detector's 150 ms minimum, in 32 ms windows), so this leaves room
@@ -45,8 +63,11 @@ pub const BARGE_IN_DECISION_MS: u64 = 900;
 /// restores the gain and changes nothing else.
 pub const VOICE_ONSET_DUCK_HOLD_MS: u64 = 300;
 
-/// Barge-in: this much voice makes it an interruption.
-pub const BARGE_IN_VOICE_MS: u32 = 700;
+/// Barge-in: this much voice makes it an interruption. Counted live from `VoiceStart`, so it
+/// includes the detector's hangover before `VoiceEnd` corrects it; the longest measured
+/// backchannel reaches 1,056 ms that way (see [`BARGE_IN_DECISION_MS`]). It was 700 ms, which
+/// the measured slow "all right" (768–800 ms) and "mhm" (832–960 ms) crossed (I7).
+pub const BARGE_IN_VOICE_MS: u32 = 1_200;
 
 /// Barge-in: this many words make it an interruption.
 pub const BARGE_IN_WORDS_MIN: usize = 4;
@@ -65,10 +86,6 @@ pub const OP_SPACING_MIN_MS: u32 = 120;
 
 /// Barge-in rule (a) looks for an interruption cue in this many leading words.
 pub const BARGE_IN_CUE_WORDS: usize = 3;
-
-/// A final transcript this soon after a backchannel decision can still carry an interruption cue
-/// ("wait" said too fast for a partial); it then stops the voice. Later finals are ignored.
-pub const BACKCHANNEL_LATE_FINAL_MS: u64 = 600;
 
 /// How long the core waits for `VoiceStopped` after `StopVoice`. When it doesn't come, the last
 /// reported playback position defines the heard prefix (it is never ahead of the audio).
@@ -121,8 +138,9 @@ pub const CITATION_TOKEN_MAX_BYTES: usize = 200;
 /// context (gemma4 on Ollama: 4,096 tokens), and a request whose prompt doesn't fit loses the
 /// system prompt from the front, so the model answers without drawing. At 9,150 + 5,188 bytes
 /// they measured 2,466 + 1,122 gemma4 tokens, leaving about 500 for the conversation and the
-/// answer; the prompt's tests fail past this, and growing it needs the runtime to ask for a
-/// larger context first.
+/// answer; the prompt's tests fail past this. The runtime now asks a local Ollama for 16,384
+/// tokens (`OLLAMA_CONTEXT_TOKENS`), so this bounds the prompt's cold prefill (~5 s at ~700
+/// tokens/s) and keeps Ollama reached through its OpenAI-compatible endpoint working.
 pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 14_400;
 
 /// Source chips one reply shows; later citations in the reply show none (the talker still

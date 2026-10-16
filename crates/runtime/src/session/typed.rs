@@ -14,7 +14,8 @@ pub async fn say_typed(link: &SpeechInLink, text: &str) -> Result<(), SessionClo
     let voiced_ms = words.max(1).saturating_mul(TYPED_MS_PER_WORD);
     link.voice_start().await?;
     link.transcript(text.to_owned(), false).await?;
-    link.voice_end(voiced_ms).await?;
+    // Typing has no detector hangover: the silence starts at the end.
+    link.voice_end(voiced_ms, 0).await?;
     link.transcript(text.to_owned(), true).await
 }
 
@@ -49,7 +50,8 @@ mod tests {
                     is_final: false
                 },
                 Input::VoiceEnd {
-                    voiced_ms: 4 * TYPED_MS_PER_WORD
+                    voiced_ms: 4 * TYPED_MS_PER_WORD,
+                    silence_ms: 0,
                 },
                 Input::Transcript {
                     text,

@@ -1,14 +1,14 @@
 clause 0 [talker@0]
-  caption: "The client opens with a SYN, the server answers,"
-  speech:  "The client opens with a SYN, the server answers,"
+  caption: "The client opens with a SYN,"
+  speech:  "The client opens with a SYN,"
 op 0 at clause 0 byte 4: Participant { id: ElementId("c"), label: "Client" }
 op 1 at clause 0 byte 24: Participant { id: ElementId("s"), label: "Server" }
 op 2 at clause 0 byte 24: Message { from: ElementId("c"), to: ElementId("s"), label: Some("SYN"), style: Solid }
-op 3 at clause 0 byte 40: Message { from: ElementId("s"), to: ElementId("c"), label: Some("SYN-ACK"), style: Dashed }
-clause 1 [talker@49]
-  caption: "and the client acknowledges."
-  speech:  "and the client acknowledges."
-op 4 at clause 1 byte 15: Message { from: ElementId("c"), to: ElementId("s"), label: Some("ACK"), style: Solid }
+clause 1 [talker@29]
+  caption: "the server answers, and the client acknowledges."
+  speech:  "the server answers, and the client acknowledges."
+op 3 at clause 1 byte 11: Message { from: ElementId("s"), to: ElementId("c"), label: Some("SYN-ACK"), style: Dashed }
+op 4 at clause 1 byte 35: Message { from: ElementId("c"), to: ElementId("s"), label: Some("ACK"), style: Solid }
 dropped NarrationTag
 clause 2 [talker@78]
   caption: "It may retry on its own, and a broken close is dropped."

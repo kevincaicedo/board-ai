@@ -1,6 +1,7 @@
-//! The speech-to-text thread: partials on a fixed 500 ms grid from the onset (a slot that comes
-//! while a decode is busy is skipped), an early final once the speaker goes quiet, and the final
-//! at the end of the utterance.
+//! The speech-to-text thread: the first partials at fixed times after the voice onset, so a cue
+//! word can stop BoardAI early, then a 500 ms grid (a slot that comes while a decode is busy is
+//! skipped), an early final once the speaker goes quiet, and the final at the end of the
+//! utterance.
 //!
 //! The early final is what keeps the final fast: the VAD reports the end only after 250 ms of
 //! silence, so decoding as soon as the speaker has been quiet for 96 ms usually finishes before
@@ -16,14 +17,20 @@ use tokio::sync::mpsc;
 
 use super::SpeechToText;
 use super::worker::SpeechInCounters;
-use crate::limits::{STT_PARTIAL_INTERVAL_MS, VAD_POLL_INTERVAL_MS};
+use crate::limits::{
+    STT_EARLY_PARTIALS_AFTER_ONSET_MS, STT_PARTIAL_INTERVAL_MS, VAD_POLL_INTERVAL_MS,
+};
 
 /// How long the thread waits for work when no partial is due before checking it should run.
 const IDLE_WAIT: Duration = Duration::from_millis(250);
 
 pub(super) enum SttMessage {
-    /// A new utterance, starting with its pre-roll and onset audio.
-    Begin(Vec<f32>),
+    /// A new utterance, starting with its pre-roll and onset audio; its onset was this long ago
+    /// in audio time.
+    Begin {
+        audio: Vec<f32>,
+        since_onset: Duration,
+    },
     Audio(Vec<f32>),
     /// The speaker has been quiet for a while inside the utterance.
     Quiet,
@@ -44,6 +51,9 @@ pub(super) struct SttWorker {
 }
 
 struct Utterance {
+    onset: Instant,
+    /// The next of [`STT_EARLY_PARTIALS_AFTER_ONSET_MS`] to schedule once `next_partial` is done.
+    next_early: usize,
     next_partial: Instant,
     new_audio: bool,
     quiet: bool,
@@ -107,11 +117,15 @@ impl SttWorker {
     /// Handles one message; false when the orchestrator is gone.
     fn handle(&mut self, message: SttMessage) -> bool {
         match message {
-            SttMessage::Begin(audio) => {
+            SttMessage::Begin { audio, since_onset } => {
                 self.stt.discard();
                 self.stt.push(&audio);
+                let now = Instant::now();
+                let onset = now.checked_sub(since_onset).unwrap_or(now);
                 self.utterance = Some(Utterance {
-                    next_partial: Instant::now() + Duration::from_millis(STT_PARTIAL_INTERVAL_MS),
+                    onset,
+                    next_early: 1,
+                    next_partial: onset + early_partial(0),
                     new_audio: true,
                     quiet: false,
                     last_partial_text: String::new(),
@@ -187,10 +201,7 @@ impl SttWorker {
         if current.quiet || !current.new_audio || now < current.next_partial {
             return true;
         }
-        let interval = Duration::from_millis(STT_PARTIAL_INTERVAL_MS);
-        while current.next_partial <= now {
-            current.next_partial += interval;
-        }
+        current.schedule_after(now);
         current.new_audio = false;
         let text = match self.stt.partial() {
             Ok(Some(text)) if text != current.last_partial_text => text,
@@ -215,6 +226,32 @@ impl SttWorker {
                 true
             }
             Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    }
+}
+
+/// The early partial at `index`, after the onset.
+fn early_partial(index: usize) -> Duration {
+    Duration::from_millis(
+        STT_EARLY_PARTIALS_AFTER_ONSET_MS
+            .get(index)
+            .copied()
+            .unwrap_or(0),
+    )
+}
+
+impl Utterance {
+    /// The slot after the one being decoded at `now`: the next early partial (at once if its
+    /// time has passed), else the next grid slot after `now`, skipping those a decode overran.
+    fn schedule_after(&mut self, now: Instant) {
+        if self.next_early < STT_EARLY_PARTIALS_AFTER_ONSET_MS.len() {
+            self.next_partial = self.onset + early_partial(self.next_early);
+            self.next_early += 1;
+            return;
+        }
+        let interval = Duration::from_millis(STT_PARTIAL_INTERVAL_MS);
+        while self.next_partial <= now {
+            self.next_partial += interval;
         }
     }
 }

@@ -1,0 +1,7 @@
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:04.917707Z","message":{"role":"assistant","content":"A"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:04.935184Z","message":{"role":"assistant","content":" load"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:04.951953Z","message":{"role":"assistant","content":" balancer"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:04.968675Z","message":{"role":"assistant","content":" distributes"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:04.985323Z","message":{"role":"assistant","content":" incoming"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:05.002133Z","message":{"role":"assistant","content":" network"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:05.002245Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"length","total_duration":372458916,"load_duration":213480625,"prompt_eval_count":26,"prompt_eval_duration":72788000,"eval_count":6,"eval_duration":84454000}

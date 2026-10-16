@@ -25,6 +25,13 @@ const UTTERANCE_MAX_FRAMES: usize =
 
 static LOG_HOOKS: Once = Once::new();
 
+/// Where whisper.cpp runs: Metal (the default), or the CPU only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhisperDevice {
+    Gpu,
+    Cpu,
+}
+
 /// The encoder always sees its full 30 s window (the utterance padded with silence). Shrinking
 /// it to the utterance (`audio_ctx`) was measured in spike S4 and rejected: on base.en a 2.5 s
 /// question came back as the same sentence repeated eight times, and decodes took up to 1.9 s.
@@ -40,14 +47,20 @@ pub struct WhisperStt {
 
 impl WhisperStt {
     pub fn new(model_path: &Path) -> Result<Self, SttError> {
+        Self::new_on(model_path, WhisperDevice::Gpu)
+    }
+
+    /// On a chosen device. Speech in uses the GPU: on the CPU a partial took 166 ms against
+    /// 37 ms, and 195 ms against 57 ms while Ollama generated on the GPU (`spike_turns`).
+    pub fn new_on(model_path: &Path, device: WhisperDevice) -> Result<Self, SttError> {
         // whisper.cpp logs to stderr by default; route it to `tracing` once per process.
         LOG_HOOKS.call_once(whisper_rs::install_logging_hooks);
         let model = |error: whisper_rs::WhisperError| SttError::Model {
             detail: error.to_string(),
         };
-        let context =
-            WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
-                .map_err(model)?;
+        let mut parameters = WhisperContextParameters::default();
+        parameters.use_gpu(device == WhisperDevice::Gpu);
+        let context = WhisperContext::new_with_params(model_path, parameters).map_err(model)?;
         let state = context.create_state().map_err(model)?;
         Ok(Self {
             context,

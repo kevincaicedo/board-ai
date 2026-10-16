@@ -129,7 +129,10 @@ async fn forward(link: &SpeechInLink, input: Input) -> Result<(), SessionClosed>
     match input {
         Input::VoiceOnset => link.voice_onset().await,
         Input::VoiceStart => link.voice_start().await,
-        Input::VoiceEnd { voiced_ms } => link.voice_end(voiced_ms).await,
+        Input::VoiceEnd {
+            voiced_ms,
+            silence_ms,
+        } => link.voice_end(voiced_ms, silence_ms).await,
         Input::Transcript { text, is_final } => link.transcript(text, is_final).await,
         // Speech in produces only the four above; anything else is a broken invariant there.
         other @ (Input::TalkerDelta { .. }

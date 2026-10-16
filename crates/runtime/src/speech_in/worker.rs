@@ -190,15 +190,25 @@ impl VadWorker {
             Some(VadEvent::Start { onset_frame }) => {
                 let delivered = self.events.blocking_send(Input::VoiceStart).is_ok();
                 let audio = self.onset_audio(onset_frame);
-                let _ = self.stt.send(SttMessage::Begin(audio));
+                let since_onset_ms =
+                    (self.machine.next_frame() - onset_frame) * 1_000 / u64::from(MIC_RATE_HZ);
+                let begin = SttMessage::Begin {
+                    audio,
+                    since_onset: Duration::from_millis(since_onset_ms),
+                };
+                let _ = self.stt.send(begin);
                 self.quiet_sent = false;
                 delivered
             }
-            Some(VadEvent::End { voiced_ms }) => {
-                let delivered = self
-                    .events
-                    .blocking_send(Input::VoiceEnd { voiced_ms })
-                    .is_ok();
+            Some(VadEvent::End {
+                voiced_ms,
+                silence_ms,
+            }) => {
+                let end = Input::VoiceEnd {
+                    voiced_ms,
+                    silence_ms,
+                };
+                let delivered = self.events.blocking_send(end).is_ok();
                 self.send_audio(window);
                 let _ = self.stt.send(SttMessage::End);
                 self.quiet_sent = false;

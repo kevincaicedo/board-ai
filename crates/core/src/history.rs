@@ -99,4 +99,6 @@ pub struct RawAssistant {
 pub enum ProviderFamily {
     Anthropic,
     OpenAiCompatible,
+    /// Ollama's native chat API (`/api/chat`).
+    Ollama,
 }

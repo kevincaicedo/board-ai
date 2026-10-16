@@ -1,0 +1,23 @@
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.495664Z","message":{"role":"assistant","content":"A"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.514843Z","message":{"role":"assistant","content":" load"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.531629Z","message":{"role":"assistant","content":" balancer"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.548524Z","message":{"role":"assistant","content":" distributes"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.565306Z","message":{"role":"assistant","content":" incoming"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.582142Z","message":{"role":"assistant","content":" network"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.598925Z","message":{"role":"assistant","content":" traffic"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.615688Z","message":{"role":"assistant","content":" across"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.632525Z","message":{"role":"assistant","content":" a"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.649034Z","message":{"role":"assistant","content":" group"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.665826Z","message":{"role":"assistant","content":" of"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.682711Z","message":{"role":"assistant","content":" backend"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.699365Z","message":{"role":"assistant","content":" servers"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.71615Z","message":{"role":"assistant","content":" to"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.732774Z","message":{"role":"assistant","content":" ensure"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.749363Z","message":{"role":"assistant","content":" no"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.766506Z","message":{"role":"assistant","content":" single"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.783522Z","message":{"role":"assistant","content":" server"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.800391Z","message":{"role":"assistant","content":" becomes"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.817078Z","message":{"role":"assistant","content":" a"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.833921Z","message":{"role":"assistant","content":" bottleneck"},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.850735Z","message":{"role":"assistant","content":"."},"done":false}
+{"model":"gemma4:latest","created_at":"2026-10-16T03:21:03.867569Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":804649000,"load_duration":253511125,"prompt_eval_count":26,"prompt_eval_duration":176910000,"eval_count":23,"eval_duration":371869000}

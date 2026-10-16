@@ -66,10 +66,11 @@ pub fn choose_voice(
     secrets: &dyn SecretStore,
     models: &ModelStore,
 ) -> Result<ChosenVoice, TtsError> {
-    let configured = engine_for(settings, secrets, models);
     if settings.kind == TtsKind::System {
-        return configured.map(|engine| ChosenVoice {
-            engine,
+        let system = SystemVoice::new()?;
+        system.warm_up(&VoiceId::new(voice));
+        return Ok(ChosenVoice {
+            engine: Arc::new(system),
             config: SpeechOutConfig {
                 voice: VoiceId::new(voice),
                 fallback: None,
@@ -77,7 +78,12 @@ pub fn choose_voice(
             replaced: None,
         });
     }
-    let system: Arc<dyn TextToSpeech> = Arc::new(SystemVoice::new()?);
+    let configured = engine_for(settings, secrets, models);
+    let system = SystemVoice::new()?;
+    // It speaks the first answer when the configured engine cannot start, and any clause the
+    // configured engine fails on.
+    system.warm_up(&VoiceId::default());
+    let system: Arc<dyn TextToSpeech> = Arc::new(system);
     Ok(match configured {
         Ok(engine) => ChosenVoice {
             engine,

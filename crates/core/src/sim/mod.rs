@@ -185,7 +185,11 @@ impl Sim {
             partial_at += USER_PARTIAL_EVERY_MS;
         }
         let voiced = u32::try_from(voiced_ms).unwrap_or(u32::MAX);
-        self.at(at_ms + voiced_ms, Input::VoiceEnd { voiced_ms: voiced });
+        let end = Input::VoiceEnd {
+            voiced_ms: voiced,
+            silence_ms: 0,
+        };
+        self.at(at_ms + voiced_ms, end);
         let text = text.to_owned();
         self.at(
             at_ms + voiced_ms + USER_FINAL_DELAY_MS,

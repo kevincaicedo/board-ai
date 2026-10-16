@@ -86,7 +86,7 @@ The numbers match the badges on the diagram.
 
 | Role | Interface | MVP adapters | Default |
 |---|---|---|---|
-| Talker LLM (the voice) | `LlmProvider` | Anthropic Messages API; OpenAI-compatible (OpenRouter, Ollama, any compatible server) | Chosen at onboarding |
+| Talker LLM (the voice) | `LlmProvider` | Anthropic Messages API; Ollama's native chat API (a local Ollama, so it can be given a large enough context); OpenAI-compatible (OpenRouter, any compatible server) | Chosen at onboarding |
 | Scribe LLM (memory, digests) | `LlmProvider` | Same as the talker | A cheaper or local model |
 | Speech-to-text | `SpeechToText` | whisper.cpp (local, Metal) | Local Whisper |
 | Text-to-speech | `TextToSpeech` | Kokoro (local); ElevenLabs (cloud); the macOS system voice as a zero-download fallback | Local Kokoro |
@@ -113,19 +113,19 @@ The numbers match the badges on the diagram.
 
 ## 8. Latency budget
 
-| Stage | Target |
-|---|---|
-| End-of-turn detection | 200–300 ms |
-| Final transcript after end of turn (partials stream before it) | ≤ 150 ms |
-| First token from the talker | 300–450 ms (measured in spike S3) |
-| First audio from text-to-speech | 100–200 ms |
-| **Voice to voice** | **p50 ≤ 1.0 s · p90 ≤ 1.5 s** |
-| First stroke after the first spoken word | ≤ 200 ms |
-| Barge-in: duck after you start speaking | ≤ 100 ms |
-| Barge-in: decision to stop fully | ≤ 400 ms |
-| Drift between speech and strokes | ≤ 150 ms |
+| Stage | Target | Measured (local, M4 Pro, gemma4) |
+|---|---|---|
+| End-of-turn detection | 200–300 ms | 446 ms: 430–444 ms when the final sounds finished, 650 ms when Whisper leaves it unpunctuated. The floor is Silero's tail after the sound (p50 82 ms) plus the 256 ms hangover |
+| Final transcript after end of turn (partials stream before it) | ≤ 150 ms | 0 ms (decoded during the hangover) |
+| First token from the talker | 300–450 ms (measured in spike S3) | 555 ms (420–1,019): gemma4 prefilling the new turn on a warm prompt |
+| First audio from text-to-speech | 100–200 ms | 640 ms from the first token with the system voice (516 ms to the first clause, 64 ms to synthesize it); 734 ms with Kokoro (363 ms to synthesize) |
+| **Voice to voice** | **p50 ≤ 1.0 s · p90 ≤ 1.5 s** | **p50 1.53 s · p90 2.11 s** (system voice); p50 1.75 s with Kokoro |
+| First stroke after the first spoken word | ≤ 200 ms | Not measured separately; each stroke lags its own word by 10–25 ms (p50) |
+| Barge-in: duck after you start speaking | ≤ 100 ms | 65 ms |
+| Barge-in: decision to stop fully | ≤ 400 ms | 465 ms for "Wait, why Redis first?" (372–500); 371 ms median over ten cue phrases in five voices |
+| Drift between speech and strokes | ≤ 150 ms | 10–25 ms p50, at most 147 ms |
 
-The runtime measures every stage, and the numbers show in a dev overlay and in each session's digest. These are targets, not results, until the spikes in §11 have measured them.
+The runtime measures every stage, and the numbers show in a dev overlay and in each session's digest. The measured column is `just e2e` (LLD §7: `say` into a file mic, the real VAD, Whisper `base.en` on Metal, the core, gemma4 on a local Ollama through its native API, the voice; three lines with a barge-in; medians over five runs with no other client on Ollama), 2026-10-15; the cue-phrase figure is `spike_turns` (LLD §3.4). What is left is mostly the local model: its first token, the tags it writes before its first word, and Kokoro's synthesis. Claude's first token is unmeasured until spike S3 runs with a key.
 
 ## 9. Deployment
 
