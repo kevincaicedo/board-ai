@@ -11,3 +11,4 @@ node_modules/
 
 # Parallel work streams (git worktrees), one per branch wip/<stream>
 /.worktrees/
+.env
