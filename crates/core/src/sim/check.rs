@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::conversation::{ConversationState, cues};
-use crate::effect::Effect;
+use crate::effect::{Effect, Gain};
 use crate::engine::Core;
 use crate::geometry::Rect;
 use crate::harness::HarnessKind;
@@ -29,8 +29,13 @@ pub struct Checker {
     layer_pops: usize,
     change_proposed: bool,
     user_finals: String,
+    /// Where `user_finals` stood when the voice ducked: a backchannel decided after that was
+    /// never an utterance (LLD §2.2), so its words are taken back out.
+    ducked_at: Option<usize>,
     /// Windows in which a backchannel was said over BoardAI's voice: no `StopVoice` allowed.
     backchannels: Vec<(SessionTime, SessionTime)>,
+    /// The last camera frame sent for each layer.
+    frames: BTreeMap<LayerId, Rect>,
 }
 
 impl Checker {
@@ -108,7 +113,15 @@ impl Checker {
                 self.user_finals.clear();
             }
             Effect::CancelTalk => self.talk_in_flight = false,
+            // The duck ends (gain back to full) just before the backchannel's acknowledgement,
+            // so only a new duck moves the mark; an interruption clears it.
+            Effect::Duck { gain } => {
+                if *gain == Gain::DUCKED {
+                    self.ducked_at = Some(self.user_finals.len());
+                }
+            }
             Effect::StopVoice => {
+                self.ducked_at = None;
                 if self
                     .backchannels
                     .iter()
@@ -131,9 +144,13 @@ impl Checker {
                     self.change_proposed = false;
                 }
             }
+            Effect::Ui(UiEvent::Acknowledge) => {
+                if let Some(length) = self.ducked_at.take() {
+                    self.user_finals.truncate(length);
+                }
+            }
             Effect::Ui(event) => self.on_ui(now, event, core, speech),
-            Effect::Duck { .. }
-            | Effect::Synthesize { .. }
+            Effect::Synthesize { .. }
             | Effect::RunTool { .. }
             | Effect::CancelHarness { .. }
             | Effect::Log(_)
@@ -147,6 +164,10 @@ impl Checker {
             UiEvent::OpStart { layer, op, .. } => {
                 self.check_anchor(now, op, core, speech);
                 self.check_stable(now, *layer, op);
+                self.check_framed(now, *layer, op);
+            }
+            UiEvent::Camera { layer, frame, .. } => {
+                self.frames.insert(*layer, *frame);
             }
             UiEvent::LayerPush { .. } => self.layer_pushes += 1,
             UiEvent::LayerPop { .. } => self.layer_pops += 1,
@@ -160,12 +181,31 @@ impl Checker {
             | UiEvent::Caption { .. }
             | UiEvent::Freeze { .. }
             | UiEvent::Resume { .. }
-            | UiEvent::Camera { .. }
             | UiEvent::SurfaceShow { .. }
             | UiEvent::SurfaceUpdate { .. }
             | UiEvent::SurfaceDismiss { .. }
             | UiEvent::Chip { .. }
-            | UiEvent::Problem { .. } => {}
+            | UiEvent::Problem { .. }
+            | UiEvent::Suggestion { .. } => {}
+        }
+    }
+
+    /// I11: a stroke starts inside its layer's camera frame, so the user sees it drawn.
+    fn check_framed(&mut self, now: SessionTime, layer: LayerId, op: &DrawOp) {
+        let bounds = crate::board::layout::op_bounds(op);
+        let framed = self
+            .frames
+            .get(&layer)
+            .is_some_and(|frame| frame.contains(bounds));
+        if !framed {
+            let id = op_id(op).0;
+            self.violate(
+                now,
+                format!(
+                    "I11: op {id} on layer {} starts outside the camera frame",
+                    layer.0
+                ),
+            );
         }
     }
 

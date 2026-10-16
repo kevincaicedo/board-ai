@@ -10,7 +10,8 @@ use crate::effect::{Effect, Gain, Milestone};
 use crate::engine::{Core, MicMode, TurnMarks, milestone};
 use crate::harness::{HarnessKind, HarnessTask};
 use crate::history::{Message, UserPart};
-use crate::limits::BACKCHANNEL_LATE_FINAL_MS;
+use crate::limits::{BACKCHANNEL_LATE_FINAL_MS, DETOUR_QUESTION_MAX_BYTES};
+use crate::narration::tags::bounded;
 use crate::protocol::{MicAction, PointerTarget, Speaker, UiEvent};
 use crate::time::SessionTime;
 
@@ -30,6 +31,8 @@ pub(super) struct UserContext {
     pub note: Option<String>,
     pub frozen: Vec<FrozenOp>,
     pub dropped_ops: usize,
+    /// The words cut BoardAI off, so a detour opened in reply answers them.
+    pub interrupted: bool,
 }
 
 impl UserContext {
@@ -39,6 +42,7 @@ impl UserContext {
         }
         self.frozen.extend(later.frozen);
         self.dropped_ops += later.dropped_ops;
+        self.interrupted |= later.interrupted;
     }
 }
 
@@ -66,6 +70,9 @@ impl Core {
 
     /// The user started talking while BoardAI was idle, thinking or listening.
     fn take_floor(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        if self.state != ConversationState::Muted {
+            self.clear_suggestion(effects);
+        }
         match &mut self.state {
             ConversationState::Muted => {}
             ConversationState::Idle => self.listen(Utterance::start(now, true), effects),
@@ -335,6 +342,8 @@ impl Core {
             return;
         }
         self.resolve_gate(&text, effects);
+        self.cancel_by_voice(&text, effects);
+        self.turn_question = self.question_of(&text, &context);
         let message = self.user_message(&text, &context);
         self.user.pending = Some(PendingUser {
             text,
@@ -344,6 +353,38 @@ impl Core {
         self.marks = TurnMarks::default();
         self.state = ConversationState::Thinking;
         self.request_talk(now, effects);
+    }
+
+    /// What a detour opened in reply would answer: the user's words without their lead-in, when
+    /// they cut BoardAI off or follow up on what is drawn. A first question on an empty board
+    /// isn't a detour's question, even if the talker opens one.
+    fn question_of(&self, text: &str, context: &UserContext) -> Option<String> {
+        let follows_up = self
+            .board
+            .layers()
+            .iter()
+            .any(|layer| layer.bounds().is_some());
+        let question = cues::without_lead_in(text).trim();
+        ((context.interrupted || follows_up) && !question.is_empty())
+            .then(|| bounded(question, DETOUR_QUESTION_MAX_BYTES))
+    }
+
+    /// "Stop that research", "cancel that": the named running task is cancelled at once, and the
+    /// talker hears the words with a note saying it is done, so it only has to confirm.
+    fn cancel_by_voice(&mut self, text: &str, effects: &mut Vec<Effect>) {
+        let Some(target) = cues::harness_cancel(text) else {
+            return;
+        };
+        let Some((task, kind)) = self.context.cancel_task(target) else {
+            return;
+        };
+        effects.push(Effect::CancelHarness { task });
+        self.context.notice(format!(
+            "{} task {} was cancelled because the user asked to stop it. Confirm in three words \
+             or fewer.",
+            crate::engine::text::harness_kind_name(&kind),
+            task.0
+        ));
     }
 
     /// I9: only this utterance can confirm the proposed change, and only with a plain yes.

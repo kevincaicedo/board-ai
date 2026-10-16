@@ -55,6 +55,53 @@ pub const AFFIRMATIVES: &[&str] = &[
 /// Words allowed around an affirmative without changing its meaning ("yes please, go ahead").
 pub const AFFIRMATIVE_FILLERS: &[&str] = &["please", "then", "just"];
 
+/// Which running coding-harness task a spoken cancel names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CancelTarget {
+    Research,
+    Review,
+    Change,
+    /// "Cancel that": the task started most recently.
+    Latest,
+}
+
+/// Utterances that cancel a running harness task (PRODUCT §6.2 voice control). The whole
+/// utterance must be one of these, give or take [`HARNESS_CANCEL_FILLERS`], so "stop" alone stays
+/// an interruption and "cancel that and explain Raft" goes to the talker as words.
+pub const HARNESS_CANCELS: &[(&str, CancelTarget)] = &[
+    ("stop that research", CancelTarget::Research),
+    ("stop the research", CancelTarget::Research),
+    ("stop researching", CancelTarget::Research),
+    ("cancel that research", CancelTarget::Research),
+    ("cancel the research", CancelTarget::Research),
+    ("cancel the search", CancelTarget::Research),
+    ("stop that review", CancelTarget::Review),
+    ("stop the review", CancelTarget::Review),
+    ("cancel that review", CancelTarget::Review),
+    ("cancel the review", CancelTarget::Review),
+    ("stop that change", CancelTarget::Change),
+    ("stop the change", CancelTarget::Change),
+    ("cancel that change", CancelTarget::Change),
+    ("cancel the change", CancelTarget::Change),
+    ("cancel that", CancelTarget::Latest),
+    ("cancel it", CancelTarget::Latest),
+    ("stop that task", CancelTarget::Latest),
+    ("cancel that task", CancelTarget::Latest),
+    ("cancel the task", CancelTarget::Latest),
+];
+
+/// Words allowed around a spoken cancel ("okay, cancel that please").
+pub const HARNESS_CANCEL_FILLERS: &[&str] = &[
+    "please", "okay", "ok", "actually", "just", "no", "oh", "hey", "yeah", "now",
+];
+
+/// Openers that start an interruption without being part of the question ("Wait — why Redis
+/// first?" asks "why Redis first?"). A detour card shows the question without them.
+pub const QUESTION_LEAD_INS: &[&str] = &[
+    "wait", "hold on", "hang on", "sorry", "actually", "oh", "um", "uh", "hmm", "okay", "ok", "so",
+    "hey", "but",
+];
+
 /// Abbreviations whose period does not end a sentence, so a clause is not cut after them.
 pub const ABBREVIATIONS: &[&str] = &[
     "e.g.", "i.e.", "etc.", "vs.", "mr.", "mrs.", "dr.", "approx.",
@@ -143,6 +190,54 @@ pub fn is_affirmative(text: &str) -> bool {
     made_of(text, AFFIRMATIVES, AFFIRMATIVE_FILLERS)
 }
 
+/// The harness task an utterance cancels, when the utterance is a cancel and nothing else.
+#[must_use]
+pub fn harness_cancel(text: &str) -> Option<CancelTarget> {
+    let words = words(text);
+    let phrases: Vec<&str> = HARNESS_CANCELS.iter().map(|(phrase, _)| *phrase).collect();
+    if !made_of(text, &phrases, HARNESS_CANCEL_FILLERS) {
+        return None;
+    }
+    // The longest phrase found decides ("cancel that research" names research, not "that").
+    HARNESS_CANCELS
+        .iter()
+        .filter(|(phrase, _)| {
+            (0..words.len()).any(|at| phrase_at(&words, at, phrase, false).is_some())
+        })
+        .max_by_key(|(phrase, _)| phrase.len())
+        .map(|(_, target)| *target)
+}
+
+/// The question without its lead-in ("Wait — why Redis first?" → "why Redis first?"), as it was
+/// written; empty when the utterance was only a lead-in.
+#[must_use]
+pub fn without_lead_in(text: &str) -> &str {
+    let mut rest = skip_marks(text);
+    // Each pass removes at least one written word, so the loop ends.
+    loop {
+        let words = words(rest);
+        let Some(length) = QUESTION_LEAD_INS
+            .iter()
+            .filter_map(|lead_in| phrase_at(&words, 0, lead_in, false))
+            .max()
+        else {
+            return rest;
+        };
+        for _ in 0..length {
+            rest = skip_marks(rest);
+            rest = rest
+                .find(char::is_whitespace)
+                .map_or("", |end| &rest[end..]);
+        }
+        rest = skip_marks(rest);
+    }
+}
+
+/// Skips spaces, dashes and punctuation before the next word.
+fn skip_marks(text: &str) -> &str {
+    text.trim_start_matches(|ch: char| !ch.is_alphanumeric())
+}
+
 /// The utterance sounds unfinished: it ends on a continuation word or a trailing-off mark.
 #[must_use]
 pub fn ends_unfinished(text: &str) -> bool {
@@ -170,8 +265,9 @@ pub fn is_abbreviation(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AFFIRMATIVES, BACKCHANNELS, CONTINUATION_ENDINGS, CONTINUATION_WORDS, INTERRUPTION_CUES,
-        ends_unfinished, has_interruption_cue, is_affirmative, is_backchannel, word_count,
+        AFFIRMATIVES, BACKCHANNELS, CONTINUATION_ENDINGS, CONTINUATION_WORDS, CancelTarget,
+        HARNESS_CANCELS, INTERRUPTION_CUES, QUESTION_LEAD_INS, ends_unfinished, harness_cancel,
+        has_interruption_cue, is_affirmative, is_backchannel, without_lead_in, word_count,
     };
 
     #[test]
@@ -228,6 +324,49 @@ mod tests {
         }
         assert!(!ends_unfinished("how does the leader get elected?"));
         assert!(!ends_unfinished(""));
+    }
+
+    #[test]
+    fn every_spoken_cancel_names_its_task_and_other_words_do_not() {
+        for (phrase, target) in HARNESS_CANCELS {
+            assert_eq!(harness_cancel(phrase), Some(*target), "{phrase}");
+            let noisy = format!("Okay, {}, please.", phrase.to_uppercase());
+            assert_eq!(harness_cancel(&noisy), Some(*target), "{noisy}");
+        }
+        for other in [
+            "",
+            "stop",
+            "wait",
+            "cancel",
+            "stop talking",
+            "cancel that and explain Raft",
+            "what did the research find",
+        ] {
+            assert_eq!(harness_cancel(other), None, "{other:?}");
+        }
+        assert_eq!(
+            harness_cancel("cancel that research"),
+            Some(CancelTarget::Research)
+        );
+    }
+
+    #[test]
+    fn a_question_loses_its_lead_in() {
+        for lead_in in QUESTION_LEAD_INS {
+            let text = format!("{lead_in}, why Redis first?");
+            assert_eq!(without_lead_in(&text), "why Redis first?", "{text}");
+        }
+        assert_eq!(
+            without_lead_in("Wait — why Redis first?"),
+            "why Redis first?"
+        );
+        assert_eq!(
+            without_lead_in("Hold on, hang on... what's a TTL?"),
+            "what's a TTL?"
+        );
+        assert_eq!(without_lead_in("Wait."), "");
+        assert_eq!(without_lead_in("Why Redis?"), "Why Redis?");
+        assert_eq!(without_lead_in("Sorting is slow?"), "Sorting is slow?");
     }
 
     #[test]

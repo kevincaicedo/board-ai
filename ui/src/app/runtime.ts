@@ -3,7 +3,7 @@
 // window is hidden (PRODUCT §8.6: the orb rests when nobody can see it).
 
 import { createContext } from "preact";
-import type { Viewport } from "../canvas/camera.ts";
+import { cardArea, emptyArea, type FitArea, stageArea, type Viewport } from "../canvas/camera.ts";
 import type { Vec } from "../canvas/geometry.ts";
 import { type OrbPlacement, orbPlacement } from "../canvas/presence.ts";
 import { BoardView } from "../canvas/renderer.ts";
@@ -45,6 +45,9 @@ export class Runtime {
   #generation = -1;
   #stage: Viewport = { width: 0, height: 0 };
   #card: Viewport = { width: 0, height: 0 };
+  /** Where each layer fits its camera frame; recomputed on resize, never per frame. */
+  readonly #stageArea: FitArea = emptyArea();
+  readonly #cardArea: FitArea = emptyArea();
   #anchors: { center: Vec; dock: Vec } = { center: [0, 0], dock: [0, 0] };
   #placement: OrbPlacement = { x: 0, y: 0, size: 0, opacity: 0, docked: 0, condense: 0 };
   #params = emptyParams();
@@ -66,6 +69,7 @@ export class Runtime {
     this.reducedMotion = reducedMotion;
     this.scene = new Scene(tokens);
     this.#card = { width: tokens.surfaceWidth, height: tokens.detourCardHeight };
+    cardArea(this.#card, tokens, this.#cardArea);
   }
 
   /** The session time of the last rendered frame. */
@@ -138,6 +142,7 @@ export class Runtime {
   #measure(stage: HTMLElement): void {
     this.#stage = { width: stage.clientWidth, height: stage.clientHeight };
     const tokens = this.tokens;
+    stageArea(this.#stage, tokens, this.#stageArea);
     this.#anchors = {
       center: [this.#stage.width / 2, this.#stage.height / 2 - tokens.orbCenterLift],
       dock: [this.#stage.width / 2, this.#stage.height - tokens.orbDockBottom],
@@ -173,7 +178,7 @@ export class Runtime {
       this.#generation = scene.generation;
       this.#board?.reset();
     }
-    this.#board?.render(at, this.#stage, this.#card, this.#anchors);
+    this.#board?.render(at, this.#stageArea, this.#cardArea, this.#anchors);
     orbPlacement(scene.board, scene.presence, at, this.#anchors, this.#placement);
     const freezeAt = scene.presence.lastFreezeAt(at);
     const acknowledgeAt = scene.presence.lastAcknowledgeAt;

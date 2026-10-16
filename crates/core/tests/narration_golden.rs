@@ -156,6 +156,13 @@ const PIECES: &[&str] = &[
     "&amp;",
     "e.g.",
     "\u{1F600}",
+    "->",
+    "→",
+    "*",
+    "_",
+    "- ",
+    "<annotate line=\"4\" code=\"a->b\"/>",
+    "<recap bullets=\"a|b\"/>",
 ];
 
 /// Random input never panics, keeps every clause within its cap, keeps the op cap, and stays

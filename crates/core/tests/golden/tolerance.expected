@@ -15,18 +15,18 @@ op 0 at clause 2 byte 14: Edge { from: ElementId("x"), to: ElementId("y"), label
 clause 3 [talker@146]
   caption: "Entities work: R and D."
   speech:  "Entities work: R and D."
-op 1 at clause 3 byte 15: Node { id: ElementId("q"), label: "R&D \"lab\"", shape: Service, placement: Auto, stack: 1 }
-dropped NarrationTag
+op 1 at clause 3 byte 15: Node { id: ElementId("q"), label: "R&D \"lab\"", shape: Service, placement: Auto, stack: 1, fill: None }
 dropped NarrationTag
 dropped NarrationTag
 dropped NarrationTag
 clause 4 [talker@170]
   caption: "Bad values drop too: still speaking."
   speech:  "Bad values drop too: still speaking."
+op 2 at clause 4 byte 21: Node { id: ElementId("x"), label: "x", shape: Service, placement: Auto, stack: 1, fill: None }
 clause 5 [talker@207]
   caption: "Extra attributes are fine: look here."
   speech:  "Extra attributes are fine: look here."
-op 2 at clause 5 byte 27: Focus { target: ElementId("lb") }
+op 3 at clause 5 byte 27: Focus { target: ElementId("lb") }
 dropped NarrationTag
 clause 6 [talker@245]
   caption: "A tag far too long is dropped."

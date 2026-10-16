@@ -43,8 +43,27 @@ impl Core {
         effects: &mut Vec<Effect>,
     ) {
         milestone(effects, Milestone::BargeInStop);
+        self.user.context.interrupted = true;
         self.stop_reply(now, false, effects);
         self.hand_floor(utterance, effects);
+    }
+
+    /// `Esc` (PRODUCT §8.9): BoardAI stops at once, like a confirmed interruption with no words.
+    /// The stroke in flight freezes, what was heard is committed, and the floor goes idle. A
+    /// question nothing was heard of is dropped, as with mute: a stop means "not this".
+    pub(super) fn on_stop(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        match std::mem::replace(&mut self.state, ConversationState::Idle) {
+            ConversationState::Speaking | ConversationState::Thinking => {
+                self.stop_reply(now, true, effects);
+            }
+            // The user is already talking over BoardAI: the stop confirms the interruption.
+            ConversationState::Ducked(barge_in) => {
+                self.interrupt(now, barge_in.into_utterance(), effects);
+            }
+            state @ (ConversationState::Idle
+            | ConversationState::Listening(_)
+            | ConversationState::Muted) => self.state = state,
+        }
     }
 
     /// The user has the floor with this utterance; its deadlines are armed.

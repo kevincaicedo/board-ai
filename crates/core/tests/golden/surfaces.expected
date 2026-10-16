@@ -5,8 +5,8 @@ op 0 at clause 0 byte 0: Detour { title: "cache-aside" }
 clause 1 [talker@32]
   caption: "Reads go to Redis first."
   speech:  "Reads go to Redis first."
-op 1 at clause 1 byte 0: Node { id: ElementId("api"), label: "API", shape: Service, placement: Auto, stack: 1 }
-op 2 at clause 1 byte 0: Node { id: ElementId("redis"), label: "Redis", shape: Db, placement: Near { target: ElementId("api"), direction: Right }, stack: 1 }
+op 1 at clause 1 byte 0: Node { id: ElementId("api"), label: "API", shape: Service, placement: Auto, stack: 1, fill: None }
+op 2 at clause 1 byte 0: Node { id: ElementId("redis"), label: "Redis", shape: Db, placement: Near { target: ElementId("api"), direction: Right }, stack: 1, fill: None }
 op 3 at clause 1 byte 0: Edge { from: ElementId("api"), to: ElementId("redis"), label: Some("hit"), style: Dashed }
 clause 2 [talker@57]
   caption: "Here is the code."
@@ -28,12 +28,12 @@ op 8 at clause 5 byte 0: Strike { target: ElementId("redis"), text: "Valkey" }
 clause 6 [talker@130]
   caption: "Two options."
   speech:  "Two options."
-op 9 at clause 6 byte 0: Compare { options: ["Redis", "Memcached"], criteria: ["Latency", "Persistence"] }
+op 9 at clause 6 byte 0: Compare { options: ["Redis", "Memcached"], criteria: ["Latency", "Persistence"], title: None }
 clause 7 [talker@143]
   caption: "One persists."
   speech:  "One persists."
-op 10 at clause 7 byte 0: Cell { row: Name("Redis"), col: Index(1), mark: Yes }
-op 11 at clause 7 byte 0: Cell { row: Index(1), col: Name("Persistence"), mark: Text { text: "no disk" } }
+op 10 at clause 7 byte 0: Cell { criterion: Name("Redis"), option: Index(1), mark: Yes }
+op 11 at clause 7 byte 0: Cell { criterion: Index(1), option: Name("Persistence"), mark: Text { text: "no disk" } }
 clause 8 [talker@157]
   caption: "So, back to the request."
   speech:  "So, back to the request."
@@ -42,5 +42,5 @@ op 13 at clause 8 byte 0: Resume
 clause 9 [talker@182]
   caption: "The database lives in the VPC."
   speech:  "The database lives in the VPC."
-op 14 at clause 9 byte 0: Node { id: ElementId("vpc"), label: "VPC", shape: Group, placement: Auto, stack: 1 }
-op 15 at clause 9 byte 0: Node { id: ElementId("db"), label: "Postgres", shape: Db, placement: Inside { group: ElementId("vpc"), near: None }, stack: 1 }
+op 14 at clause 9 byte 0: Node { id: ElementId("vpc"), label: "VPC", shape: Group, placement: Auto, stack: 1, fill: None }
+op 15 at clause 9 byte 0: Node { id: ElementId("db"), label: "Postgres", shape: Db, placement: Inside { group: ElementId("vpc"), near: None }, stack: 1, fill: None }

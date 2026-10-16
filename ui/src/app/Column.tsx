@@ -16,7 +16,7 @@ function CardBody({ item }: { item: ColumnItem }) {
   const surface = item.surface;
   switch (surface.kind) {
     case "Code":
-      return <CodeCard surface={surface} highlights={item.highlights} />;
+      return <CodeCard surface={surface} highlights={item.highlights} marks={item.marks} />;
     case "Compare":
       return <CompareCard surface={surface} cells={item.cells} />;
     case "Recap":

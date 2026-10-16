@@ -1,10 +1,11 @@
 // The only control on screen (PRODUCT §8.7): a round mic button at bottom right. It rings with
 // your voice while BoardAI listens and shows a slashed glyph when muted. Keyboard: hold Space to
-// talk, M to mute (PRODUCT §8.9).
+// talk, M to mute, Esc to stop (PRODUCT §8.9; the mapping lives in keys.ts).
 
 import { useEffect, useMemo, useRef } from "preact/hooks";
 import { ramp, round1, round2 } from "../canvas/math.ts";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
+import { keyDownCommand } from "./keys.ts";
 
 function editable(target: EventTarget | null): boolean {
   return (
@@ -42,16 +43,23 @@ export function MicButton() {
   useEffect(() => {
     let talking = false;
     const down = (event: KeyboardEvent): void => {
-      if (editable(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+      const command = keyDownCommand(
+        {
+          code: event.code,
+          repeat: event.repeat,
+          modified: event.metaKey || event.ctrlKey || event.altKey,
+          editable: editable(event.target),
+        },
+        { muted, replay: runtime.replay !== null },
+      );
+      if (command === null) {
         return;
       }
-      if (event.code === "Space" && !event.repeat && runtime.replay === null) {
+      if (command.type === "Mic" && command.action === "TalkDown") {
         event.preventDefault();
         talking = true;
-        runtime.send({ type: "Mic", action: "TalkDown" });
-      } else if (event.code === "KeyM" && !event.repeat) {
-        runtime.send({ type: "Mic", action: muted ? "Unmute" : "Mute" });
       }
+      runtime.send(command);
     };
     const up = (event: KeyboardEvent): void => {
       if (event.code === "Space" && talking) {

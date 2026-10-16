@@ -23,6 +23,7 @@ pub fn config() -> CoreConfig {
         talker_name: "Claude".to_owned(),
         mic: MicMode::OpenMic,
         session_context: None,
+        suggestion: None,
     }
 }
 

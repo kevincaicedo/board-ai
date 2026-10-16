@@ -84,8 +84,9 @@ fn repo_tools() -> [(&'static str, Value); 3] {
 fn harness_tools() -> [(&'static str, Value); 3] {
     [
         (
-            "Start a deep, read-only research task in the coding harness. Returns at once; the \
-             result arrives later as a system message.",
+            "Start a deep, read-only research task in the coding harness, for a question about \
+             the open repo's code that needs many files read. Never for general knowledge you \
+             can explain yourself. Returns at once; the result arrives later as a system message.",
             object(
                 json!({
                     "question": text("The precise question."),

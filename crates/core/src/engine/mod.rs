@@ -6,6 +6,7 @@
 //! inputs at the same times always produce the same effects, which is what the conversation
 //! simulator and session replay rely on.
 
+mod camera;
 mod listen;
 mod ops;
 mod reply;
@@ -20,7 +21,8 @@ use crate::effect::{Effect, LogRecord, Milestone};
 use crate::history::{Conversation, Message};
 use crate::ids::{ClauseId, LayerId};
 use crate::input::Input;
-use crate::limits::ORB_DRAWING_LINGER_MS;
+use crate::limits::{ORB_DRAWING_LINGER_MS, SUGGESTION_MAX_BYTES};
+use crate::narration::tags::bounded;
 use crate::protocol::{OrbState, PointerTarget, UiCommand, UiEvent};
 use crate::surfaces::Surfaces;
 use crate::thread::Thread;
@@ -28,6 +30,7 @@ use crate::time::SessionTime;
 use crate::voice::Voice;
 use text::SYNTHESIS_FAILED_DETAIL;
 
+use camera::Cameras;
 use listen::{ChangeGate, UserSide};
 use ops::OpQueue;
 use reply::{ContextTracker, Reply};
@@ -51,6 +54,9 @@ pub struct CoreConfig {
     /// Context for the first request ("where we left off", relevant memory), appended as a
     /// system message when the session starts.
     pub session_context: Option<String>,
+    /// The idle line under the orb ("Pick up Raft log compaction where we left off?"), from the
+    /// last session's recap. Shown at start, cleared when the user first speaks.
+    pub suggestion: Option<String>,
 }
 
 impl Default for CoreConfig {
@@ -59,6 +65,7 @@ impl Default for CoreConfig {
             talker_name: "the model".to_owned(),
             mic: MicMode::OpenMic,
             session_context: None,
+            suggestion: None,
         }
     }
 }
@@ -96,7 +103,14 @@ pub struct Core {
     stop: Option<PendingStop>,
     marks: TurnMarks,
     orb: Option<OrbState>,
-    drawing_until: SessionTime,
+    /// When the last stroke's budget ends; `None` until anything is drawn.
+    drawing_until: Option<SessionTime>,
+    cameras: Cameras,
+    /// What the user asked in the turn being answered, for a detour card's subtitle; `None` when
+    /// the reply answers no question of theirs.
+    turn_question: Option<String>,
+    /// The idle suggestion is on screen.
+    suggesting: bool,
     wakes: BTreeSet<SessionTime>,
     push_to_talk_held: bool,
     backchannel_at: Option<SessionTime>,
@@ -126,7 +140,10 @@ impl Core {
             stop: None,
             marks: TurnMarks::default(),
             orb: None,
-            drawing_until: SessionTime::ZERO,
+            drawing_until: None,
+            cameras: Cameras::default(),
+            turn_question: None,
+            suggesting: false,
             wakes: BTreeSet::new(),
             push_to_talk_held: false,
             backchannel_at: None,
@@ -136,12 +153,24 @@ impl Core {
         }
     }
 
-    /// Opens the session: the initial orb and thread, and the session context for the talker.
+    /// Opens the session: the initial orb and thread, the idle suggestion, and the session
+    /// context for the talker.
     pub fn start(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         if let Some(context) = self.config.session_context.clone() {
             self.conversation.push(Message::System { text: context });
         }
         effects.push(Effect::Ui(self.thread.event()));
+        let suggestion = self
+            .config
+            .suggestion
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| bounded(text, SUGGESTION_MAX_BYTES));
+        if let Some(text) = suggestion {
+            self.suggesting = true;
+            effects.push(Effect::Ui(UiEvent::Suggestion { text: Some(text) }));
+        }
         self.update_orb(now, effects);
     }
 
@@ -182,6 +211,7 @@ impl Core {
                 self.evaluate_barge_in(now, effects);
             }
             Input::Command(UiCommand::Mic { action }) => self.on_mic(now, action, effects),
+            Input::Command(UiCommand::Stop) => self.on_stop(now, effects),
             Input::Tick => self.on_tick(now, effects),
         }
         self.after_step(now, effects);
@@ -208,12 +238,26 @@ impl Core {
         &self.thread
     }
 
-    /// A layer as an `.excalidraw` document, for the session folder (LLD §3.6).
+    /// A layer as an `.excalidraw` document.
     #[must_use]
     pub fn export_excalidraw(&self, layer: LayerId) -> Option<String> {
         self.board
             .layer(layer)
             .map(crate::board::excalidraw::export_layer)
+    }
+
+    /// The whole session as one `.excalidraw` document with a frame per layer (the main board,
+    /// then each detour in the order it opened), for the session folder (LLD §3.6).
+    #[must_use]
+    pub fn export_session_excalidraw(&self) -> String {
+        crate::board::excalidraw::export_board(&self.board)
+    }
+
+    /// The user spoke for the first time: the idle suggestion has done its job.
+    fn clear_suggestion(&mut self, effects: &mut Vec<Effect>) {
+        if std::mem::take(&mut self.suggesting) {
+            effects.push(Effect::Ui(UiEvent::Suggestion { text: None }));
+        }
     }
 
     /// The anchor `(clause, speakable offset)` of an op of the current turn, for the simulator's
@@ -273,15 +317,16 @@ impl Core {
     /// The orb follows the state. While speaking it shows Drawing from the first stroke until
     /// the last stroke's budget ends plus a linger, so the nib doesn't flicker between ops.
     fn update_orb(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
-        let linger_until = self.drawing_until.plus_ms(ORB_DRAWING_LINGER_MS);
+        let linger_until = self
+            .drawing_until
+            .map(|until| until.plus_ms(ORB_DRAWING_LINGER_MS));
         let base = self.state.orb();
-        let state = if base == OrbState::Speaking && now < linger_until {
-            OrbState::Drawing
-        } else {
-            base
+        let state = match linger_until {
+            Some(until) if base == OrbState::Speaking && now < until => OrbState::Drawing,
+            Some(_) | None => base,
         };
-        if state == OrbState::Drawing {
-            self.wake(linger_until, effects);
+        if let (OrbState::Drawing, Some(until)) = (state, linger_until) {
+            self.wake(until, effects);
         }
         if self.orb != Some(state) {
             self.orb = Some(state);

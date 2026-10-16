@@ -193,3 +193,36 @@ export function chipFlight(
     visible: at >= shownAt && f < 1,
   };
 }
+
+export type SuggestionTokens = Pick<
+  Tokens,
+  "durationSuggestionInMs" | "durationSuggestionOutMs" | "suggestionRise" | "suggestionBlur"
+>;
+
+export interface SuggestionLook {
+  readonly opacity: number;
+  /** Pixels below its resting place (it rises in). */
+  readonly rise: number;
+  readonly blur: number;
+}
+
+/**
+ * The idle suggestion at `at` (frame 1): it rises in out of a blur, then, once the user speaks,
+ * blurs out. The design's `sIn` and `sug`, with the clear taken from the core's event.
+ */
+export function suggestionLook(
+  shownAt: number,
+  clearedAt: number | null,
+  at: number,
+  tokens: SuggestionTokens,
+): SuggestionLook {
+  const enter = easeOut(ramp(at, shownAt, shownAt + tokens.durationSuggestionInMs));
+  const leave =
+    clearedAt === null ? 0 : ramp(at, clearedAt, clearedAt + tokens.durationSuggestionOutMs);
+  const shown = enter * (1 - leave);
+  return {
+    opacity: shown,
+    rise: (1 - enter) * tokens.suggestionRise,
+    blur: (1 - shown) * tokens.suggestionBlur,
+  };
+}

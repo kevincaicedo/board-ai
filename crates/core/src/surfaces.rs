@@ -1,7 +1,8 @@
-//! Surfaces beside the canvas (PRODUCT §7.2): code cards and compare cards, at most two at once.
+//! Surfaces beside the canvas (PRODUCT §7.2): code, compare and recap cards, at most two at once.
 //!
 //! A code card shows only lines the session actually read (law 6): they come from
-//! `ToolOutput::File` results, never from the talker's narration.
+//! `ToolOutput::File` results, never from the talker's narration. A pen mark on a code line
+//! names text that is on that line; the core finds its columns, so the talker never counts.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -10,7 +11,7 @@ use crate::limits::{
     CODE_CARD_LINES_MAX, READ_FILE_LINES_MAX, READ_FILES_MAX, SURFACES_BESIDE_CANVAS_MAX,
 };
 use crate::narration::ops::{AxisRef, CloseTarget, LineRange};
-use crate::protocol::{CellMark, Surface, SurfaceUpdate, UiEvent};
+use crate::protocol::{CellMark, ColumnRange, Mark, Surface, SurfaceUpdate, UiEvent};
 
 /// Lines of files read this session, by path. The least recently read file is forgotten first.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -79,6 +80,10 @@ pub enum SurfaceRefused {
     NoCompareCard,
     NoSuchCell,
     NothingToClose,
+    /// The text to mark isn't on that line of the code card.
+    NotOnLine {
+        line: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +97,7 @@ enum OpenKind {
         options: Vec<String>,
         criteria: Vec<String>,
     },
+    Recap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -156,21 +162,7 @@ impl Surfaces {
         line: u32,
         events: &mut Vec<UiEvent>,
     ) -> Result<(), SurfaceRefused> {
-        let (id, first_line, count) = self
-            .open
-            .iter()
-            .rev()
-            .find_map(|open| match &open.kind {
-                OpenKind::Code {
-                    first_line, lines, ..
-                } => Some((open.id, *first_line, lines.len())),
-                OpenKind::Compare { .. } => None,
-            })
-            .ok_or(SurfaceRefused::NoCodeCard)?;
-        let shown = u32::try_from(count).unwrap_or(u32::MAX);
-        if line < first_line || line >= first_line.saturating_add(shown) {
-            return Err(SurfaceRefused::LineNotShown { line });
-        }
+        let (id, _) = self.shown_line(line)?;
         events.push(UiEvent::SurfaceUpdate {
             id,
             update: SurfaceUpdate::Highlight { line },
@@ -178,10 +170,55 @@ impl Surfaces {
         Ok(())
     }
 
+    /// A pen mark under (or around) `code` on `line` of the newest code card; the whole line,
+    /// indentation aside, when `code` is `None`. The exact text is tried first, then the same
+    /// text ignoring ASCII case.
+    pub fn mark_code(
+        &mut self,
+        line: u32,
+        code: Option<&str>,
+        mark: Mark,
+        events: &mut Vec<UiEvent>,
+    ) -> Result<(), SurfaceRefused> {
+        let (id, text) = self.shown_line(line)?;
+        let columns = columns_of(text, code).ok_or(SurfaceRefused::NotOnLine { line })?;
+        events.push(UiEvent::SurfaceUpdate {
+            id,
+            update: SurfaceUpdate::Mark {
+                line,
+                columns,
+                mark,
+            },
+        });
+        Ok(())
+    }
+
+    /// The newest code card and the text of `line` on it.
+    fn shown_line(&self, line: u32) -> Result<(SurfaceId, &str), SurfaceRefused> {
+        let (id, first_line, lines) = self
+            .open
+            .iter()
+            .rev()
+            .find_map(|open| match &open.kind {
+                OpenKind::Code {
+                    first_line, lines, ..
+                } => Some((open.id, *first_line, lines)),
+                OpenKind::Compare { .. } | OpenKind::Recap => None,
+            })
+            .ok_or(SurfaceRefused::NoCodeCard)?;
+        let text = line
+            .checked_sub(first_line)
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| lines.get(index))
+            .ok_or(SurfaceRefused::LineNotShown { line })?;
+        Ok((id, text))
+    }
+
     pub fn open_compare(
         &mut self,
         options: Vec<String>,
         criteria: Vec<String>,
+        title: Option<String>,
         events: &mut Vec<UiEvent>,
     ) {
         let id = self.allocate(events);
@@ -190,6 +227,7 @@ impl Surfaces {
                 id,
                 options: options.clone(),
                 criteria: criteria.clone(),
+                title,
             },
         });
         self.open.push_back(Open {
@@ -198,10 +236,12 @@ impl Surfaces {
         });
     }
 
+    /// Fills a cell of the newest compare card. Rows are criteria and columns are options; a
+    /// talker that named them the other way round (both by name) still lands in the right cell.
     pub fn fill_cell(
         &mut self,
-        row: &AxisRef,
-        col: &AxisRef,
+        criterion: &AxisRef,
+        option: &AxisRef,
         mark: CellMark,
         events: &mut Vec<UiEvent>,
     ) -> Result<(), SurfaceRefused> {
@@ -211,16 +251,33 @@ impl Surfaces {
             .rev()
             .find_map(|open| match &open.kind {
                 OpenKind::Compare { options, criteria } => Some((open.id, options, criteria)),
-                OpenKind::Code { .. } => None,
+                OpenKind::Code { .. } | OpenKind::Recap => None,
             })
             .ok_or(SurfaceRefused::NoCompareCard)?;
-        let row = resolve(row, options).ok_or(SurfaceRefused::NoSuchCell)?;
-        let col = resolve(col, criteria).ok_or(SurfaceRefused::NoSuchCell)?;
+        let straight = resolve(criterion, criteria).zip(resolve(option, options));
+        let swapped = match (criterion, option) {
+            (AxisRef::Name(_), AxisRef::Name(_)) => {
+                resolve(option, criteria).zip(resolve(criterion, options))
+            }
+            (AxisRef::Index(_) | AxisRef::Name(_), AxisRef::Index(_) | AxisRef::Name(_)) => None,
+        };
+        let (row, col) = straight.or(swapped).ok_or(SurfaceRefused::NoSuchCell)?;
         events.push(UiEvent::SurfaceUpdate {
             id,
             update: SurfaceUpdate::Cell { row, col, mark },
         });
         Ok(())
+    }
+
+    pub fn open_recap(&mut self, bullets: Vec<String>, events: &mut Vec<UiEvent>) {
+        let id = self.allocate(events);
+        events.push(UiEvent::SurfaceShow {
+            surface: Surface::Recap { id, bullets },
+        });
+        self.open.push_back(Open {
+            id,
+            kind: OpenKind::Recap,
+        });
     }
 
     pub fn close(
@@ -246,6 +303,7 @@ impl Surfaces {
                         (&open.kind, target),
                         (OpenKind::Code { .. }, CloseTarget::Code)
                             | (OpenKind::Compare { .. }, CloseTarget::Compare)
+                            | (OpenKind::Recap, CloseTarget::Recap)
                     );
                     if matches {
                         events.push(UiEvent::SurfaceDismiss { id: open.id });
@@ -272,7 +330,7 @@ impl Surfaces {
                 let index = usize::try_from(line.checked_sub(*first_line)?).ok()?;
                 Some((path.as_str(), lines.get(index)?.as_str()))
             }
-            OpenKind::Code { .. } | OpenKind::Compare { .. } => None,
+            OpenKind::Code { .. } | OpenKind::Compare { .. } | OpenKind::Recap => None,
         })
     }
 
@@ -289,6 +347,42 @@ impl Surfaces {
     }
 }
 
+/// Columns of `code` on `line`, counted in chars; the line without its indentation and trailing
+/// space when `code` is `None`.
+fn columns_of(line: &str, code: Option<&str>) -> Option<ColumnRange> {
+    let (begin_byte, end_byte) = match code.map(str::trim) {
+        None => {
+            let begin = line.len() - line.trim_start().len();
+            (begin, line.trim_end().len().max(begin))
+        }
+        Some("") => return None,
+        Some(code) => {
+            let begin = line.find(code).or_else(|| find_ignoring_case(line, code))?;
+            (begin, begin + code.len())
+        }
+    };
+    if begin_byte >= end_byte {
+        return None;
+    }
+    let column = |byte: usize| u32::try_from(line[..byte].chars().count()).ok();
+    Some(ColumnRange {
+        begin: column(begin_byte)?,
+        end: column(end_byte)?,
+    })
+}
+
+/// Where `needle` starts in `haystack` ignoring ASCII case. Lowercasing ASCII keeps every byte
+/// offset, so the match maps back onto the original line.
+fn find_ignoring_case(haystack: &str, needle: &str) -> Option<usize> {
+    let begin = haystack
+        .to_ascii_lowercase()
+        .find(&needle.to_ascii_lowercase())?;
+    haystack
+        .is_char_boundary(begin)
+        .then_some(begin)
+        .filter(|begin| haystack.is_char_boundary(begin + needle.len()))
+}
+
 fn resolve(axis: &AxisRef, names: &[String]) -> Option<u8> {
     let index = match axis {
         AxisRef::Index(index) => usize::from(*index),
@@ -303,9 +397,9 @@ fn resolve(axis: &AxisRef, names: &[String]) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SurfaceRefused, Surfaces};
+    use super::{SurfaceRefused, Surfaces, columns_of};
     use crate::narration::ops::{AxisRef, CloseTarget, LineRange};
-    use crate::protocol::{CellMark, Surface, UiEvent};
+    use crate::protocol::{CellMark, ColumnRange, Mark, Surface, SurfaceUpdate, UiEvent};
 
     fn lines(count: u32) -> Vec<String> {
         (1..=count).map(|line| format!("line {line}")).collect()
@@ -351,7 +445,12 @@ mod tests {
         let mut surfaces = Surfaces::default();
         let mut events = Vec::new();
         for _ in 0..3 {
-            surfaces.open_compare(vec!["Redis".into()], vec!["Speed".into()], &mut events);
+            surfaces.open_compare(
+                vec!["Redis".into()],
+                vec!["Speed".into()],
+                None,
+                &mut events,
+            );
         }
         let dismissed: Vec<_> = events
             .iter()
@@ -359,8 +458,8 @@ mod tests {
             .collect();
         assert_eq!(dismissed.len(), 1);
         let cell = surfaces.fill_cell(
-            &AxisRef::Name("redis".into()),
             &AxisRef::Index(0),
+            &AxisRef::Name("redis".into()),
             CellMark::Yes,
             &mut events,
         );
@@ -368,6 +467,120 @@ mod tests {
         assert!(surfaces.close(CloseTarget::All, &mut events).is_ok());
         assert_eq!(
             surfaces.close(CloseTarget::Latest, &mut events),
+            Err(SurfaceRefused::NothingToClose)
+        );
+    }
+
+    /// Rows are criteria and columns are options (the canvas's Compare card), and names given
+    /// the other way round still find their cell.
+    #[test]
+    fn compare_cells_index_criteria_by_row_and_options_by_column() {
+        let mut surfaces = Surfaces::default();
+        let mut events = Vec::new();
+        surfaces.open_compare(
+            vec!["Raft".into(), "Paxos".into(), "ZAB".into()],
+            vec!["Easy to follow".into(), "Used by".into()],
+            Some("Raft vs Paxos vs ZAB".into()),
+            &mut events,
+        );
+        let name = |text: &str| AxisRef::Name(text.into());
+        for (criterion, option) in [("used by", "zab"), ("ZAB", "Used by")] {
+            let mark = CellMark::Text {
+                text: "ZooKeeper".into(),
+            };
+            assert!(
+                surfaces
+                    .fill_cell(&name(criterion), &name(option), mark, &mut events)
+                    .is_ok()
+            );
+            assert_eq!(
+                events.last(),
+                Some(&UiEvent::SurfaceUpdate {
+                    id: crate::ids::SurfaceId(0),
+                    update: SurfaceUpdate::Cell {
+                        row: 1,
+                        col: 2,
+                        mark: CellMark::Text {
+                            text: "ZooKeeper".into()
+                        },
+                    },
+                })
+            );
+        }
+        assert_eq!(
+            surfaces.fill_cell(
+                &AxisRef::Index(2),
+                &AxisRef::Index(0),
+                CellMark::No,
+                &mut events
+            ),
+            Err(SurfaceRefused::NoSuchCell)
+        );
+    }
+
+    /// Frame 5: the pen underlines `s.cache.Get(` on line 43; the core finds the columns.
+    #[test]
+    fn a_code_mark_finds_its_columns_on_the_line() {
+        let line = "    if u, err := s.cache.Get(ctx, userKey(id)); err == nil {";
+        assert_eq!(
+            columns_of(line, Some("s.cache.Get(")),
+            Some(ColumnRange { begin: 17, end: 29 })
+        );
+        assert_eq!(
+            columns_of(line, Some("S.CACHE.GET")),
+            Some(ColumnRange { begin: 17, end: 28 })
+        );
+        assert_eq!(
+            columns_of(line, None),
+            Some(ColumnRange { begin: 4, end: 60 })
+        );
+        assert_eq!(
+            columns_of("    // café → señor", Some("señor")),
+            Some(ColumnRange { begin: 14, end: 19 })
+        );
+        assert_eq!(columns_of(line, Some("redis.Get")), None);
+        assert_eq!(columns_of("    ", None), None);
+        let mut surfaces = Surfaces::default();
+        let mut events = Vec::new();
+        assert_eq!(
+            surfaces.mark_code(43, None, Mark::Underline, &mut events),
+            Err(SurfaceRefused::NoCodeCard)
+        );
+        surfaces.record_read(
+            "service.go",
+            42,
+            &[String::from("func f() {"), line.to_owned()],
+        );
+        assert!(surfaces.open_code("service.go", None, &mut events).is_ok());
+        assert!(
+            surfaces
+                .mark_code(43, Some("s.cache.Get("), Mark::Underline, &mut events)
+                .is_ok()
+        );
+        assert_eq!(
+            surfaces.mark_code(44, None, Mark::Underline, &mut events),
+            Err(SurfaceRefused::LineNotShown { line: 44 })
+        );
+        assert_eq!(
+            surfaces.mark_code(43, Some("redis"), Mark::Circle, &mut events),
+            Err(SurfaceRefused::NotOnLine { line: 43 })
+        );
+    }
+
+    #[test]
+    fn a_recap_opens_and_closes_like_any_card() {
+        let mut surfaces = Surfaces::default();
+        let mut events = Vec::new();
+        surfaces.open_recap(vec!["Reads try Redis first".into()], &mut events);
+        assert!(matches!(
+            events.last(),
+            Some(UiEvent::SurfaceShow {
+                surface: Surface::Recap { .. }
+            })
+        ));
+        assert!(surfaces.close(CloseTarget::Recap, &mut events).is_ok());
+        assert_eq!(
+            surfaces.close(CloseTarget::Recap, &mut events),
             Err(SurfaceRefused::NothingToClose)
         );
     }

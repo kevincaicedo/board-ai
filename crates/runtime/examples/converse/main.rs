@@ -147,6 +147,7 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
             talker_name: talker_name(&settings),
             mic: MicMode::OpenMic,
             session_context: None,
+            suggestion: None,
         },
         clock: TokioClock::start(),
         talker,
@@ -193,13 +194,18 @@ async fn read_stdin(
 }
 
 fn print_summary(answers: &[Answer]) {
-    println!("\nanswer  first token  first audio  first op  ops  tags  dropped  tools  question");
+    println!(
+        "\nanswer  first token  first audio  first op  ops  tags  dropped  tools  preamble  \
+         missing  per word  markup  question"
+    );
     for (index, answer) in answers.iter().enumerate() {
         let ms = |value: Option<u64>| value.map_or_else(|| "-".to_owned(), |ms| ms.to_string());
         let mut question = answer.question.clone();
         boardai_runtime::logging::bound(&mut question, 48);
+        let quality = answer.quality();
         println!(
-            "{:>6}  {:>11}  {:>11}  {:>8}  {:>3}  {:>4}  {:>7}  {:>5}  {}{}",
+            "{:>6}  {:>11}  {:>11}  {:>8}  {:>3}  {:>4}  {:>7}  {:>5}  {:>8}  {:>7}  {:>8}  {:>6}  \
+             {}{}",
             index + 1,
             ms(answer.first_token_ms),
             ms(answer.first_audio_ms),
@@ -208,6 +214,10 @@ fn print_summary(answers: &[Answer]) {
             answer.tags_written(),
             answer.dropped_tags,
             answer.tool_calls,
+            quality.preamble_words,
+            quality.missing_words,
+            quality.drawing_tags_per_word_max,
+            quality.markup,
             question,
             if answer.interrupted {
                 " (interrupted)"

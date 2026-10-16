@@ -55,6 +55,7 @@ impl Builder {
             shape,
             placement: &placement,
             stack: 1,
+            fill: None,
         };
         let placed = self
             .board
@@ -199,6 +200,7 @@ fn a_repeated_id_strikes_or_does_nothing_and_never_duplicates() {
         shape: NodeShape::Queue,
         placement: &Placement::Auto,
         stack: 1,
+        fill: None,
     };
     assert_eq!(
         board.board.place_node(LayerId::MAIN, op, same),
@@ -237,6 +239,55 @@ fn an_edge_to_an_unknown_node_is_rejected() {
             .place_edge(LayerId::MAIN, OpId(5), request)
             .is_err()
     );
+}
+
+/// A placement hint that names nothing on the layer (the main board's id inside a detour) never
+/// loses the node: it continues the flow. `in` naming a plain node places it beside that node.
+#[test]
+fn a_placement_hint_naming_nothing_continues_the_flow() {
+    let mut board = Builder::new();
+    board.node("a", "A", NodeShape::Service, Placement::Auto);
+    board.node(
+        "b",
+        "B",
+        NodeShape::Service,
+        near("ghost", Direction::Below),
+    );
+    board.node(
+        "c",
+        "C",
+        NodeShape::Service,
+        Placement::Inside {
+            group: id("nowhere"),
+            near: None,
+        },
+    );
+    board.node(
+        "d",
+        "D",
+        NodeShape::Service,
+        Placement::Inside {
+            group: id("a"),
+            near: None,
+        },
+    );
+    let rects = board.rects();
+    let (a, b, c, d) = (rects["a"], rects["b"], rects["c"], rects["d"]);
+    assert!(
+        a.right() < b.x && b.right() < c.x,
+        "the flow continues right: {rects:?}"
+    );
+    assert_eq!((a.y, b.y, c.y), (a.y, a.y, a.y));
+    assert!(
+        d.y == a.y || d.x > a.right(),
+        "beside its non-group target: {rects:?}"
+    );
+    let all: Vec<Rect> = rects.values().copied().collect();
+    for (index, first) in all.iter().enumerate() {
+        for second in &all[index + 1..] {
+            assert!(!first.intersects(*second), "{rects:?}");
+        }
+    }
 }
 
 #[test]

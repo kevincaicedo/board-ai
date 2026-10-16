@@ -91,7 +91,7 @@ test("chapters follow what the session is doing", () => {
         },
       ],
     },
-    { at: 20_000, events: [{ type: "LayerPush", layer: 1, title: "cache-aside" }] },
+    { at: 20_000, events: [{ type: "LayerPush", layer: 1, title: "cache-aside", question: null }] },
     { at: 33_000, events: [{ type: "Caption", who: "User", text: "Note", is_final: false }] },
     { at: 34_000, events: [{ type: "Caption", who: "User", text: "Note that", is_final: true }] },
     { at: 36_000, events: [{ type: "Chip", kind: "Note", text: "x" }] },

@@ -31,14 +31,27 @@ const WHOLE_TOKENS: &[(&str, &str)] = &[
     ("×", "times"),
     ("~", "about"),
     ("≈", "about"),
+    // Markdown list and heading marks are layout, never speech (the prompt asks for none, and
+    // models still write them).
+    ("-", ""),
+    ("•", ""),
+    ("#", ""),
+    ("##", ""),
+    ("###", ""),
 ];
+
+/// Arrows written inside a token ("client->CDN", "API→Redis"), between word characters, read as
+/// "to". Longest first, so "-->" is not read as "-" plus "->".
+const ARROWS: &[&str] = &["-->", "->", "=>", "→", "⇒"];
 
 /// Separators inside a token, between word characters. `.` between two digits stays a decimal
 /// point; `::` is handled before these.
 const SEPARATORS: &[(char, &str)] = &[('.', " dot "), ('/', " slash "), ('_', " ")];
 
-/// Characters that are formatting, never spoken (Markdown code and emphasis marks).
-const UNSPOKEN: &[char] = &['`', '*'];
+/// Characters that are formatting, never spoken, at the edges of a token: Markdown code and
+/// emphasis marks (`*hot path*`, `**Redis**`, `_cache_`). Inside a token `_` stays a separator
+/// (`user_id`).
+const UNSPOKEN: &[char] = &['`', '*', '_'];
 
 /// Punctuation kept as written around a token; text-to-speech uses it for prosody.
 const LEADING_PUNCTUATION: &[char] = &['(', '[', '"', '\'', '“', '‘'];
@@ -259,6 +272,11 @@ impl Builder<'_> {
         if rest.starts_with("::") && index + 2 < end {
             return Some((2, " "));
         }
+        if let Some(arrow) = ARROWS.iter().find(|arrow| rest.starts_with(**arrow)) {
+            let after = rest[arrow.len()..].chars().next()?;
+            return (previous.is_alphanumeric() && after.is_alphanumeric())
+                .then_some((arrow.len(), " to "));
+        }
         let mut chars = rest.chars();
         let ch = chars.next()?;
         let next = chars.next()?;
@@ -392,6 +410,19 @@ mod tests {
             ("3.5 seconds", "3.5 seconds"),
             ("e.g. Kafka", "for example Kafka"),
             ("a -> b", "a to b"),
+            ("client->CDN", "client to CDN"),
+            ("API→Redis→Postgres.", "API to Redis to Postgres."),
+            ("lb=>api", "lb to api"),
+            ("a-->b", "a to b"),
+            ("Client → Edge → LB", "Client to Edge to LB"),
+            ("the *hot path* first", "the hot path first"),
+            ("**Redis**, then _Postgres_.", "Redis, then Postgres."),
+            ("__init__ runs", "init runs"),
+            ("- First the client.", " First the client."),
+            ("• Then the CDN", " Then the CDN"),
+            ("## Step one", " Step one"),
+            ("write-through and read-only", "write-through and read-only"),
+            ("x - y", "x  y"),
         ] {
             assert_eq!(Speakable::from_caption(caption).text(), spoken, "{caption}");
         }

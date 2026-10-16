@@ -8,6 +8,7 @@ import { Column } from "./Column.tsx";
 import { MicButton } from "./MicButton.tsx";
 import { ReplayControls } from "./ReplayControls.tsx";
 import { type Runtime, RuntimeContext } from "./runtime.ts";
+import { Suggestion } from "./Suggestion.tsx";
 import { ThreadBar } from "./ThreadBar.tsx";
 
 /** How often the optional frame-cost readout refreshes. */
@@ -59,6 +60,7 @@ export function Stage({
       <main class="stage" ref={stageRef} aria-label="BoardAI">
         <div class="board" ref={boardRef} />
         <div class="orb-host" ref={orbRef} />
+        <Suggestion />
         <ThreadBar />
         <Column />
         <Chips />

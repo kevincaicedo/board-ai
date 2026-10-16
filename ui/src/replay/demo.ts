@@ -1,6 +1,7 @@
-// The design canvas's live demo (Main.dc.html, frames 1→7) as protocol events: the request path
-// for a user API, the "wait — why Redis first?" detour with its code walkthrough and trace, a
-// captured note and task, and the resume that finishes the frozen Redis box.
+// The design canvas's live demo (Main.dc.html, frames 1→7) as protocol events: the idle
+// suggestion, the request path for a user API, the "wait — why Redis first?" detour with its code
+// walkthrough, pen underline and trace, a captured note and task, and the resume that finishes
+// the frozen Redis box.
 //
 // Times are the design scene's own (its buildScene, in ms), so the replay can be checked side by
 // side with the canvas. An op starts at the design's first stroke time minus the pen's travel to
@@ -8,6 +9,7 @@
 // with `node src/replay/write-demo.ts` after changing this file.
 
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
+import type { Fill } from "../protocol/generated/Fill.ts";
 import type { Point } from "../protocol/generated/Point.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
@@ -20,8 +22,21 @@ const BUDGET_MAX_MS = 2500;
 
 const STEPS = ["Client", "Edge", "LB", "Service", "Postgres", "Response"];
 
+/** Frame 1's idle line under the orb (Main.dc.html), from the last session's recap. */
+export const DEMO_SUGGESTION = "Pick up Raft log compaction where we left off?";
+
+/**
+ * The design lays the demo out in its own 1440 × 900 stage coordinates. The core's camera frame
+ * for it is the board's area at that size (the stage clear of the thread bar and the captions,
+ * from the --board-* tokens), so the fit is the identity and the replay lands where the canvas
+ * draws; demo.test.ts checks this against tokens.css.
+ */
+export const DEMO_STAGE = { width: 1440, height: 900 } as const;
+export const DEMO_CAMERA_FRAME: Rect = { x: 48, y: 120, w: 1344, h: 630 };
+
 /** Key moments of the design's scene, in session ms. */
 const AT = {
+  suggest: 500,
   listen: 2050,
   think: 4780,
   speak: 5580,
@@ -84,14 +99,16 @@ const rect = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h
 const point = (x: number, y: number): Point => ({ x, y });
 
 let opNumber = 0;
+/** A node with the tone the core's rule gives it (sky, lilac, mint, blush per new subject). */
 function node(
   id: string,
   shape: Extract<DrawOp, { kind: "Node" }>["shape"],
   label: string,
   at: Rect,
+  fill: Fill | null,
 ): DrawOp {
   opNumber += 1;
-  return { kind: "Node", id, op: opNumber, shape, label, rect: at, stack: 1 };
+  return { kind: "Node", id, op: opNumber, shape, label, rect: at, stack: 1, fill };
 }
 
 function edge(
@@ -216,38 +233,46 @@ function thread(at: number, current: number | null, detours: string[]): Timed {
 function mainBoard(): Timed[] {
   opNumber = 0;
   return opsOn(0, [
-    [7271, node("client", "Actor", "Client", rect(119, 384, 42, 86))],
+    [7271, node("client", "Actor", "Client", rect(119, 384, 42, 86), null)],
     [8992, edge("client", "cdn", point(170, 430), null, point(246, 430), null)],
-    [9354, node("cdn", "Service", "CDN", rect(260, 392, 132, 76))],
+    [9354, node("cdn", "Service", "CDN", rect(260, 392, 132, 76), "Sky")],
     [10505, edge("cdn", "lb", point(404, 430), null, point(470, 430), null)],
-    [11250, node("lb", "Service", "Load balancer", rect(482, 392, 178, 76))],
+    [11250, node("lb", "Service", "Load balancer", rect(482, 392, 178, 76), "Lilac")],
     [12977, edge("lb", "api", point(672, 430), null, point(736, 430), null)],
-    [13817, node("api", "Group", "API pods ×3", rect(750, 304, 164, 252))],
-    [15310, node("api-1", "Service", "", rect(770, 322, 124, 54))],
-    [16208, node("api-2", "Service", "", rect(770, 403, 124, 54))],
-    [17101, node("api-3", "Service", "", rect(770, 484, 124, 54))],
+    [13817, node("api", "Group", "API pods ×3", rect(750, 304, 164, 252), null)],
+    [15310, node("api-1", "Service", "", rect(770, 322, 124, 54), "Mint")],
+    [16208, node("api-2", "Service", "", rect(770, 403, 124, 54), "Mint")],
+    [17101, node("api-3", "Service", "", rect(770, 484, 124, 54), "Mint")],
     [17997, edge("api", "redis", point(926, 404), point(970, 352), point(1010, 350), null)],
     // Starts so the interruption lands partway round the box: the stroke the user stops.
-    [19549, node("redis", "Service", "Redis", rect(1022, 316, 144, 68)), BUDGET_MAX_MS],
+    [19549, node("redis", "Service", "Redis", rect(1022, 316, 144, 68), "Blush"), BUDGET_MAX_MS],
     [39386, edge("api", "postgres", point(926, 458), point(970, 514), point(1010, 516), null)],
-    [40250, node("postgres", "Db", "Postgres", rect(1022, 469, 144, 104))],
+    [40250, node("postgres", "Db", "Postgres", rect(1022, 469, 144, 104), "Sky")],
   ]);
 }
 
 function detourBoard(): Timed[] {
   return opsOn(1, [
-    [21019, node("api", "Service", "API", rect(44, 140, 120, 60))],
+    [21019, node("api", "Service", "API", rect(44, 140, 120, 60), "Mint")],
     [21746, edge("api", "redis", point(176, 158), point(288, 96), point(404, 96), "hit")],
-    [22177, node("redis", "Service", "Redis", rect(420, 66, 136, 60))],
+    [22177, node("redis", "Service", "Redis", rect(420, 66, 136, 60), "Blush")],
     [22904, edge("api", "postgres", point(176, 184), point(288, 238), point(404, 236), "miss")],
-    [23335, node("postgres", "Db", "Postgres", rect(420, 194, 136, 80))],
+    [23335, node("postgres", "Db", "Postgres", rect(420, 194, 136, 80), "Sky")],
     [24510, edge("postgres", "redis", point(528, 190), null, point(528, 138), "write back"), 464],
   ]);
 }
 
+/** The pen underline under `s.cache.Get(` starts on "asks" (the design's K.UL0 = P8.ws[5]). */
+function underlineAt(): number {
+  const code = SPEECH.find((utterance) => utterance.words.join(" ").startsWith("In the code"));
+  return code?.wordAt[5] ?? AT.line43;
+}
+
 function timeline(): Timed[] {
   const timed: Timed[] = [
-    { at: 0, event: { type: "Camera", layer: 0, frame: rect(0, 0, 1440, 900), focus: null } },
+    { at: 0, event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null } },
+    { at: AT.suggest, event: { type: "Suggestion", text: DEMO_SUGGESTION } },
+    { at: AT.listen, event: { type: "Suggestion", text: null } },
     ...orb(),
     ...SPEECH.flatMap(captions),
     thread(AT.thread, null, []),
@@ -257,7 +282,10 @@ function timeline(): Timed[] {
     thread(AT.step3, 3, []),
     ...mainBoard(),
     { at: AT.interrupt, event: { type: "Freeze", layer: 0 } },
-    { at: AT.detour, event: { type: "LayerPush", layer: 1, title: "cache-aside" } },
+    {
+      at: AT.detour,
+      event: { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
+    },
     thread(AT.branch, 3, ["cache-aside"]),
     ...detourBoard(),
     {
@@ -277,6 +305,14 @@ function timeline(): Timed[] {
     {
       at: AT.line43,
       event: { type: "SurfaceUpdate", id: 1, update: { kind: "Highlight", line: 43 } },
+    },
+    {
+      at: underlineAt(),
+      event: {
+        type: "SurfaceUpdate",
+        id: 1,
+        update: { kind: "Mark", line: 43, columns: { begin: 17, end: 29 }, mark: "Underline" },
+      },
     },
     {
       at: AT.line44,

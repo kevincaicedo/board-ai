@@ -1,0 +1,42 @@
+clause 0 [talker@0]
+  caption: "A request starts at the client, then the API checks the cache."
+  speech:  "A request starts at the client, then the API checks the cache."
+op 0 at clause 0 byte 0: Plan { steps: ["Client", "Cache", "Queue"] }
+op 1 at clause 0 byte 24: Node { id: ElementId("client"), label: "Client", shape: Actor, placement: Auto, stack: 1, fill: None }
+op 2 at clause 0 byte 41: Node { id: ElementId("api"), label: "API", shape: Service, placement: Near { target: ElementId("client"), direction: Right }, stack: 1, fill: Some(Lilac) }
+op 3 at clause 0 byte 56: Node { id: ElementId("redis"), label: "Redis", shape: Db, placement: Near { target: ElementId("api"), direction: Right }, stack: 1, fill: Some(Blush) }
+op 4 at clause 0 byte 56: Edge { from: ElementId("api"), to: ElementId("redis"), label: None, style: Solid }
+clause 1 [talker@63]
+  caption: "Writes go through the jobs queue."
+  speech:  "Writes go through the jobs queue."
+op 5 at clause 1 byte 22: Node { id: ElementId("jobs"), label: "Jobs", shape: Queue, placement: Near { target: ElementId("api"), direction: Below }, stack: 1, fill: None }
+clause 2 [talker@97]
+  caption: "Two options."
+  speech:  "Two options."
+op 6 at clause 2 byte 0: Compare { options: ["Redis", "Memcached"], criteria: ["Latency", "Persistence"], title: Some("Redis vs Memcached") }
+clause 3 [talker@110]
+  caption: "Only Redis persists."
+  speech:  "Only Redis persists."
+op 7 at clause 3 byte 0: Cell { criterion: Name("Persistence"), option: Name("Redis"), mark: Yes }
+op 8 at clause 3 byte 0: Cell { criterion: Name("Latency"), option: Name("Memcached"), mark: Text { text: "sub-ms" } }
+op 9 at clause 3 byte 0: Cell { criterion: Name("Redis"), option: Name("Latency"), mark: No }
+clause 4 [talker@131]
+  caption: "In the code, line 43 asks Redis first, and line 44 returns."
+  speech:  "In the code, line 43 asks Redis first, and line 44 returns."
+op 10 at clause 4 byte 0: Code { path: "internal/user/service.go", lines: Some(LineRange { first: 42, last: 52 }) }
+op 11 at clause 4 byte 21: MarkCode { line: 43, code: Some("s.cache.Get("), mark: Underline }
+op 12 at clause 4 byte 51: MarkCode { line: 44, code: None, mark: Circle }
+dropped NarrationTag
+clause 5 [talker@191]
+  caption: "Never mind."
+  speech:  "Never mind."
+clause 6 [talker@203]
+  caption: "To recap."
+  speech:  "To recap."
+op 13 at clause 6 byte 0: Recap { bullets: ["Reads try Redis first", "A miss reads Postgres and writes back", "TTLs bound staleness"] }
+clause 7 [talker@213]
+  caption: "- The client->CDN hop is **cached** at the *edge*."
+  speech:  " The client to CDN hop is cached at the edge."
+clause 8 [talker@264]
+  caption: "## Then API→Redis→Postgres, see _service.go_."
+  speech:  " Then API to Redis to Postgres, see service dot go."

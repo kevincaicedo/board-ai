@@ -3,6 +3,7 @@
 // proportions follow the design's canvas primitives (Components.dc.html and the live demo).
 
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
+import type { Fill } from "../protocol/generated/Fill.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import {
@@ -518,13 +519,30 @@ export function seedKey(op: DrawOp): string {
   return op.kind === "Strike" ? `${op.target}#strike` : op.id;
 }
 
-export function planOp(op: DrawOp, fill: Tone | null, tokens: PlanTokens): OpPlan {
+/** The hachure tone the core chose for a node; the UI never picks one itself (D-031 retired). */
+export function toneOf(fill: Fill | null): Tone | null {
+  switch (fill) {
+    case "Lilac":
+      return "lilac";
+    case "Sky":
+      return "sky";
+    case "Mint":
+      return "mint";
+    case "Blush":
+      return "blush";
+    case null:
+      return null;
+  }
+}
+
+export function planOp(op: DrawOp, tokens: PlanTokens): OpPlan {
   const random = randomFor(seedKey(op));
   let items: Item[];
   let fallback: Rect;
   switch (op.kind) {
     case "Node": {
       fallback = op.rect;
+      const fill = toneOf(op.fill);
       switch (op.shape) {
         case "Service":
           items = service(random, op.rect, op.label, op.stack, fill, tokens);

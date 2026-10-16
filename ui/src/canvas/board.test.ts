@@ -4,8 +4,8 @@ import { test } from "node:test";
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
 import { type BoardEvent, BoardModel, LAYER_ELEMENTS_MAX, runActive } from "./board.ts";
-import { cameraAt, depthOfField, fitFrame } from "./camera.ts";
-import { planOp } from "./plan.ts";
+import { cameraAt, cardArea, depthOfField, emptyArea, fitFrame, stageArea } from "./camera.ts";
+import { planOp, toneOf } from "./plan.ts";
 import {
   dockSwell,
   homeStart,
@@ -29,6 +29,7 @@ const box = (id: string, label = id, x = 0): Extract<DrawOp, { kind: "Node" }> =
   label,
   rect: { x, y: 0, w: 132, h: 76 },
   stack: 1,
+  fill: null,
 });
 
 function scene() {
@@ -55,8 +56,8 @@ const start = (op: DrawOp, budget = 2500, layer = 0): BoardEvent => ({
 });
 
 test("plans are deterministic per element id and follow a hand's order", () => {
-  const first = planOp(box("cdn", "CDN"), "sky", tokens);
-  const again = planOp(box("cdn", "CDN"), "sky", tokens);
+  const first = planOp({ ...box("cdn", "CDN"), fill: "Sky" }, tokens);
+  const again = planOp({ ...box("cdn", "CDN"), fill: "Sky" }, tokens);
   assert.deepEqual(
     first.items.map((item) => (item.type === "stroke" ? item.path : item.text)),
     again.items.map((item) => (item.type === "stroke" ? item.path : item.text)),
@@ -78,7 +79,7 @@ test("plans are deterministic per element id and follow a hand's order", () => {
 test("every op kind and shape plans without throwing", () => {
   const shapes = ["Service", "Db", "Queue", "Actor", "Group", "Note"] as const;
   for (const shape of shapes) {
-    const plan = planOp({ ...box("n"), shape, stack: 3 }, "mint", tokens);
+    const plan = planOp({ ...box("n"), shape, stack: 3, fill: "Mint" }, tokens);
     assert.ok(plan.items.length > 0, shape);
   }
   for (const mark of ["Circle", "Underline", "Arrow", "Bracket"] as const) {
@@ -91,7 +92,7 @@ test("every op kind and shape plans without throwing", () => {
       rect: { x: 0, y: 0, w: 60, h: 20 },
       text: "TTL",
     };
-    assert.equal(planOp(op, null, tokens).items.at(-1)?.type, "text", mark);
+    assert.equal(planOp(op, tokens).items.at(-1)?.type, "text", mark);
   }
   const strike: DrawOp = {
     kind: "Strike",
@@ -100,7 +101,7 @@ test("every op kind and shape plans without throwing", () => {
     label: "Kafka",
     rect: { x: 0, y: 0, w: 60, h: 26 },
   };
-  assert.equal(planOp(strike, null, tokens).items.length, 3);
+  assert.equal(planOp(strike, tokens).items.length, 3);
   const dashed: DrawOp = {
     kind: "Edge",
     id: "a>b",
@@ -111,23 +112,29 @@ test("every op kind and shape plans without throwing", () => {
     label: "async",
     style: "Dashed",
   };
-  const edge = planOp(dashed, null, tokens);
+  const edge = planOp(dashed, tokens);
   assert.equal(edge.items[0]?.type === "stroke" && edge.items[0].dashed, true);
   const trace: DrawOp = { kind: "Trace", id: "t", op: 5, points: [] };
-  assert.equal(planOp(trace, null, tokens).items.length, 0);
+  assert.equal(planOp(trace, tokens).items.length, 0);
 });
 
-test("fills: same subject, same tone; new subjects cycle; detours start two tones along", () => {
-  const { board } = scene();
-  assert.equal(board.fillFor(box("cdn", "CDN"), 0), "sky");
-  assert.equal(board.fillFor(box("lb", "Load balancer"), 0), "lilac");
-  assert.equal(board.fillFor(box("pod-1", ""), 0), "mint");
-  assert.equal(board.fillFor(box("pod-2", ""), 0), "mint");
-  assert.equal(board.fillFor(box("redis", "Redis"), 0), "blush");
-  assert.equal(board.fillFor(box("api", "API"), 1), "mint");
-  assert.equal(board.fillFor(box("redis", "Redis"), 1), "blush");
-  assert.equal(board.fillFor({ ...box("db"), shape: "Db" }, 1), "sky");
-  assert.equal(board.fillFor({ ...box("g"), shape: "Group" }, 0), null);
+test("fills come from the core: the plan hatches in the op's tone, or not at all", () => {
+  const hatches = (fill: Extract<DrawOp, { kind: "Node" }>["fill"]) =>
+    planOp({ ...box("cdn", "CDN"), fill }, tokens).items.filter(
+      (item) => item.type === "stroke" && item.kind === "hatch",
+    );
+  for (const [fill, tone] of [
+    ["Lilac", "lilac"],
+    ["Sky", "sky"],
+    ["Mint", "mint"],
+    ["Blush", "blush"],
+  ] as const) {
+    assert.equal(toneOf(fill), tone);
+    const [hatch] = hatches(fill);
+    assert.ok(hatch?.type === "stroke" && hatch.tone === tone, fill);
+  }
+  assert.equal(toneOf(null), null);
+  assert.equal(hatches(null).length, 0);
 });
 
 test("a repeated id replaces the element instead of duplicating it", () => {
@@ -175,7 +182,7 @@ test("an op that arrives before the orb finished condensing waits for it", () =>
 
 test("detour layers push, pop, and stop accepting more than the board can hold", () => {
   const { board, apply } = scene();
-  apply({ type: "LayerPush", layer: 1, title: "cache-aside" }, 100);
+  apply({ type: "LayerPush", layer: 1, title: "cache-aside", question: null }, 100);
   apply(start(box("api"), 500, 1), 200);
   assert.equal(board.openDetours().length, 1);
   apply({ type: "LayerPop", layer: 1 }, 900);
@@ -250,11 +257,12 @@ test("the orb sits centered, condenses into the nib, then docks", () => {
   assert.ok(Math.abs(place.size - tokens.orbDockSize) < 0.5);
 });
 
-test("the camera fits its frame and eases between frames; focus softens the rest", () => {
+test("the camera fits its frame in the board's area and eases between frames", () => {
   const out = { scale: 1, x: 0, y: 0 };
-  fitFrame({ x: 0, y: 0, w: 1440, h: 900 }, { width: 1440, height: 900 }, out);
+  const area = { x: 0, y: 0, w: 1440, h: 900, maxScale: 2 };
+  fitFrame({ x: 0, y: 0, w: 1440, h: 900 }, area, out);
   assert.deepEqual(out, { scale: 1, x: 0, y: 0 });
-  fitFrame({ x: 100, y: 100, w: 720, h: 450 }, { width: 1440, height: 900 }, out);
+  fitFrame({ x: 100, y: 100, w: 720, h: 450 }, area, out);
   assert.deepEqual(out, { scale: 2, x: -200, y: -200 });
   const camera = {
     frame: { x: 100, y: 100, w: 720, h: 450 },
@@ -264,11 +272,43 @@ test("the camera fits its frame and eases between frames; focus softens the rest
     previousFocus: null,
     focusAt: 1000,
   };
-  cameraAt(camera, 1000, { width: 1440, height: 900 }, 900, out);
+  cameraAt(camera, 1000, area, 900, out);
   assert.equal(out.scale, 1);
-  cameraAt(camera, 1900, { width: 1440, height: 900 }, 900, out);
+  cameraAt(camera, 1900, area, 900, out);
   assert.equal(out.scale, 2);
   assert.equal(depthOfField(camera, 1000, 420), 0);
   assert.equal(depthOfField(camera, 1420, 420), 1);
   assert.equal(depthOfField({ ...camera, focus: null, previousFocus: "redis" }, 1420, 420), 0);
+});
+
+test("the stage area clears the thread bar and captions; small boards keep natural size", () => {
+  const area = stageArea({ width: 1440, height: 900 }, tokens, emptyArea());
+  assert.deepEqual(area, {
+    x: tokens.boardSide,
+    y: tokens.boardTop,
+    w: 1440 - 2 * tokens.boardSide,
+    h: 900 - tokens.boardTop - tokens.boardBottom,
+    maxScale: tokens.cameraScaleMax,
+  });
+  const out = { scale: 1, x: 0, y: 0 };
+  // One node at the layout's origin (the live replay drew it under the thread bar): it is
+  // centered in the area at natural size, not enlarged and not at the stage's corner.
+  fitFrame({ x: -60, y: -60, w: 252, h: 196 }, area, out);
+  assert.equal(out.scale, tokens.cameraScaleMax);
+  const centerX = area.x + area.w / 2;
+  const centerY = area.y + area.h / 2;
+  assert.deepEqual([out.x + 66 * out.scale, out.y + 38 * out.scale], [centerX, centerY]);
+  // A board wider than the area shrinks to fit inside it, Postgres included.
+  fitFrame({ x: -60, y: -60, w: 2400, h: 400 }, area, out);
+  assert.equal(out.scale, area.w / 2400);
+  assert.ok(out.x - 60 * out.scale >= area.x - 0.001);
+  assert.ok(out.x + 2340 * out.scale <= area.x + area.w + 0.001);
+  assert.ok(out.y - 60 * out.scale >= area.y);
+  const card = cardArea(
+    { width: tokens.surfaceWidth, height: tokens.detourCardHeight },
+    tokens,
+    emptyArea(),
+  );
+  assert.equal(card.y, tokens.detourBoardTop, "a detour draws below its card head");
+  assert.equal(card.h, tokens.detourCardHeight - tokens.detourBoardTop - tokens.detourBoardBottom);
 });

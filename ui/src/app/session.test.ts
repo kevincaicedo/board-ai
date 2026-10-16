@@ -3,8 +3,15 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
-import { captionText, chipFlight, columnTops, type Placed, surfaceHeight } from "./layout.ts";
-import { SessionStore } from "./session.ts";
+import {
+  captionText,
+  chipFlight,
+  columnTops,
+  type Placed,
+  suggestionLook,
+  surfaceHeight,
+} from "./layout.ts";
+import { CODE_MARKS_MAX, SessionStore } from "./session.ts";
 
 const tokens = readTokens(
   tokenSourceFromCss(readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8")),
@@ -70,7 +77,10 @@ test("at most two surfaces sit beside the canvas; the oldest steps out", () => {
     lines: ["x"],
     highlight: null,
   });
-  store.apply({ type: "LayerPush", layer: 1, title: "cache-aside" }, 0);
+  store.apply(
+    { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
+    0,
+  );
   store.apply({ type: "SurfaceShow", surface: code(1) }, 2000);
   store.apply({ type: "SurfaceShow", surface: code(2) }, 4000);
   const column = store.column.value;
@@ -84,6 +94,7 @@ test("at most two surfaces sit beside the canvas; the oldest steps out", () => {
   );
   const detour = column[0];
   assert.equal(detour?.shownAt, tokens.durationDetourCardDelayMs);
+  assert.equal(detour?.kind === "detour" && detour.question, "why Redis first?");
   assert.equal(
     column[2]?.kind === "surface" && column[2].enterAt,
     4000 + tokens.durationSurfaceDelayMs,
@@ -93,6 +104,76 @@ test("at most two surfaces sit beside the canvas; the oldest steps out", () => {
   assert.deepEqual(updated?.kind === "surface" ? updated.highlights : [], [{ line: 1, at: 4500 }]);
   store.apply({ type: "SurfaceUpdate", id: 99, update: { kind: "Highlight", line: 1 } }, 4600);
   assert.equal(store.column.value.length, 3, "an update for an unknown surface is ignored");
+});
+
+test("the idle suggestion shows, clears once the user speaks, and a reset forgets it", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "Suggestion", text: "Pick up Raft log compaction?" }, 500);
+  assert.deepEqual(store.suggestion.value, {
+    text: "Pick up Raft log compaction?",
+    shownAt: 500,
+    clearedAt: null,
+  });
+  store.apply({ type: "Suggestion", text: null }, 2050);
+  store.apply({ type: "Suggestion", text: null }, 9000);
+  assert.equal(store.suggestion.value?.clearedAt, 2050, "the first clear wins");
+  store.reset();
+  assert.equal(store.suggestion.value, null);
+  store.apply({ type: "Suggestion", text: null }, 100);
+  assert.equal(store.suggestion.value, null, "nothing to clear");
+});
+
+test("code marks and compare cells land on their card, bounded", () => {
+  const store = new SessionStore(tokens);
+  store.apply(
+    {
+      type: "SurfaceShow",
+      surface: { kind: "Code", id: 1, path: "a.go", first_line: 42, lines: ["x"], highlight: null },
+    },
+    0,
+  );
+  for (let index = 0; index < CODE_MARKS_MAX + 3; index += 1) {
+    store.apply(
+      {
+        type: "SurfaceUpdate",
+        id: 1,
+        update: {
+          kind: "Mark",
+          line: 42,
+          columns: { begin: index, end: index + 1 },
+          mark: "Underline",
+        },
+      },
+      100 + index,
+    );
+  }
+  const card = store.column.value[0];
+  const marks = card?.kind === "surface" ? card.marks : [];
+  assert.equal(marks.length, CODE_MARKS_MAX);
+  assert.equal(marks.at(-1)?.columns.begin, CODE_MARKS_MAX + 2, "the newest kept");
+  store.apply(
+    {
+      type: "SurfaceShow",
+      surface: {
+        kind: "Compare",
+        id: 2,
+        options: ["Raft", "Paxos"],
+        criteria: ["Easy"],
+        title: null,
+      },
+    },
+    500,
+  );
+  store.apply(
+    {
+      type: "SurfaceUpdate",
+      id: 2,
+      update: { kind: "Cell", row: 0, col: 1, mark: { kind: "No" } },
+    },
+    600,
+  );
+  const compare = store.column.value.find((item) => item.key === "surface-2");
+  assert.deepEqual(compare?.kind === "surface" ? [...compare.cells.keys()] : [], ["0:1"]);
 });
 
 test("the column centers one card, stacks two, and springs between them", () => {
@@ -148,4 +229,16 @@ test("a chip flight rises in, arcs to the target and shrinks into it", () => {
   assert.equal(landed.visible, false);
   const middle = chipFlight(origin, target, 0, 2000, 2475, 420, 950, 12);
   assert.ok(middle.y < 0, "the arc rises above the straight line");
+});
+
+test("the suggestion rises in out of a blur, then blurs out once cleared", () => {
+  const begin = suggestionLook(500, null, 500, tokens);
+  assert.deepEqual(begin, { opacity: 0, rise: tokens.suggestionRise, blur: tokens.suggestionBlur });
+  const shown = suggestionLook(500, null, 500 + tokens.durationSuggestionInMs, tokens);
+  assert.deepEqual(shown, { opacity: 1, rise: 0, blur: 0 });
+  const half = suggestionLook(500, 2050, 2050 + tokens.durationSuggestionOutMs / 2, tokens);
+  assert.equal(half.opacity, 0.5);
+  assert.equal(half.blur, tokens.suggestionBlur / 2);
+  const gone = suggestionLook(500, 2050, 2050 + tokens.durationSuggestionOutMs, tokens);
+  assert.equal(gone.opacity, 0);
 });

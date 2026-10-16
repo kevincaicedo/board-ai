@@ -2,7 +2,7 @@
 //! narration boundary; the board, thread and surfaces only ever see typed ops.
 
 use crate::ids::ElementId;
-use crate::protocol::{CellMark, LineStyle, Mark, NodeShape};
+use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NarrationOp {
@@ -18,6 +18,8 @@ pub enum NarrationOp {
         shape: NodeShape,
         placement: Placement,
         stack: u8,
+        /// The talker's tone; the board picks one when absent.
+        fill: Option<Fill>,
     },
     Edge {
         from: ElementId,
@@ -51,17 +53,30 @@ pub enum NarrationOp {
     Trace {
         hops: Vec<ElementId>,
     },
+    /// Options are the card's columns and criteria its rows.
     Compare {
         options: Vec<String>,
         criteria: Vec<String>,
+        title: Option<String>,
     },
     Cell {
-        row: AxisRef,
-        col: AxisRef,
+        criterion: AxisRef,
+        option: AxisRef,
         mark: CellMark,
     },
     Close {
         surface: CloseTarget,
+    },
+    /// A pen mark on the open code card: `code` is the text to mark on `line` (1-based); the
+    /// whole line when absent.
+    MarkCode {
+        line: u32,
+        code: Option<String>,
+        mark: Mark,
+    },
+    /// Opens the recap card with these bullets.
+    Recap {
+        bullets: Vec<String>,
     },
 }
 
@@ -84,7 +99,9 @@ impl NarrationOp {
             | Self::Line { .. }
             | Self::Compare { .. }
             | Self::Cell { .. }
-            | Self::Close { .. } => false,
+            | Self::Close { .. }
+            | Self::MarkCode { .. }
+            | Self::Recap { .. } => false,
         }
     }
 }
@@ -96,7 +113,7 @@ pub enum StepRef {
     Name(String),
 }
 
-/// A compare row or column: a 0-based index, or an option or criterion by name.
+/// A compare criterion or option: a 0-based index, or its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AxisRef {
     Index(u8),

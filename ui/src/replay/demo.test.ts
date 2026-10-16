@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { emptyArea, stageArea } from "../canvas/camera.ts";
+import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
 import { parseReplayLog } from "../transport/log.ts";
-import { DESIGN_FRAMES_MS, demoJsonl } from "./demo.ts";
+import {
+  DEMO_CAMERA_FRAME,
+  DEMO_STAGE,
+  DEMO_SUGGESTION,
+  DESIGN_FRAMES_MS,
+  demoJsonl,
+} from "./demo.ts";
 import { primitivesJsonl } from "./primitives.ts";
 import { say } from "./speech.ts";
 
@@ -67,6 +75,58 @@ test("the demo freezes mid-stroke, detours, and resumes the same stroke", () => 
     [...order].sort((a, b) => a - b),
   );
   assert.ok(order.every((index) => index >= 0));
+});
+
+test("the demo's camera frame is the board area at the design's size, so it draws 1:1", () => {
+  const tokens = readTokens(
+    tokenSourceFromCss(readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8")),
+  );
+  const area = stageArea(DEMO_STAGE, tokens, emptyArea());
+  assert.deepEqual(DEMO_CAMERA_FRAME, { x: area.x, y: area.y, w: area.w, h: area.h });
+  assert.ok(area.maxScale >= 1, "the design's own size is never shrunk");
+});
+
+test("the demo shows frame 1's suggestion, the detour's question and frame 5's underline", () => {
+  const events = committed
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { t: number; event: Record<string, unknown> });
+  const suggestions = events.filter((line) => line.event.type === "Suggestion");
+  assert.deepEqual(
+    suggestions.map((line) => [line.t, line.event.text]),
+    [
+      [500, DEMO_SUGGESTION],
+      [2050, null],
+    ],
+  );
+  const push = events.find((line) => line.event.type === "LayerPush");
+  assert.equal(push?.event.question, "why Redis first?");
+  const mark = events.find(
+    (line) =>
+      line.event.type === "SurfaceUpdate" &&
+      (line.event.update as { kind: string }).kind === "Mark",
+  );
+  const asks = say("Assistant", 28277, "In the code, line 43 asks Redis first.").wordAt[5];
+  assert.equal(mark?.t, asks, "the pen starts on 'asks'");
+  const nodes = events
+    .filter((line) => line.event.type === "OpStart")
+    .map((line) => line.event.op as { kind: string; id: string; fill?: string | null })
+    .filter((op) => op.kind === "Node")
+    .map((op) => `${op.id}:${op.fill}`);
+  assert.deepEqual(nodes, [
+    "client:null",
+    "cdn:Sky",
+    "lb:Lilac",
+    "api:null",
+    "api-1:Mint",
+    "api-2:Mint",
+    "api-3:Mint",
+    "redis:Blush",
+    "api:Mint",
+    "redis:Blush",
+    "postgres:Sky",
+    "postgres:Sky",
+  ]);
 });
 
 test("word timings match the design's speech model", () => {

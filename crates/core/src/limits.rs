@@ -99,6 +99,9 @@ pub const COMPARE_AXIS_MAX: usize = 6;
 /// Hops in a `trace` path; a longer path drops the tag.
 pub const TRACE_HOPS_MAX: usize = 16;
 
+/// Bullets on a recap card (PRODUCT §7.2 asks for 3 to 5); extra ones are dropped.
+pub const RECAP_BULLETS_MAX: usize = 5;
+
 // ---- Board, surfaces and talker context (LLD §2.5, §2.6) ----
 
 /// Elements on one layer; an op past it is dropped and counted.
@@ -123,6 +126,21 @@ pub const READ_FILE_LINES_MAX: usize = 4_000;
 
 /// Lines on one code card; a longer range is cut.
 pub const CODE_CARD_LINES_MAX: usize = 60;
+
+/// The idle suggestion under the orb; a longer one is cut and ends with "…".
+pub const SUGGESTION_MAX_BYTES: usize = 120;
+
+/// The question a detour card shows under its title; a longer one is cut and ends with "…".
+pub const DETOUR_QUESTION_MAX_BYTES: usize = 80;
+
+/// Space the camera keeps around a layer's drawing (and around a focused element), in world
+/// units, so the newest stroke never touches the edge of the view.
+pub const CAMERA_MARGIN_UNITS: i32 = 60;
+
+/// How far the drawing must grow past the current frame before the camera follows, in world
+/// units. Smaller growth (an annotation, a label) stays within the margin and moves nothing, so
+/// the view doesn't twitch with every mark; a new node always moves it.
+pub const CAMERA_REFRAME_STEP_UNITS: i32 = 40;
 
 /// Board summary sent to the talker; longer summaries end with "…".
 pub const BOARD_SUMMARY_MAX_BYTES: usize = 4 * 1024;

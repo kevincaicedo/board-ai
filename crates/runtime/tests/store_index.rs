@@ -55,6 +55,7 @@ async fn load_balancing_session(store: &Store) -> String {
         vec![UiEvent::LayerPush {
             layer: detour,
             title: "readiness".into(),
+            question: None,
         }],
     );
     store.log_ui(at(1_100), vec![node(1, "probe", "Readiness probe")]);

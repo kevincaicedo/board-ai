@@ -45,6 +45,7 @@ test("a batch reaches the board, the orb and the surfaces; a reset clears them a
           label: "LB",
           rect: { x: 0, y: 0, w: 120, h: 60 },
           stack: 1,
+          fill: "Sky",
         },
       },
     ],

@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::board::summary::summary;
+use crate::conversation::cues::CancelTarget;
 use crate::effect::{Dropped, Effect, LogRecord, Milestone, TalkRequest};
 use crate::engine::listen::ChangeGate;
 use crate::engine::ops::{Anchor, QueuedOp};
@@ -89,6 +90,27 @@ impl ContextTracker {
         while self.notices.len() > TALKER_NOTICES_MAX {
             self.notices.pop_front();
         }
+    }
+
+    /// Forgets the running task a spoken cancel names (the newest of its kind) and returns it;
+    /// whatever it reports afterwards is ignored.
+    pub(super) fn cancel_task(&mut self, target: CancelTarget) -> Option<(TaskId, HarnessKind)> {
+        let task = self
+            .tasks
+            .iter()
+            .rev()
+            .find(|(_, kind)| match (target, kind) {
+                (CancelTarget::Latest, _)
+                | (CancelTarget::Research, HarnessKind::Research)
+                | (CancelTarget::Review, HarnessKind::Review)
+                | (CancelTarget::Change, HarnessKind::Change { .. }) => true,
+                (
+                    CancelTarget::Research | CancelTarget::Review | CancelTarget::Change,
+                    HarnessKind::Research | HarnessKind::Review | HarnessKind::Change { .. },
+                ) => false,
+            })
+            .map(|(task, _)| *task)?;
+        self.tasks.remove_entry(&task)
     }
 
     fn report(&mut self, text: String) {
@@ -643,18 +665,16 @@ impl Core {
         event: HarnessEvent,
         effects: &mut Vec<Effect>,
     ) {
+        // A task that was cancelled (or already reported) has nothing more to say.
+        let Some(kind) = self.context.tasks.get(&task).cloned() else {
+            return;
+        };
         if let HarnessEvent::FileTouched { path } = &event {
             effects.push(Effect::Ui(UiEvent::Chip {
                 kind: ChipKind::Source,
                 text: path.clone(),
             }));
         }
-        let kind = self
-            .context
-            .tasks
-            .get(&task)
-            .cloned()
-            .unwrap_or(HarnessKind::Research);
         if let Some(report) = harness_report(task, &kind, &event) {
             self.context.tasks.remove(&task);
             self.context.report(report);
@@ -668,6 +688,7 @@ impl Core {
             && self.stop.is_none();
         if idle && !self.context.reports.is_empty() {
             self.marks = crate::engine::TurnMarks::default();
+            self.turn_question = None;
             self.state = crate::conversation::ConversationState::Thinking;
             self.request_talk(now, effects);
         }

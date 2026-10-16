@@ -95,7 +95,8 @@ impl Frame {
             | UiEvent::SurfaceUpdate { .. }
             | UiEvent::SurfaceDismiss { .. }
             | UiEvent::Chip { .. }
-            | UiEvent::Problem { .. } => key,
+            | UiEvent::Problem { .. }
+            | UiEvent::Suggestion { .. } => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -122,7 +123,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::SurfaceUpdate { .. }
         | UiEvent::SurfaceDismiss { .. }
         | UiEvent::Chip { .. }
-        | UiEvent::Problem { .. } => None,
+        | UiEvent::Problem { .. }
+        | UiEvent::Suggestion { .. } => None,
     }
 }
 
@@ -173,6 +175,7 @@ mod tests {
                     h: 10,
                 },
                 stack: 1,
+                fill: None,
             },
             budget_ms: 400,
         }

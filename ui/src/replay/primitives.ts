@@ -1,12 +1,14 @@
 // A fixture that exercises every op kind and surface the live demo doesn't: database, queue,
-// stacked service, note, dashed and labelled connectors, all four pen marks, a correction,
-// compare and recap cards, memory and source chips, depth of field, an acknowledgement and a
-// spoken problem. It mirrors the design's canvas primitives page (Components.dc.html).
+// stacked service, note, every fill tone, dashed and labelled connectors, all four pen marks, a
+// correction, a titled compare card (criteria are rows, options are columns), a recap card, a
+// code card with a circled span, memory and source chips, depth of field, an acknowledgement and
+// a spoken problem. It mirrors the design's canvas primitives page (Components.dc.html).
 
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { UiLogLine } from "../protocol/generated/UiLogLine.ts";
+import { DEMO_CAMERA_FRAME } from "./demo.ts";
 import { say } from "./speech.ts";
 
 const rect = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
@@ -28,6 +30,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "auth",
       rect: rect(40, 150, 140, 76),
       stack: 1,
+      fill: "Sky",
     })),
   ],
   [
@@ -40,6 +43,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "users",
       rect: rect(230, 136, 128, 102),
       stack: 1,
+      fill: "Lilac",
     })),
   ],
   [
@@ -52,6 +56,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "jobs",
       rect: rect(420, 170, 180, 50),
       stack: 1,
+      fill: "Mint",
     })),
   ],
   [
@@ -64,6 +69,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "Client",
       rect: rect(100, 320, 42, 86),
       stack: 1,
+      fill: null,
     })),
   ],
   [
@@ -76,6 +82,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "API pod",
       rect: rect(200, 340, 140, 70),
       stack: 3,
+      fill: "Blush",
     })),
   ],
   [
@@ -88,6 +95,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       label: "SQS",
       rect: rect(500, 355, 80, 30),
       stack: 1,
+      fill: null,
     })),
   ],
   [
@@ -178,7 +186,7 @@ const SHAPES: readonly [number, DrawOp][] = [
 
 function timed(): { at: number; event: UiEvent }[] {
   const events: { at: number; event: UiEvent }[] = [
-    { at: 0, event: { type: "Camera", layer: 0, frame: rect(0, 0, 1440, 900), focus: null } },
+    { at: 0, event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null } },
     { at: 0, event: { type: "Orb", state: "Drawing", level_percent: 60 } },
     {
       at: 300,
@@ -226,6 +234,7 @@ function timed(): { at: number; event: UiEvent }[] {
           id: 1,
           options: ["cache-aside", "write-through"],
           criteria: ["Easy to add", "Writes stay fast", "Reads always fresh"],
+          title: "Cache-aside vs write-through",
         },
       },
     },
@@ -242,7 +251,7 @@ function timed(): { at: number; event: UiEvent }[] {
       event: {
         type: "SurfaceUpdate",
         id: 1,
-        update: { kind: "Cell", row: 1, col: 0, mark: { kind: "No" } },
+        update: { kind: "Cell", row: 0, col: 1, mark: { kind: "No" } },
       },
     },
     {
@@ -250,7 +259,7 @@ function timed(): { at: number; event: UiEvent }[] {
       event: {
         type: "SurfaceUpdate",
         id: 1,
-        update: { kind: "Cell", row: 0, col: 1, mark: { kind: "Yes" } },
+        update: { kind: "Cell", row: 1, col: 0, mark: { kind: "Yes" } },
       },
     },
     {
@@ -266,7 +275,7 @@ function timed(): { at: number; event: UiEvent }[] {
       event: {
         type: "SurfaceUpdate",
         id: 1,
-        update: { kind: "Cell", row: 0, col: 2, mark: { kind: "No" } },
+        update: { kind: "Cell", row: 2, col: 0, mark: { kind: "No" } },
       },
     },
     {
@@ -274,7 +283,7 @@ function timed(): { at: number; event: UiEvent }[] {
       event: {
         type: "SurfaceUpdate",
         id: 1,
-        update: { kind: "Cell", row: 1, col: 2, mark: { kind: "Text", text: "always" } },
+        update: { kind: "Cell", row: 2, col: 1, mark: { kind: "Text", text: "always" } },
       },
     },
     {
@@ -296,7 +305,29 @@ function timed(): { at: number; event: UiEvent }[] {
     { at: 16_700, event: { type: "Chip", kind: "Source", text: "internal/user/service.go" } },
     {
       at: 17_500,
-      event: { type: "Camera", layer: 0, frame: rect(0, 0, 1440, 900), focus: "users" },
+      event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: "users" },
+    },
+    {
+      at: 18_000,
+      event: {
+        type: "SurfaceShow",
+        surface: {
+          kind: "Code",
+          id: 3,
+          path: "internal/user/cache.go",
+          first_line: 12,
+          lines: ["func ttl() time.Duration {", "    return 10 * time.Minute", "}"],
+          highlight: 13,
+        },
+      },
+    },
+    {
+      at: 18_600,
+      event: {
+        type: "SurfaceUpdate",
+        id: 3,
+        update: { kind: "Mark", line: 13, columns: { begin: 11, end: 27 }, mark: "Circle" },
+      },
     },
     { at: 19_000, event: { type: "Orb", state: "Speaking", level_percent: 60 } },
     {

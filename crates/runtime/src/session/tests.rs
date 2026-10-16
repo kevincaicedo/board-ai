@@ -260,6 +260,7 @@ fn start(talker: Arc<ScriptedTalker>, refusing_voice: bool) -> Harness {
             talker_name: "the model".to_owned(),
             mic: MicMode::OpenMic,
             session_context: None,
+            suggestion: None,
         },
         clock: TokioClock::start(),
         talker: Arc::clone(&talker) as Arc<dyn LlmProvider>,

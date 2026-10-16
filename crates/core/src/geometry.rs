@@ -49,6 +49,15 @@ impl Rect {
             && other.y < self.bottom()
     }
 
+    /// True when `other` lies entirely inside this rectangle (shared edges count as inside).
+    #[must_use]
+    pub fn contains(self, other: Self) -> bool {
+        self.x <= other.x
+            && self.y <= other.y
+            && other.right() <= self.right()
+            && other.bottom() <= self.bottom()
+    }
+
     /// The smallest rectangle containing both.
     #[must_use]
     pub fn union(self, other: Self) -> Self {

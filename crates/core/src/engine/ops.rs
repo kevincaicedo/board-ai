@@ -3,23 +3,22 @@
 //! Ops run strictly in narration order. An op is due once the word it is anchored to has begun
 //! playing (I1); drawing ops then start at least [`OP_SPACING_MIN_MS`] apart, each with a budget
 //! that reaches the next op's anchor, clamped to [`OP_BUDGET_MIN_MS`]–[`OP_BUDGET_MAX_MS`]. A
-//! frozen stroke on the layer finishes before anything new is drawn there.
+//! frozen stroke on the layer finishes before anything new is drawn there. When a new element
+//! starts, the camera follows first, so the view eases toward the stroke as it begins.
 
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::board::{EdgeRequest, NodeRequest, Placed, Rejected, layout};
 use crate::effect::{Dropped, Effect, LogRecord, Milestone};
 use crate::engine::{Core, milestone};
-use crate::ids::{ClauseId, LayerId, OpId};
+use crate::geometry::Rect;
+use crate::ids::{ClauseId, ElementId, LayerId, OpId};
 use crate::limits::{OP_BUDGET_MAX_MS, OP_BUDGET_MIN_MS, OP_SPACING_MIN_MS};
 use crate::narration::ops::NarrationOp;
 use crate::protocol::{DrawOp, UiEvent};
 use crate::surfaces::SurfaceRefused;
 use crate::thread::Detour;
 use crate::time::SessionTime;
-
-/// Margin around a focused element when the camera frames it.
-const FOCUS_MARGIN: i32 = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Anchor {
@@ -87,7 +86,9 @@ impl OpQueue {
                 | NarrationOp::Trace { .. }
                 | NarrationOp::Compare { .. }
                 | NarrationOp::Cell { .. }
-                | NarrationOp::Close { .. } => depth,
+                | NarrationOp::Close { .. }
+                | NarrationOp::MarkCode { .. }
+                | NarrationOp::Recap { .. } => depth,
             })
     }
 }
@@ -193,6 +194,7 @@ impl Core {
                 shape,
                 placement,
                 stack,
+                fill,
             } => self.board.place_node(
                 layer,
                 queued.id,
@@ -202,6 +204,7 @@ impl Core {
                     shape: *shape,
                     placement,
                     stack: *stack,
+                    fill: *fill,
                 },
             )?,
             NarrationOp::Edge {
@@ -236,7 +239,9 @@ impl Core {
             | NarrationOp::Line { .. }
             | NarrationOp::Compare { .. }
             | NarrationOp::Cell { .. }
-            | NarrationOp::Close { .. } => Placed::Unchanged,
+            | NarrationOp::Close { .. }
+            | NarrationOp::MarkCode { .. }
+            | NarrationOp::Recap { .. } => Placed::Unchanged,
         };
         Ok((layer, placed))
     }
@@ -249,6 +254,11 @@ impl Core {
         match placed {
             Placed::New { id, draw } => {
                 let growth = self.board.start(layer, &id, now, budget_ms);
+                let stroke = growth
+                    .iter()
+                    .map(layout::op_bounds)
+                    .fold(layout::op_bounds(&draw), Rect::union);
+                self.follow_camera(layer, stroke, effects);
                 self.op_start(now, layer, draw, budget_ms, effects);
                 if let Some(growth) = growth {
                     self.op_start(now, layer, growth, budget_ms, effects);
@@ -258,6 +268,7 @@ impl Core {
                 if let DrawOp::Strike { label, .. } = &draw {
                     self.board.apply_strike(layer, &target, label);
                 }
+                self.follow_camera(layer, layout::op_bounds(&draw), effects);
                 self.op_start(now, layer, draw, budget_ms, effects);
             }
             Placed::ResumeFrozen => self.resume_frozen(now, layer, effects),
@@ -287,7 +298,25 @@ impl Core {
             self.marks.first_op = true;
             milestone(effects, Milestone::FirstOp);
         }
-        self.drawing_until = self.drawing_until.max(now.plus_ms(u64::from(budget_ms)));
+        self.drawing_until(now.plus_ms(u64::from(budget_ms)));
+    }
+
+    /// The orb shows Drawing until `until` (plus its linger); the latest end wins.
+    fn drawing_until(&mut self, until: SessionTime) {
+        self.drawing_until = Some(self.drawing_until.map_or(until, |known| known.max(until)));
+    }
+
+    /// A stroke covering `stroke` is about to start on `layer`: move the camera if the view no
+    /// longer holds it, or the layer's drawing outgrew the view.
+    fn follow_camera(&mut self, layer: LayerId, stroke: Rect, effects: &mut Vec<Effect>) {
+        let drawing = self
+            .board
+            .layer(layer)
+            .and_then(crate::board::Layer::bounds)
+            .map_or(stroke, |bounds| bounds.union(stroke));
+        if let Some(event) = self.cameras.follow(layer, drawing, stroke) {
+            effects.push(Effect::Ui(event));
+        }
     }
 
     /// The frozen stroke on `layer` continues from where it stopped, and finishes before the
@@ -305,7 +334,7 @@ impl Core {
         effects.push(Effect::Ui(UiEvent::Resume { layer, budget_ms }));
         let finished = now.plus_ms(u64::from(budget_ms));
         self.queue.next_draw_at = self.queue.next_draw_at.max(finished);
-        self.drawing_until = self.drawing_until.max(finished);
+        self.drawing_until(finished);
     }
 
     /// Time until the next drawing op's anchor plays, or until this op's clause ends.
@@ -368,24 +397,13 @@ impl Core {
                 self.resume_frozen(now, layer, effects);
                 true
             }
-            NarrationOp::Code { path, lines } => {
-                let shown = self.surfaces.open_code(path, *lines, &mut events);
-                self.surface_refused(shown)
-            }
-            NarrationOp::Line { line } => {
-                let shown = self.surfaces.highlight(*line, &mut events);
-                self.surface_refused(shown)
-            }
-            NarrationOp::Compare { options, criteria } => {
-                self.surfaces
-                    .open_compare(options.clone(), criteria.clone(), &mut events);
-                true
-            }
-            NarrationOp::Cell { row, col, mark } => {
-                let filled = self.surfaces.fill_cell(row, col, mark.clone(), &mut events);
-                self.surface_refused(filled)
-            }
-            NarrationOp::Close { surface } => self.surfaces.close(*surface, &mut events).is_ok(),
+            NarrationOp::Code { .. }
+            | NarrationOp::Line { .. }
+            | NarrationOp::Compare { .. }
+            | NarrationOp::Cell { .. }
+            | NarrationOp::Close { .. }
+            | NarrationOp::MarkCode { .. }
+            | NarrationOp::Recap { .. } => self.apply_surface(&queued.op, &mut events),
             NarrationOp::Node { .. }
             | NarrationOp::Edge { .. }
             | NarrationOp::Annotate { .. }
@@ -403,6 +421,64 @@ impl Core {
         }
     }
 
+    /// Ops on the surfaces beside the canvas; false when the op did nothing.
+    fn apply_surface(&mut self, op: &NarrationOp, events: &mut Vec<UiEvent>) -> bool {
+        match op {
+            NarrationOp::Code { path, lines } => {
+                let shown = self.surfaces.open_code(path, *lines, events);
+                self.surface_refused(shown)
+            }
+            NarrationOp::Line { line } => {
+                let shown = self.surfaces.highlight(*line, events);
+                self.surface_refused(shown)
+            }
+            NarrationOp::Compare {
+                options,
+                criteria,
+                title,
+            } => {
+                self.surfaces.open_compare(
+                    options.clone(),
+                    criteria.clone(),
+                    title.clone(),
+                    events,
+                );
+                true
+            }
+            NarrationOp::Cell {
+                criterion,
+                option,
+                mark,
+            } => {
+                let filled = self
+                    .surfaces
+                    .fill_cell(criterion, option, mark.clone(), events);
+                self.surface_refused(filled)
+            }
+            NarrationOp::Close { surface } => self.surfaces.close(*surface, events).is_ok(),
+            NarrationOp::MarkCode { line, code, mark } => {
+                let marked = self
+                    .surfaces
+                    .mark_code(*line, code.as_deref(), *mark, events);
+                self.surface_refused(marked)
+            }
+            NarrationOp::Recap { bullets } => {
+                self.surfaces.open_recap(bullets.clone(), events);
+                true
+            }
+            NarrationOp::Plan { .. }
+            | NarrationOp::Step { .. }
+            | NarrationOp::Node { .. }
+            | NarrationOp::Edge { .. }
+            | NarrationOp::Annotate { .. }
+            | NarrationOp::Strike { .. }
+            | NarrationOp::Focus { .. }
+            | NarrationOp::Detour { .. }
+            | NarrationOp::Resume
+            | NarrationOp::Trace { .. } => false,
+        }
+    }
+
     fn surface_refused(&mut self, result: Result<(), SurfaceRefused>) -> bool {
         let Err(refused) = result else {
             return true;
@@ -416,7 +492,7 @@ impl Core {
         false
     }
 
-    fn focus(&mut self, target: &crate::ids::ElementId, events: &mut Vec<UiEvent>) -> bool {
+    fn focus(&mut self, target: &ElementId, events: &mut Vec<UiEvent>) -> bool {
         let layer = self.thread.active_layer();
         let Some(bounds) = self
             .board
@@ -426,11 +502,7 @@ impl Core {
         else {
             return false;
         };
-        events.push(UiEvent::Camera {
-            layer,
-            frame: layout::inflate(bounds, FOCUS_MARGIN, 0),
-            focus: Some(target.clone()),
-        });
+        events.push(self.cameras.focus(layer, target, bounds));
         true
     }
 
@@ -462,6 +534,7 @@ impl Core {
         events.push(UiEvent::LayerPush {
             layer,
             title: title.to_owned(),
+            question: self.turn_question.clone(),
         });
         events.push(self.thread.event());
         true

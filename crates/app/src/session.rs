@@ -91,6 +91,7 @@ async fn parts(
                 settings::MicMode::PushToTalk => MicMode::PushToTalk,
             },
             session_context: None,
+            suggestion: None,
         },
         clock: TokioClock::start(),
         talker,

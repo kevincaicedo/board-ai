@@ -40,14 +40,22 @@ How each rule is enforced, using the strongest mechanism available:
 /// Milliseconds since the session started, on the runtime's monotonic clock.
 pub struct SessionTime(u64);
 
-pub struct Core { /* conversation, thread, board, schedule, memory candidates */ }
+pub struct Core { /* conversation, thread, board, schedule, cameras, memory candidates */ }
+
+/// The talker's name for failure lines, the mic mode, context for the first request, and the
+/// idle suggestion (from the last session's recap; shown at start, cleared when you first speak).
+pub struct CoreConfig { talker_name, mic, session_context, suggestion }
 
 impl Core {
     pub fn new(config: CoreConfig) -> Self;
-    /// Once, when the session opens: the initial orb and thread, and the session context.
+    /// Once, when the session opens: the initial orb and thread, the idle suggestion, and the
+    /// session context.
     pub fn start(&mut self, now: SessionTime, effects: &mut Vec<Effect>);
     /// The only way state changes. Same inputs at the same times → same effects.
     pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>);
+    /// One layer, or the whole session with a frame per layer, as `.excalidraw` (§2.5).
+    pub fn export_excalidraw(&self, layer: LayerId) -> Option<String>;
+    pub fn export_session_excalidraw(&self) -> String;
 }
 ```
 
@@ -68,7 +76,7 @@ The runtime must not deliver talker inputs from a stream after it applied that s
 | `PlaybackAt { clause, offset_ms }` | speech out | Coalesced; at most one per 20 ms |
 | `PlaybackDrained` | speech out | |
 | `ToolResult { id, result }`, `HarnessEvent { task, event }` | runtime | |
-| `Command(UiCommand)` | UI | Mute, push-to-talk, open library… |
+| `Command(UiCommand)` | UI | Pointer, mute, push-to-talk, `Stop` (Esc), open library… |
 | `Tick` | runtime | A deadline the core asked for |
 
 **Effects** (core → runtime): `Duck { gain }`, `StopVoice`, `Synthesize { clause }`, `Talk { request }`, `CancelTalk`, `RunTool { id, call }`, `RunHarness { task }`, `CancelHarness { task }`, `Ui(UiEvent)`, `Log(Record)`, `Remember(MemoryWrite)`, `WakeAt(SessionTime)`.
@@ -94,6 +102,8 @@ Detours are not states. They are a stack inside the thread (§2.6), and speaking
 | `Ducked` | classified as an interruption, or `Tick` | `Listening` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7) |
 | `Speaking` | `PlaybackDrained` and the talker is done | `Idle` | orb → idle |
 | any | `Command(Mute)` | `Muted` | `StopVoice`, `CancelTalk` |
+| `Speaking`, `Thinking` | `Command(Stop)` (Esc) | `Idle` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7); a question nothing was heard of is dropped, as with mute |
+| `Ducked` | `Command(Stop)` | `Listening` | Confirms the interruption: as the row above for an interruption |
 | `Muted` | `Command(Unmute)` | `Idle` | |
 
 **End of turn.** The turn ends after ≥ 600 ms of silence, unless the transcript ends on a continuation word ("and", "so", "because", "but", "or", "then", "um", "uh", "like", "the", "a", "to", "of"). Then it waits up to 1500 ms. Utterances are capped at 30 s.
@@ -119,11 +129,17 @@ A cue said too fast for a partial ("wait" in 300 ms) is first taken for a backch
 
 **Mute** stops the voice and the stream and drops the utterance in progress. If that utterance had words, it closes a pending change gate (I9): words cut off by mute can cancel a change, never confirm one.
 
-**Orb.** Ducked shows Listening. While speaking, the orb shows Drawing from a stroke's start until 800 ms after the last stroke's budget ends, so the nib doesn't flicker between ops.
+**Stop.** `Esc` stops BoardAI like a confirmed interruption with no words. In `Idle`, `Listening` and `Muted` it changes nothing.
+
+**Spoken cancel.** An utterance made only of a cancel phrase ("stop that research", "cancel the review", "cancel that"), give or take fillers, cancels the newest running harness task it names (`CancelHarness`) before the talker hears the words, with a note that it is done. Whatever that task reports later is ignored. The phrases are a table in `conversation::cues`; "stop" alone stays an interruption cue.
+
+**Idle suggestion.** When `CoreConfig.suggestion` is set, `start` sends `Suggestion { text }` (frame 1's line under the orb), and the first time you take the floor it is cleared with `Suggestion { text: None }`.
+
+**Orb.** Ducked shows Listening. While speaking, the orb shows Drawing from a stroke's start until 800 ms after the last stroke's budget ends, so the nib doesn't flicker between ops. Before the first stroke of the session there is no linger at all: a reply that speaks without drawing shows Speaking.
 
 ### 2.3 Narration script
 
-The talker writes spoken text with self-closing tags inline. Text outside tags is speech. A tag sits right before the word it should start on.
+The talker writes spoken text with self-closing tags inline. Text outside tags is speech. A tag sits right before the word it should start on, and never replaces that word: the speech must read correctly with every tag removed.
 
 ```
 Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn" dir="right"/>
@@ -135,25 +151,29 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 |---|---|---|
 | `plan` | `steps="Client\|Edge\|LB"` | Sets the thread's steps |
 | `step` | `n` | Advances the thread |
-| `node` | `id`, `label`, `kind` (service, db, queue, actor, group, note), `near`, `dir` (right, left, above, below), `in`, `stack` | Draws a node |
+| `node` | `id`, `label`, `kind` (service, db, queue, actor, group, note), `near`, `dir` (right, left, above, below), `in`, `stack`, `fill` (lilac, sky, mint, blush) | Draws a node. Without `fill` the core picks the tone (§2.5); an unknown tone is ignored. A `near` or `in` that names nothing on the layer continues the flow instead of dropping the node; `in` naming a plain node places it beside that node |
 | `edge` | `from`, `to`, `label`, `style` (solid, dashed) | Draws a connector |
-| `annotate` | `target`, `mark` (circle, underline, arrow, bracket), `text` | An orange pen mark |
+| `annotate` | `target`, `mark` (circle, underline, arrow, bracket), `text` | An orange pen mark on a board element |
+| `annotate` (code) | `line`, `code`, `mark` (underline, circle) | An orange pen mark on the open code card: `code` is the exact text on that line (exact, then ignoring ASCII case); without it the whole line, indentation aside. The core finds the columns. Arrow and bracket read as underline |
 | `strike` | `target`, `text` | Strikes through the label and rewrites it |
 | `focus` | `target` | Moves the camera and the depth-of-field focus |
 | `detour` / `resume` | `title` / — | Pushes or pops a detour layer |
 | `code` | `path`, `lines="42-52"` | Opens a code card. The path must come from a read in this session. |
 | `line` | `n` | Moves the code highlight |
 | `trace` | `path="api>redis"` | A dot travels the edges in sync with the highlighted line |
-| `compare`, `cell` | `options`, `criteria` / `row`, `col`, `mark` (yes, no, depends, text) | Opens and fills a compare card |
-| `close` | `surface` | Dismisses a surface |
+| `compare`, `cell` | `options`, `criteria`, `title` / `option`, `criterion` (or `col`, `row`), `mark` (yes, no, depends, text) | Opens and fills a compare card. Options are its columns and criteria its rows; names given the other way round still find their cell |
+| `close` | `surface` (code, compare, recap, all) | Dismisses a surface |
+| `recap` | `bullets="A\|B\|C"` | Opens the recap card, at most 5 bullets |
 
 **Parser.** A streaming character state machine (`Text → TagOpen → Name → Attributes → Value`) with an explicit bound.
 
 - **Split-invariant.** Feeding any split of the input gives the same result as feeding it whole. This is a property test over every golden file.
-- **Tolerant.** An unknown tag, a bad attribute or a tag over 512 bytes is dropped and counted. The surrounding speech continues. Text that only resembles a tag ("a < b", "count<limit then") is given back as speech: a malformed tag is dropped only when its name is a known tag or it already has an attribute.
+- **Tolerant.** An unknown tag, a bad required attribute or a tag over 512 bytes is dropped and counted. An optional attribute with an unknown value (`kind="database"`, `style="dull"`, `dir="diagonal"`) maps through a synonym table or falls back to its default, so a near miss never costs the drawing. The surrounding speech continues. Text that only resembles a tag ("a < b", "count<limit then") is given back as speech: a malformed tag is dropped only when its name is a known tag or it already has an attribute.
 - **Never recursive, never blocking.** Tags carry no nesting. Text is released to text-to-speech as soon as a clause boundary is seen.
 
-**Speakable text.** Captions show the text as written. Text-to-speech gets a normalized version: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42". Normalization is table-driven and keeps an offset map, so timings in speakable offsets map back to caption offsets.
+**Speakable text.** Captions show the text as written. Text-to-speech gets a normalized version: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42", `client->CDN` and `API→Redis` → "client to CDN", "API to Redis". Markdown never reaches the voice: emphasis marks (`*hot path*`, `**Redis**`, `_cache_`), code marks and lone list or heading marks (`-`, `•`, `#`) are silent. Normalization is table-driven and keeps an offset map, so timings in speakable offsets map back to caption offsets.
+
+**Narration quality.** `narration::quality::assess` scores a response against the drawing rules the system prompt teaches: words spoken before the first drawing tag, tags standing in for a word ("Next is the `<edge …/>` from the client"), the most drawing tags piled before one word, and Markdown in speech. `just converse` prints the numbers per answer, and the prompt's tests hold its own examples to them. They are measurements, never decisions.
 
 **Clauses.** Text is cut at sentence ends, at a newline, or at a comma after ≥ 40 bytes, so the first clause reaches text-to-speech early. A clause is capped at 300 bytes, cut at its last space. An op is released right after the clause holding its anchor, so an anchor never names a clause that could still change.
 
@@ -181,15 +201,18 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
   - Groups grow to bound their children. A grown group is sent again as a `Node` op with the same id and op, which the UI treats as a redraw of that element.
   - Edges join the nearest sides, either straight or with one curve.
 - **Stability:** layout only places new ids. It never moves an existing element. When the board outgrows the view, the camera pans instead of rearranging.
+- **Tones.** The core picks each node's hachure tone, so live, replay and export agree: a store is sky, a queue is mint, and each new service subject takes the next of sky, lilac, mint, blush on its layer (detours start two along); a subject keeps its tone everywhere. The talker's `fill` wins and sticks to the subject. Actors, groups and notes have none.
+- **Camera follow.** A layer's first stroke sends its first `Camera` frame; afterwards the frame is the layer's drawn bounds plus a 60-unit margin, re-sent when the drawing has grown 40 units past it (`CAMERA_MARGIN_UNITS`, `CAMERA_REFRAME_STEP_UNITS`). The frame goes out before the stroke that needed it, and every op's area counts (a strike, a group's growth). A `focus` frames one element and holds while strokes land inside that frame; a stroke outside it returns to following, which clears the focus (I11).
 - **Sizes:** label widths come from a metrics table for the handwritten font, kept in the core. The core outputs final geometry, and the UI only draws it.
 - **Talker summary.** The core builds a compact text form of the board for each request, for example `main: client(actor) → cdn → lb → api×3; detour 1 "cache-aside": api → redis (hit) …`.
-- **Export:** each layer becomes an `.excalidraw` frame at session end.
+- **Export:** one layer as an `.excalidraw` document, or the whole session as one document with an Excalidraw `frame` per layer that has drawing (main first, then each detour as it opened), side by side, every element naming its frame. Fills export as hachure backgrounds; groups are solid and grey with the label above (D-032).
 
 ### 2.6 Thread and detours
 
 - The **thread** is the plan (steps and the current step) plus a **detour stack** with a depth limit of 3. A fourth detour gets a spoken "let's finish this one first".
 - Each detour owns a board layer.
 - `resume` pops a detour. The UI returns the main board to focus, and then the frozen op continues (§2.7).
+- **The question.** `LayerPush.question` is the user's words of the turn being answered, without a lead-in ("Wait — why Redis first?" → "why Redis first?", cut at 80 bytes), when they interrupted BoardAI or follow up on a board with drawing. A detour opened in answer to a first question on an empty board, or in a harness report, has none.
 
 ### 2.7 Interruption and commit-what-was-heard (panel D)
 
@@ -235,6 +258,7 @@ Secret redaction runs at the store boundary, so nothing reaches disk unredacted.
 | I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
 | I9 | A code change never runs without your spoken yes | Deterministic gate in core (§3.5) + test |
 | I10 | A "don't remember this session" leaves nothing in the vault | Store test |
+| I11 | A stroke starts inside its layer's camera frame | Simulator property (the fuzzer found the strike-under-focus case) |
 
 ## 3. Runtime
 
@@ -407,12 +431,15 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 ### 3.7 Protocol (core ↔ UI)
 
 - **Events (core → UI):**
-  - `Orb { state, level }`, `Caption { who, text, is_final }`, `Thread { steps, current, detours }`
-  - `OpStart { layer, op, budget_ms }`, `Freeze { layer }`, `Resume { layer, op, budget_ms }`
-  - `Layer { push | pop, title }`, `Camera { focus }`
-  - `Surface { show | update | dismiss }`, `Chip { kind, text }`
-  - `Library { … }`, `Brain { … }`, `Problem { spoken, detail }`
-- **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `OpenLibrary`, `OpenBrain`, `ReplaySeek { ms }`, `SaveSettings { … }`.
+  - `Orb { state, level_percent }`, `Acknowledge`, `Caption { who, text, is_final }`, `Thread { steps, current, detours }`
+  - `OpStart { layer, op, budget_ms }`, `Freeze { layer }`, `Resume { layer, budget_ms }`
+  - `LayerPush { layer, title, question }`, `LayerPop { layer }`, `Camera { layer, frame, focus }`: the frame is in world units (§2.5 camera follow); `question` is the detour card's subtitle (§2.6)
+  - `SurfaceShow { surface }`, `SurfaceUpdate { id, update }`, `SurfaceDismiss { id }`, `Chip { kind, text }`
+  - `Problem { spoken, detail }`, `Suggestion { text }` (the idle line under the orb; `None` clears it), `Library { … }`, `Brain { … }`
+- **Draw ops:** `Node { id, op, shape, label, rect, stack, fill }` with `fill` one of `Lilac`, `Sky`, `Mint`, `Blush` or none; `Edge`, `Annotate`, `Strike` (rewrites above the old label, D-032), `Trace`. Groups are drawn solid and light with the label above (D-032).
+- **Surfaces:** `Code { path, first_line, lines, highlight }`; `Compare { options, criteria, title }`, whose options are columns and criteria rows; `Recap { bullets }`. Updates: `Highlight { line }`; `Cell { row, col, mark }` with `row` indexing criteria and `col` options; `Mark { line, columns, mark }`, a pen mark on a code line, with `columns` the `[begin, end)` characters (Unicode scalar values) it covers.
+- **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `Stop` (Esc, §2.2), `OpenLibrary`, `OpenBrain`, `ReplaySeek { ms }`, `SaveSettings { … }`.
+- **Evolving it.** Variants and fields are only ever added at the end. A field added later is an `Option`, and a log line written before it (no such key) reads as `None` on both sides, so old sessions still replay.
 - **Types** are defined in `core::protocol` and exported to `ui/src/protocol/generated/` by ts-rs. A stale export fails `just check`.
 - **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. The app's capabilities allow only these two commands; debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
 
@@ -451,13 +478,16 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - stroke reveal with human pacing (slower into corners)
   - handwriting revealed letter by letter
 
-  Randomness is seeded by element id, so a replay draws identical strokes. Handwriting sits above every stroke on its layer and fills sit under the ink, as on the canvas.
+  Randomness is seeded by element id, so a replay draws identical strokes. Handwriting sits above every stroke on its layer and fills sit under the ink, as on the canvas. A node's hachure tone is the protocol's `fill`; the UI picks none of its own.
+- **Camera.** A layer's `Camera` frame is fitted into the part of the stage the board owns: below the thread bar and above the captions (`--board-top`, `--board-bottom`, `--board-side`), or a detour card below its head. It is centered there and never enlarged past natural size (`--camera-scale-max: 1`), so a focus centers its element and softens the rest rather than zooming. A layer with no frame yet is drawn at identity. Frames ease into each other over a scene duration.
 - **Pacing.** An op draws at the design's natural pace, including the pen's travel between items. When that would overrun `budget_ms`, the whole op is compressed to fit; it is never stretched, so the nib rests between ops instead.
 - **Freeze and resume.** The UI owns each stroke's progress. `Freeze` stops it in place, and `Resume` continues from there, fitting what is left into its new budget. The nib waits on the frozen point, pulsing, until then.
+- **Surfaces.** The idle suggestion sits under the orb (frame 1) and rises in, then blurs out once cleared. A detour card's subtitle is "Detour · {question}". The code card draws a code-line `Mark` as a hand-drawn orange underline (or ring) under the characters it names, measured from the rendered text once, revealed over 500 ms. A compare card shows its title, or the options joined with "vs", with options as columns and criteria as rows.
+- **Keyboard.** Hold Space to talk, M to mute, Esc to stop (`UiCommand::Stop`); never while typing in a field, with a modifier, or on key repeat. A pure function maps keys to commands.
 - **Orb.** A port of the design's orb component: five blurred gradient blobs, plus the listening dot field. Its state targets are eased exponentially from the last change, evaluated in closed form so a seek lands on the same frame. `Freeze` plays the interrupted contraction and `Acknowledge` a small pulse. It pauses when the window is hidden.
 - **Animation clock.** Every animated value is a function of session time. Live, the clock follows the session time stamped on each event batch: it jumps forward when a batch is ahead of it and never runs backwards, so strokes start where the core scheduled them. In replay, the playhead is the clock.
 - **Transport.** The Tauri transport calls `invoke("connect", { events: Channel<UiBatch> })` once, then `invoke("command", { command })` per `UiCommand`. Batches are parsed again at this boundary; malformed events are dropped and counted.
-- **Replay mode.** `?replay=<url>` plays an `events.jsonl` with no backend; `&t=<ms>` opens it paused at that time (for screenshots), `&speed=` and `&controls=0` are options. Outside Tauri with no `?replay`, the demo plays. Malformed lines are skipped and counted. It drives UI development and side-by-side checks against the design canvas. The fixtures in `ui/public/fixtures/` are written by `ui/src/replay/` and a test fails while one is stale: `demo.events.jsonl` is the canvas's frames 1→7, and `primitives.events.jsonl` covers the remaining ops and surfaces.
+- **Replay mode.** `?replay=<url>` plays an `events.jsonl` with no backend; `&t=<ms>` opens it paused at that time (for screenshots), `&speed=` and `&controls=0` are options. Outside Tauri with no `?replay`, the demo plays. Malformed lines are skipped and counted; a line from before a protocol field existed reads it as null. It drives UI development and side-by-side checks against the design canvas. The fixtures in `ui/public/fixtures/` are written by `ui/src/replay/` and a test fails while one is stale: `demo.events.jsonl` is the canvas's frames 1→7 (the idle suggestion, fills, the detour's question and frame 5's underline included; its camera frame is the board area at 1440×900, kept equal to the tokens by a test), and `primitives.events.jsonl` covers the remaining ops and surfaces.
 - **Tokens and fonts.** TypeScript reads its numeric tokens from `tokens.css` at boot and fails on a missing one. Geist, Geist Mono and Excalifont are bundled (latin subsets, OFL), since the CSP allows no remote fonts.
 - **Budgets.** At most 4 ms of script per frame. One SVG path per stroke and one per hachure fill.
 
@@ -500,6 +530,38 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Library / Now | 500 sessions / 12 tasks | runtime::store | The rest are counted |
 | Scribe | 48 KB transcript, 64 KB answer, 120 s | runtime::store | Transcript keeps its start and end; past the others, the minimal digest |
 
+The core's own limits live in `boardai_core::limits` (the rows above marked core are there too):
+
+| Limit | Value | Owner | When crossed |
+|---|---|---|---|
+| Talker response text | 32 KiB | core::engine | The stream is cancelled and treated as `MaxTokens`: the current sentence finishes |
+| Utterance transcript | 4 KiB | core::conversation | Cut at a char boundary |
+| Clause | 300 bytes | core::narration | Cut at its last space; a comma ends a clause from 40 bytes |
+| Skip after a bad tag | 2 KiB | core::narration | The parser gives up on the tag's `>` and returns to speech |
+| Element id | 64 bytes | core::narration | The tag is dropped and counted |
+| Label / title or plan step | 80 / 60 bytes | core::narration | Cut, ending with "…" |
+| Plan steps / stack copies / compare options or criteria / recap bullets | 12 / 9 / 6 / 5 | core::narration | Extra items dropped; a larger stack is clamped |
+| Trace hops | 16 | core::narration | The tag is dropped |
+| Elements per layer | 500 | core::board | The op is dropped and counted |
+| Layers per session | 256 | core::board | The detour is refused out loud |
+| Layout nudge | 64 cells | core::board | The node goes to a fresh row under everything |
+| Camera margin / reframe step | 60 / 40 units | core::engine | Growth under a step moves nothing; a step past the frame re-frames the layer |
+| Surfaces beside the canvas | 2 | core::surfaces | Opening another dismisses the oldest |
+| Read files kept / lines per file / lines per code card | 64 / 4,000 / 60 | core::surfaces | The least recently read file is forgotten (its card is refused until read again); later lines are not kept; a longer range is cut |
+| Idle suggestion / detour question | 120 / 80 bytes | core::engine | Cut, ending with "…" |
+| Board summary for the talker | 4 KiB | core::board | Ends with "…" |
+| Heard-prefix note | 120 bytes | core::heard | Quotes only the tail of what was heard |
+| Talker notices / harness reports waiting | 8 / 8 | core::engine | The oldest notice is dropped; the two oldest reports merge into one message |
+| Tool calls per response / tool rounds per turn | 16 / 8 | core::engine | Extra calls get an error result; past the rounds the turn ends with a spoken line |
+| Branch slug | 40 bytes | core::engine | Cut at a word |
+| Tool call id / tool input / one string argument | 128 bytes / 64 KiB / 16 KiB | core::tools | The call is invalid and answered with an error |
+| Op budget / spacing | 150–2,500 ms / 120 ms | core::engine | Budgets are clamped; drawing ops wait for their slot |
+| End of turn: silence / grace / cap | 600 ms / 1,500 ms / 30 s | core::conversation | The turn ends |
+| Barge-in: decision / voice / words / pointer window / cue words | 900 ms / 700 ms / 4 / 1.5 s / 3 | core::conversation | Past any of them it is an interruption (§2.2) |
+| Late cue after a backchannel | 600 ms | core::conversation | Later finals are ignored |
+| `StopVoice` answer | 500 ms | core::engine | The last reported playback position defines the heard prefix |
+| Orb drawing linger | 800 ms | core::engine | The orb returns to Speaking |
+
 ## 6. Errors
 
 - **Operational errors are values.** Network, auth, a provider refusal, a missing model or a bad tool input never panic. A panic means a broken invariant.
@@ -528,7 +590,7 @@ CI runs the same command on macOS.
 
 - The core's `Log` milestones become `tracing` events (target `boardai::latency`) stamped with session time and a turn number: voice start, final transcript, talker requested, talker first token, first audio, first op, barge-in duck and barge-in stop. Turns are grouped by that number rather than spans.
 - Logs go to stderr through `runtime::logging`, a small subscriber that bounds every field (512 bytes) and line (4 KB) and redacts key-shaped text on the sink (`sk-…`, `ghp_…`, AWS keys, PEM blocks, bearer tokens, `password=`).
-- `just converse` prints the marks per answer, with ops drawn and narration tags dropped, for spikes S3 and S5.
+- `just converse` prints the marks per answer, with ops drawn, narration tags dropped and the narration-quality numbers (§2.3: preamble words, missing words, tags on one word, markup), for spikes S3 and S5.
 - A dev overlay (toggle with `⌘⇧L`) shows live latencies. Each session's digest records a latency summary locally.
 - Logs never contain secrets or full transcripts. Fields are bounded, and redaction runs on the log sink.
 

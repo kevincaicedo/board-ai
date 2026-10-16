@@ -12,7 +12,7 @@ use crate::geometry::{Point, Rect};
 use crate::ids::ElementId;
 use crate::limits::LAYOUT_NUDGE_CELLS_MAX;
 use crate::narration::ops::Direction;
-use crate::protocol::{EdgePath, NodeShape};
+use crate::protocol::{DrawOp, EdgePath, NodeShape};
 
 /// Grid pitch in world units. A cell holds one ordinary node plus the gap around it.
 pub const CELL_WIDTH: i32 = 200;
@@ -273,6 +273,23 @@ fn segment_box(start: Point, end: Point) -> Rect {
         y: y - 2,
         w: start.x.abs_diff(end.x) + 4,
         h: start.y.abs_diff(end.y) + 4,
+    }
+}
+
+/// The area a drawing op covers, for the camera (stacked copies and labels written beside a
+/// shape stay within the camera's margin).
+#[must_use]
+pub fn op_bounds(op: &DrawOp) -> Rect {
+    match op {
+        DrawOp::Node { rect, .. } | DrawOp::Annotate { rect, .. } | DrawOp::Strike { rect, .. } => {
+            *rect
+        }
+        DrawOp::Edge { path, .. } => path_bounds(*path),
+        DrawOp::Trace { points, .. } => points
+            .iter()
+            .map(|point| segment_box(*point, *point))
+            .reduce(Rect::union)
+            .unwrap_or_default(),
     }
 }
 

@@ -5,6 +5,8 @@
 import { signal } from "@preact/signals";
 import type { CellMark } from "../protocol/generated/CellMark.ts";
 import type { ChipKind } from "../protocol/generated/ChipKind.ts";
+import type { ColumnRange } from "../protocol/generated/ColumnRange.ts";
+import type { Mark } from "../protocol/generated/Mark.ts";
 import type { OrbState } from "../protocol/generated/OrbState.ts";
 import type { Speaker } from "../protocol/generated/Speaker.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
@@ -18,6 +20,8 @@ export const CHIPS_MAX = 8;
 export const CHIP_SLOTS = 4;
 /** Highlight moves kept per code card; older ones no longer affect the band's easing. */
 export const HIGHLIGHTS_MAX = 64;
+/** Pen marks kept per code card; the oldest is dropped first (a card shows a few lines at most). */
+export const CODE_MARKS_MAX = 16;
 /** Session time an item lingers in the store after it left, so its exit can play. */
 export const LEAVE_LINGER_MS = 1500;
 
@@ -56,9 +60,25 @@ export interface Highlight {
   readonly at: number;
 }
 
+/** A compare cell, keyed `${row}:${col}`: the row is a criterion and the column an option. */
 export interface CellView {
   readonly mark: CellMark;
   readonly at: number;
+}
+
+/** An orange pen mark on part of a code line (frame 5), drawn from `at`. */
+export interface CodeMark {
+  readonly line: number;
+  readonly columns: ColumnRange;
+  readonly mark: Mark;
+  readonly at: number;
+}
+
+/** The idle suggestion under the orb (frame 1): shown, then cleared when the user speaks. */
+export interface SuggestionView {
+  readonly text: string;
+  readonly shownAt: number;
+  readonly clearedAt: number | null;
 }
 
 export type ColumnItem =
@@ -67,6 +87,8 @@ export type ColumnItem =
       readonly enterAt: number;
       readonly layer: number;
       readonly title: string;
+      /** The question that opened the detour, for the subtitle "Detour · why Redis first?". */
+      readonly question: string | null;
     })
   | (Placed & {
       readonly kind: "surface";
@@ -74,6 +96,7 @@ export type ColumnItem =
       readonly surface: Surface;
       readonly highlights: readonly Highlight[];
       readonly cells: ReadonlyMap<string, CellView>;
+      readonly marks: readonly CodeMark[];
     });
 
 export interface Chip {
@@ -115,6 +138,7 @@ export class SessionStore {
   readonly column = signal<readonly ColumnItem[]>([]);
   readonly chips = signal<readonly Chip[]>([]);
   readonly orb = signal<OrbStatus>({ state: "Idle", previous: "Idle", at: 0 });
+  readonly suggestion = signal<SuggestionView | null>(null);
   readonly #tokens: SessionTokens;
   #chipSerial = 0;
 
@@ -128,6 +152,7 @@ export class SessionStore {
     this.column.value = [];
     this.chips.value = [];
     this.orb.value = { state: "Idle", previous: "Idle", at: 0 };
+    this.suggestion.value = null;
   }
 
   apply(event: UiEvent, at: number): void {
@@ -152,6 +177,7 @@ export class SessionStore {
           key: key({ kind: "detour", layer: event.layer }),
           layer: event.layer,
           title: event.title,
+          question: event.question,
           shownAt: at + this.#tokens.durationDetourCardDelayMs,
           enterAt: at + this.#tokens.durationDetourCardDelayMs,
           leftAt: null,
@@ -173,12 +199,24 @@ export class SessionStore {
       case "Chip":
         this.#chip(event.kind, event.text, at);
         break;
+      case "Suggestion":
+        this.#suggest(event.text, at);
+        break;
       case "Acknowledge":
       case "OpStart":
       case "Freeze":
       case "Resume":
       case "Camera":
         break;
+    }
+  }
+
+  #suggest(text: string | null, at: number): void {
+    const current = this.suggestion.value;
+    if (text !== null) {
+      this.suggestion.value = { text, shownAt: at, clearedAt: null };
+    } else if (current !== null && current.clearedAt === null) {
+      this.suggestion.value = { ...current, clearedAt: at };
     }
   }
 
@@ -299,6 +337,7 @@ export class SessionStore {
           ? [{ line: surface.highlight, at }]
           : [],
       cells: new Map(),
+      marks: [],
     });
   }
 
@@ -312,15 +351,7 @@ export class SessionStore {
       if (item.key !== target || item.kind !== "surface" || item.leftAt !== null) {
         return item;
       }
-      if (update.kind === "Highlight") {
-        return {
-          ...item,
-          highlights: [...item.highlights.slice(-(HIGHLIGHTS_MAX - 1)), { line: update.line, at }],
-        };
-      }
-      const cells = new Map(item.cells);
-      cells.set(`${update.row}:${update.col}`, { mark: update.mark, at });
-      return { ...item, cells };
+      return updated(item, update, at);
     });
   }
 
@@ -370,6 +401,30 @@ export class SessionStore {
     });
     if (changed) {
       this.chips.value = chips;
+    }
+  }
+}
+
+/** A surface card with one update applied: a highlight move, a compare cell or a pen mark. */
+function updated(
+  item: Extract<ColumnItem, { kind: "surface" }>,
+  update: Extract<UiEvent, { type: "SurfaceUpdate" }>["update"],
+  at: number,
+): ColumnItem {
+  switch (update.kind) {
+    case "Highlight":
+      return {
+        ...item,
+        highlights: [...item.highlights.slice(-(HIGHLIGHTS_MAX - 1)), { line: update.line, at }],
+      };
+    case "Cell": {
+      const cells = new Map(item.cells);
+      cells.set(`${update.row}:${update.col}`, { mark: update.mark, at });
+      return { ...item, cells };
+    }
+    case "Mark": {
+      const mark = { line: update.line, columns: update.columns, mark: update.mark, at };
+      return { ...item, marks: [...item.marks.slice(-(CODE_MARKS_MAX - 1)), mark] };
     }
   }
 }

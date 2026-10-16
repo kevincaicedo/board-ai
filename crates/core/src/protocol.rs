@@ -77,15 +77,22 @@ pub enum UiEvent {
         budget_ms: u32,
     },
     /// A detour opened a new layer; the board under it softens into the background.
+    /// `question` is the user's question that opened it, for the card's subtitle ("Detour · why
+    /// Redis first?"); `None` when the talker opened it on its own.
     LayerPush {
         layer: LayerId,
         title: String,
+        question: Option<String>,
     },
     /// The detour closed; its layer goes away and the one under it returns to focus.
     LayerPop {
         layer: LayerId,
     },
-    /// Frame this region of the layer (camera follow) and sharpen the focused element.
+    /// Frame this region of the layer, in world units, and sharpen the focused element. The core
+    /// sends a layer's first frame with its first drawing and follows as the board grows (its
+    /// bounds plus a margin); a `focus` tag frames one element and holds the camera until the
+    /// board grows past that frame. The UI fits the frame into the stage area clear of the
+    /// thread bar and the captions, never enlarging past natural size.
     Camera {
         layer: LayerId,
         frame: Rect,
@@ -110,6 +117,12 @@ pub enum UiEvent {
     Problem {
         spoken: String,
         detail: String,
+    },
+    /// The idle suggestion under the orb (frame 1: "Pick up Raft log compaction where we left
+    /// off?"). Sent when the session starts with one, and cleared with `None` the first time
+    /// the user speaks.
+    Suggestion {
+        text: Option<String>,
     },
 }
 
@@ -138,8 +151,9 @@ pub enum Speaker {
 #[serde(tag = "kind")]
 #[ts(export)]
 pub enum DrawOp {
-    /// Outline, then the label written letter by letter, then the hachure fill. `stack` above 1
-    /// draws that many offset copies behind it ("three API pods").
+    /// Outline, then the label written letter by letter, then the hachure fill in `fill`'s tone
+    /// (no fill when `None`). `stack` above 1 draws that many offset copies behind it ("three
+    /// API pods"). A group is re-sent with the same id and op when it grows (D-035).
     Node {
         id: ElementId,
         op: OpId,
@@ -147,6 +161,7 @@ pub enum DrawOp {
         label: String,
         rect: Rect,
         stack: u8,
+        fill: Option<Fill>,
     },
     /// A connector from source to target, then its arrowhead, then its label.
     Edge {
@@ -167,7 +182,7 @@ pub enum DrawOp {
         rect: Rect,
         text: Option<String>,
     },
-    /// Strike through the target's label and write the new one beside it.
+    /// Strike through the target's label and write the new one above it (D-032).
     Strike {
         op: OpId,
         target: ElementId,
@@ -202,10 +217,21 @@ pub enum NodeShape {
     Queue,
     /// A person or client.
     Actor,
-    /// A dashed boundary around its children.
+    /// A light, solid frame around its children with its label written above it (D-032).
     Group,
     /// Handwritten text with no outline.
     Note,
+}
+
+/// The hachure tones under a node's ink (the canvas's sketch fills). The core picks one per
+/// subject, deterministically, unless the talker names one (`fill="mint"`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum Fill {
+    Lilac,
+    Sky,
+    Mint,
+    Blush,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -236,10 +262,13 @@ pub enum Surface {
         lines: Vec<String>,
         highlight: Option<u32>,
     },
+    /// Options are the columns and criteria are the rows, as on the canvas; `title` heads the
+    /// card ("Raft vs Paxos vs ZAB"), and the UI joins the options with "vs" without one.
     Compare {
         id: SurfaceId,
         options: Vec<String>,
         criteria: Vec<String>,
+        title: Option<String>,
     },
     Recap {
         id: SurfaceId,
@@ -253,8 +282,23 @@ pub enum Surface {
 pub enum SurfaceUpdate {
     /// Move the code card's highlight to this 1-based line.
     Highlight { line: u32 },
-    /// Fill one compare cell; rows are options and columns are criteria, from 0.
+    /// Fill one compare cell: `row` indexes the criteria and `col` the options, from 0.
     Cell { row: u8, col: u8, mark: CellMark },
+    /// An orange pen mark on part of a code line (frame 5's underline under `s.cache.Get(`):
+    /// `line` is 1-based, `columns` are the characters it covers.
+    Mark {
+        line: u32,
+        columns: ColumnRange,
+        mark: Mark,
+    },
+}
+
+/// Characters of a line, counted in Unicode scalar values from 0, half-open `[begin, end)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ColumnRange {
+    pub begin: u32,
+    pub end: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -288,6 +332,9 @@ pub enum UiCommand {
     Mic {
         action: MicAction,
     },
+    /// Esc (PRODUCT §8.9): BoardAI stops at once, like a confirmed interruption with no words.
+    /// The stroke in flight freezes, what was heard is committed, and the floor goes idle.
+    Stop,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -335,6 +382,7 @@ mod tests {
                         h: 64,
                     },
                     stack: 1,
+                    fill: Some(super::Fill::Sky),
                 },
                 budget_ms: 900,
             }],

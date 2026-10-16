@@ -21,6 +21,22 @@ const EVERY_EVENT: UiEvent[] = [
       label: "Load balancer",
       rect: { x: 0, y: 0, w: 160, h: 64 },
       stack: 1,
+      fill: "Lilac",
+    },
+  },
+  {
+    type: "OpStart",
+    layer: 0,
+    budget_ms: 900,
+    op: {
+      kind: "Node",
+      id: "client",
+      op: 2,
+      shape: "Actor",
+      label: "Client",
+      rect: { x: 0, y: 0, w: 42, h: 86 },
+      stack: 1,
+      fill: null,
     },
   },
   {
@@ -72,7 +88,8 @@ const EVERY_EVENT: UiEvent[] = [
   },
   { type: "Freeze", layer: 0 },
   { type: "Resume", layer: 0, budget_ms: 800 },
-  { type: "LayerPush", layer: 1, title: "cache-aside" },
+  { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
+  { type: "LayerPush", layer: 2, title: "ttl", question: null },
   { type: "LayerPop", layer: 1 },
   { type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 1440, h: 900 }, focus: "redis" },
   {
@@ -81,7 +98,11 @@ const EVERY_EVENT: UiEvent[] = [
   },
   {
     type: "SurfaceShow",
-    surface: { kind: "Compare", id: 2, options: ["a", "b"], criteria: ["c"] },
+    surface: { kind: "Compare", id: 2, options: ["a", "b"], criteria: ["c"], title: "a vs b" },
+  },
+  {
+    type: "SurfaceShow",
+    surface: { kind: "Compare", id: 4, options: ["a"], criteria: ["c"], title: null },
   },
   { type: "SurfaceShow", surface: { kind: "Recap", id: 3, bullets: ["one"] } },
   { type: "SurfaceUpdate", id: 1, update: { kind: "Highlight", line: 43 } },
@@ -95,9 +116,16 @@ const EVERY_EVENT: UiEvent[] = [
     id: 2,
     update: { kind: "Cell", row: 1, col: 0, mark: { kind: "Depends" } },
   },
+  {
+    type: "SurfaceUpdate",
+    id: 1,
+    update: { kind: "Mark", line: 43, columns: { begin: 17, end: 29 }, mark: "Underline" },
+  },
   { type: "SurfaceDismiss", id: 1 },
   { type: "Chip", kind: "Task", text: "Check TTLs" },
   { type: "Problem", spoken: "I lost the connection.", detail: "timeout" },
+  { type: "Suggestion", text: "Pick up Raft log compaction where we left off?" },
+  { type: "Suggestion", text: null },
 ];
 
 test("every protocol event round-trips through the parser unchanged", () => {
@@ -193,10 +221,80 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
       update: { kind: "Cell", row: 0, col: 0, mark: { kind: "Maybe" } },
     },
     { type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 1, h: 1 } },
+    {
+      type: "OpStart",
+      layer: 0,
+      budget_ms: 5,
+      op: {
+        kind: "Node",
+        id: "a",
+        op: 1,
+        shape: "Service",
+        label: "x",
+        rect: { x: 0, y: 0, w: 1, h: 1 },
+        stack: 1,
+        fill: "Plaid",
+      },
+    },
+    { type: "LayerPush", layer: 1, title: "t", question: 7 },
+    {
+      type: "SurfaceShow",
+      surface: { kind: "Compare", id: 2, options: ["a"], criteria: ["c"], title: false },
+    },
+    {
+      type: "SurfaceUpdate",
+      id: 1,
+      update: { kind: "Mark", line: 43, columns: { begin: 5, end: 5 }, mark: "Underline" },
+    },
+    {
+      type: "SurfaceUpdate",
+      id: 1,
+      update: { kind: "Mark", line: 43, columns: { begin: 9, end: 2 }, mark: "Underline" },
+    },
+    {
+      type: "SurfaceUpdate",
+      id: 1,
+      update: { kind: "Mark", line: 43, columns: { begin: 1, end: 2 }, mark: "Zigzag" },
+    },
+    { type: "Suggestion" },
+    { type: "Suggestion", text: 3 },
   ];
   for (const value of bad) {
     assert.equal(parseUiEvent(value), null, JSON.stringify(value));
   }
+});
+
+test("protocol v1 logs still replay: v2's optional fields read a missing key as null", () => {
+  const node = parseUiEvent({
+    type: "OpStart",
+    layer: 0,
+    budget_ms: 900,
+    op: {
+      kind: "Node",
+      id: "lb",
+      op: 3,
+      shape: "Service",
+      label: "LB",
+      rect: { x: 0, y: 0, w: 160, h: 64 },
+      stack: 1,
+    },
+  });
+  assert.ok(node?.type === "OpStart" && node.op.kind === "Node" && node.op.fill === null);
+  assert.deepEqual(parseUiEvent({ type: "LayerPush", layer: 1, title: "t" }), {
+    type: "LayerPush",
+    layer: 1,
+    title: "t",
+    question: null,
+  });
+  const compare = parseUiEvent({
+    type: "SurfaceShow",
+    surface: { kind: "Compare", id: 2, options: ["a"], criteria: ["c"] },
+  });
+  assert.ok(
+    compare?.type === "SurfaceShow" &&
+      compare.surface.kind === "Compare" &&
+      compare.surface.title === null,
+  );
 });
 
 test("a batch keeps its good events and counts the rest", () => {

@@ -1,16 +1,27 @@
-//! Export of a layer as an `.excalidraw` file (LLD §2.5, D-007): version 2 JSON with
+//! Export of the board as `.excalidraw` files (LLD §2.5, D-007): version 2 JSON with
 //! rectangles, ellipses, arrows, lines and text, hand-drawn (`roughness` 1) in Excalifont
-//! (`fontFamily` 5). Seeds come from element ids, so the same board always exports the same
-//! file, and nothing here reads a clock or a random source.
+//! (`fontFamily` 5), with the board's hachure tones. One layer exports alone, or the whole
+//! session exports as one document with a frame per layer, side by side. Seeds come from element
+//! ids, so the same board always exports the same file, and nothing here reads a clock or a
+//! random source.
 
 use serde_json::{Value, json};
 
 use crate::board::metrics::{LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, text_width};
-use crate::board::{Element, ElementKind, ElementState, Geometry, Layer};
+use crate::board::{Board, Element, ElementKind, ElementState, Geometry, Layer, layout};
 use crate::geometry::{Point, Rect};
-use crate::protocol::{EdgePath, LineStyle, Mark, NodeShape};
+use crate::protocol::{EdgePath, Fill, LineStyle, Mark, NodeShape};
 
 const INK: &str = "#1e1e1e";
+/// A group's frame is light grey and solid, its label above it (D-032).
+const GROUP_STROKE: &str = "#c5c8cf";
+/// How far above a group's frame its label sits (the canvas's `LABEL_ABOVE`).
+const GROUP_LABEL_ABOVE: i32 = 21;
+/// Room between a layer's drawing and its frame in the session export.
+const FRAME_PADDING: i32 = 80;
+/// Space between neighbouring layer frames in the session export.
+const FRAME_GAP: u32 = 160;
+const FRAME_STROKE: &str = "#bbbbbb";
 /// Annotations are orange (PRODUCT §7.1).
 const PEN: &str = "#e8590c";
 const TRACE: &str = "#d6336c";
@@ -18,9 +29,97 @@ const EXCALIFONT: u32 = 5;
 /// Offset between the copies of a stacked node.
 const STACK_OFFSET: i32 = 6;
 
+/// The sketch fills' colors (the canvas's `--sketch-*` tokens).
+fn fill_color(fill: Fill) -> &'static str {
+    match fill {
+        Fill::Lilac => "#d9c8f5",
+        Fill::Sky => "#c4def6",
+        Fill::Mint => "#cfefd9",
+        Fill::Blush => "#f7d3e0",
+    }
+}
+
 /// The layer as a complete `.excalidraw` document.
 #[must_use]
 pub fn export_layer(layer: &Layer) -> String {
+    document(layer_elements(layer))
+}
+
+/// The whole board as one document: a frame per layer that has any drawing (the main board,
+/// then each detour in the order it opened), side by side with their tops aligned. Each
+/// element names its frame, so Excalidraw moves and exports them together.
+#[must_use]
+pub fn export_board(board: &Board) -> String {
+    let mut elements = Vec::new();
+    let mut left = 0_i32;
+    for layer in board.layers() {
+        let Some(bounds) = layer.bounds() else {
+            continue;
+        };
+        // A group's label sits above its frame, outside the bounds.
+        let area = layout::inflate(bounds, FRAME_PADDING, GROUP_LABEL_ABOVE);
+        let (dx, dy) = (left - area.x, -area.y);
+        let frame_id = format!("frame:{}", layer.id().0);
+        for mut element in layer_elements(layer) {
+            shift(&mut element, dx, dy);
+            if let Value::Object(fields) = &mut element {
+                fields.insert("frameId".into(), json!(frame_id));
+            }
+            elements.push(element);
+        }
+        let name = if layer.id().0 == 0 {
+            "Main board".to_owned()
+        } else {
+            format!("Detour: {}", layer.title())
+        };
+        elements.push(frame(
+            &frame_id,
+            &name,
+            Rect {
+                x: left,
+                y: 0,
+                ..area
+            },
+        ));
+        left = left.saturating_add_unsigned(area.w.saturating_add(FRAME_GAP));
+    }
+    document(elements)
+}
+
+fn document(elements: Vec<Value>) -> String {
+    json!({
+        "type": "excalidraw",
+        "version": 2,
+        "source": "boardai",
+        "elements": elements,
+        "appState": { "viewBackgroundColor": "#ffffff", "gridSize": null },
+        "files": {},
+    })
+    .to_string()
+}
+
+/// Moves an element; line and arrow points are relative to its origin, so they follow.
+fn shift(element: &mut Value, dx: i32, dy: i32) {
+    for (key, delta) in [("x", dx), ("y", dy)] {
+        if let Some(value) = element.get(key).and_then(Value::as_i64) {
+            element[key] = json!(value + i64::from(delta));
+        }
+    }
+}
+
+/// An Excalidraw frame named after its layer; children come before it, as Excalidraw orders them.
+fn frame(id: &str, name: &str, rect: Rect) -> Value {
+    let mut value = base(id, "frame", rect, FRAME_STROKE, LineStyle::Solid);
+    if let Value::Object(fields) = &mut value {
+        fields.insert("name".into(), json!(name));
+        fields.insert("roughness".into(), json!(0));
+        fields.insert("fillStyle".into(), json!("solid"));
+    }
+    value
+}
+
+/// A layer's drawn elements as Excalidraw elements, in world coordinates.
+fn layer_elements(layer: &Layer) -> Vec<Value> {
     let prefix = format!("l{}", layer.id().0);
     let mut elements = Vec::new();
     for element in layer.elements() {
@@ -29,8 +128,18 @@ pub fn export_layer(layer: &Layer) -> String {
         }
         let id = format!("{prefix}:{}", element.id.as_str());
         match (&element.kind, &element.geometry) {
-            (ElementKind::Node { shape, stack, .. }, Geometry::Box(rect)) => {
-                node(&mut elements, &id, element, *shape, *stack, *rect);
+            (
+                ElementKind::Node {
+                    shape, stack, fill, ..
+                },
+                Geometry::Box(rect),
+            ) => {
+                let look = NodeLook {
+                    shape: *shape,
+                    stack: *stack,
+                    fill: *fill,
+                };
+                node(&mut elements, &id, element, look, *rect);
             }
             (ElementKind::Edge { from, to, style }, Geometry::Path(path)) => {
                 let ends = (
@@ -54,15 +163,7 @@ pub fn export_layer(layer: &Layer) -> String {
             ) => debug_assert!(false, "kind and geometry always match"),
         }
     }
-    json!({
-        "type": "excalidraw",
-        "version": 2,
-        "source": "boardai",
-        "elements": elements,
-        "appState": { "viewBackgroundColor": "#ffffff", "gridSize": null },
-        "files": {},
-    })
-    .to_string()
+    elements
 }
 
 /// FNV-1a: a stable, dependency-free hash for seeds.
@@ -133,14 +234,16 @@ fn bind_text(container: &mut Value, text_id: &str) {
     }
 }
 
-fn node(
-    out: &mut Vec<Value>,
-    id: &str,
-    element: &Element,
+/// How a node is drawn: its shape, its stacked copies and its tone.
+#[derive(Clone, Copy)]
+struct NodeLook {
     shape: NodeShape,
     stack: u8,
-    rect: Rect,
-) {
+    fill: Option<Fill>,
+}
+
+fn node(out: &mut Vec<Value>, id: &str, element: &Element, look: NodeLook, rect: Rect) {
+    let NodeLook { shape, stack, fill } = look;
     let label_id = format!("{id}#label");
     let kind = match shape {
         NodeShape::Db | NodeShape::Actor => "ellipse",
@@ -165,17 +268,18 @@ fn node(
         ));
     }
     if shape == NodeShape::Group {
-        out.push(base(id, kind, rect, INK, LineStyle::Dashed));
-        let corner = Point {
-            x: rect.x
-                + i32::try_from(text_width(&element.label, LABEL_FONT_SIZE) / 2).unwrap_or(0)
-                + 8,
-            y: rect.y + i32::try_from(LABEL_LINE_HEIGHT / 2).unwrap_or(0) + 4,
+        out.push(base(id, kind, rect, GROUP_STROKE, LineStyle::Solid));
+        let above = Point {
+            x: rect.center().x,
+            y: rect.y - GROUP_LABEL_ABOVE,
         };
-        out.push(text(&label_id, &element.label, corner, None, INK));
+        out.push(text(&label_id, &element.label, above, None, INK));
         return;
     }
     let mut container = base(id, kind, rect, INK, LineStyle::Solid);
+    if let (Some(fill), Value::Object(fields)) = (fill, &mut container) {
+        fields.insert("backgroundColor".into(), json!(fill_color(fill)));
+    }
     bind_text(&mut container, &label_id);
     out.push(container);
     out.push(text(

@@ -1,22 +1,24 @@
-//! Tags to typed ops (LLD §2.3). A missing required attribute or a bad value drops the tag;
-//! attributes the grammar doesn't define are ignored, so a model adding `color="red"` still
-//! draws.
+//! Tags to typed ops (LLD §2.3). A missing required attribute or a bad required value drops the
+//! tag; attributes the grammar doesn't define are ignored, so a model adding `color="red"` still
+//! draws. An optional attribute with a value the grammar doesn't know (`kind="database"`,
+//! `style="dull"`) falls back to its default after a table of common synonyms, so a near miss
+//! never costs the drawing (live runs with small models lost whole nodes to these).
 
 use crate::ids::ElementId;
 use crate::limits::{
-    COMPARE_AXIS_MAX, LABEL_MAX_BYTES, NODE_STACK_MAX, PLAN_STEPS_MAX, TITLE_MAX_BYTES,
-    TRACE_HOPS_MAX,
+    COMPARE_AXIS_MAX, LABEL_MAX_BYTES, NODE_STACK_MAX, PLAN_STEPS_MAX, RECAP_BULLETS_MAX,
+    TITLE_MAX_BYTES, TRACE_HOPS_MAX,
 };
 use crate::narration::ops::{
     AxisRef, CloseTarget, Direction, LineRange, NarrationOp, Placement, StepRef,
 };
 use crate::narration::parser::RawTag;
-use crate::protocol::{CellMark, LineStyle, Mark, NodeShape};
+use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
 
 /// Every tag the grammar defines, in the order the system prompt documents them.
 pub const TAG_NAMES: &[&str] = &[
     "plan", "step", "node", "edge", "annotate", "strike", "focus", "detour", "resume", "code",
-    "line", "trace", "compare", "cell", "close",
+    "line", "trace", "compare", "cell", "close", "recap",
 ];
 
 /// Why a well-formed tag was dropped. For the log and golden files only.
@@ -29,7 +31,8 @@ fn bad(reason: &'static str) -> BadTag {
     BadTag { reason }
 }
 
-/// Node kinds, as the talker writes them.
+/// Node kinds, as the talker writes them, then the synonyms models use for them. An unknown
+/// kind draws a service.
 const NODE_KINDS: &[(&str, NodeShape)] = &[
     ("service", NodeShape::Service),
     ("db", NodeShape::Db),
@@ -37,13 +40,33 @@ const NODE_KINDS: &[(&str, NodeShape)] = &[
     ("actor", NodeShape::Actor),
     ("group", NodeShape::Group),
     ("note", NodeShape::Note),
+    ("database", NodeShape::Db),
+    ("cache", NodeShape::Db),
+    ("store", NodeShape::Db),
+    ("storage", NodeShape::Db),
+    ("datastore", NodeShape::Db),
+    ("topic", NodeShape::Queue),
+    ("stream", NodeShape::Queue),
+    ("user", NodeShape::Actor),
+    ("person", NodeShape::Actor),
+    ("client", NodeShape::Actor),
+    ("browser", NodeShape::Actor),
+    ("boundary", NodeShape::Group),
+    ("cluster", NodeShape::Group),
+    ("vpc", NodeShape::Group),
+    ("text", NodeShape::Note),
 ];
 
+/// Directions, then synonyms. An unknown direction is right.
 const DIRECTIONS: &[(&str, Direction)] = &[
     ("right", Direction::Right),
     ("left", Direction::Left),
     ("above", Direction::Above),
     ("below", Direction::Below),
+    ("up", Direction::Above),
+    ("down", Direction::Below),
+    ("top", Direction::Above),
+    ("bottom", Direction::Below),
 ];
 
 const MARKS: &[(&str, Mark)] = &[
@@ -53,7 +76,20 @@ const MARKS: &[(&str, Mark)] = &[
     ("bracket", Mark::Bracket),
 ];
 
-const STYLES: &[(&str, LineStyle)] = &[("solid", LineStyle::Solid), ("dashed", LineStyle::Dashed)];
+/// Line styles, then a synonym. An unknown style is solid.
+const STYLES: &[(&str, LineStyle)] = &[
+    ("solid", LineStyle::Solid),
+    ("dashed", LineStyle::Dashed),
+    ("dotted", LineStyle::Dashed),
+];
+
+/// The sketch tones a node may name.
+const FILLS: &[(&str, Fill)] = &[
+    ("lilac", Fill::Lilac),
+    ("sky", Fill::Sky),
+    ("mint", Fill::Mint),
+    ("blush", Fill::Blush),
+];
 
 const CLOSE_TARGETS: &[(&str, CloseTarget)] = &[
     ("code", CloseTarget::Code),
@@ -87,24 +123,20 @@ pub fn to_op(tag: &RawTag) -> Result<NarrationOp, BadTag> {
             line: attributes.number("n")?,
         }),
         "trace" => trace(&attributes),
-        "compare" => Ok(NarrationOp::Compare {
-            options: list(
-                attributes.required("options")?,
-                COMPARE_AXIS_MAX,
-                LABEL_MAX_BYTES,
-            )?,
-            criteria: list(
-                attributes.required("criteria")?,
-                COMPARE_AXIS_MAX,
-                LABEL_MAX_BYTES,
-            )?,
-        }),
+        "compare" => compare(&attributes),
         "cell" => cell(&attributes),
         "close" => Ok(NarrationOp::Close {
             surface: match attributes.get("surface") {
                 None => CloseTarget::Latest,
                 Some(value) => lookup(CLOSE_TARGETS, value, "unknown surface")?,
             },
+        }),
+        "recap" => Ok(NarrationOp::Recap {
+            bullets: list(
+                attributes.required("bullets")?,
+                RECAP_BULLETS_MAX,
+                LABEL_MAX_BYTES,
+            )?,
         }),
         _ => Err(bad("unknown tag")),
     }
@@ -146,6 +178,13 @@ impl Attributes<'_> {
         }
         Ok(number)
     }
+}
+
+/// An optional attribute's value from its table, or `default` when it is absent or unknown.
+fn lenient<T: Copy>(table: &[(&str, T)], value: Option<&str>, default: T) -> T {
+    value
+        .and_then(|value| lookup(table, value, "unknown value").ok())
+        .unwrap_or(default)
 }
 
 fn lookup<T: Copy>(table: &[(&str, T)], value: &str, reason: &'static str) -> Result<T, BadTag> {
@@ -213,14 +252,8 @@ fn node(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         attributes.get("label").unwrap_or(id.as_str()),
         LABEL_MAX_BYTES,
     );
-    let shape = match attributes.get("kind") {
-        None => NodeShape::Service,
-        Some(kind) => lookup(NODE_KINDS, kind, "unknown node kind")?,
-    };
-    let direction = match attributes.get("dir") {
-        None => Direction::Right,
-        Some(dir) => lookup(DIRECTIONS, dir, "unknown direction")?,
-    };
+    let shape = lenient(NODE_KINDS, attributes.get("kind"), NodeShape::Service);
+    let direction = lenient(DIRECTIONS, attributes.get("dir"), Direction::Right);
     let near = attributes
         .optional_id("near")?
         .map(|target| (target, direction));
@@ -236,12 +269,17 @@ fn node(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
             stack.clamp(1, NODE_STACK_MAX)
         }
     };
+    // An unknown tone is ignored rather than dropping the node: the board picks one.
+    let fill = attributes
+        .get("fill")
+        .and_then(|fill| lookup(FILLS, fill, "unknown fill").ok());
     Ok(NarrationOp::Node {
         id,
         label,
         shape,
         placement,
         stack,
+        fill,
     })
 }
 
@@ -257,20 +295,31 @@ fn edge(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         label: attributes
             .get("label")
             .map(|label| bounded(label, LABEL_MAX_BYTES)),
-        style: match attributes.get("style") {
-            None => LineStyle::Solid,
-            Some(style) => lookup(STYLES, style, "unknown line style")?,
-        },
+        style: lenient(STYLES, attributes.get("style"), LineStyle::Solid),
     })
 }
 
+/// `target` marks a board element; `line` (with `code`, the text to mark) marks the open code
+/// card instead, underlined unless `mark` says circle.
 fn annotate(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
+    if attributes.get("line").is_some() && attributes.get("target").is_none() {
+        let mark = match lenient(MARKS, attributes.get("mark"), Mark::Underline) {
+            Mark::Circle => Mark::Circle,
+            // Only a ring or an underline suit a line of code; anything else underlines.
+            Mark::Underline | Mark::Arrow | Mark::Bracket => Mark::Underline,
+        };
+        return Ok(NarrationOp::MarkCode {
+            line: attributes.number("line")?,
+            code: attributes
+                .get("code")
+                .or_else(|| attributes.get("text"))
+                .map(str::to_owned),
+            mark,
+        });
+    }
     Ok(NarrationOp::Annotate {
         target: attributes.id("target")?,
-        mark: match attributes.get("mark") {
-            None => Mark::Circle,
-            Some(mark) => lookup(MARKS, mark, "unknown mark")?,
-        },
+        mark: lenient(MARKS, attributes.get("mark"), Mark::Circle),
         text: attributes
             .get("text")
             .map(|text| bounded(text, LABEL_MAX_BYTES)),
@@ -320,9 +369,40 @@ fn axis(value: &str) -> AxisRef {
     }
 }
 
+fn compare(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
+    Ok(NarrationOp::Compare {
+        options: list(
+            attributes.required("options")?,
+            COMPARE_AXIS_MAX,
+            LABEL_MAX_BYTES,
+        )?,
+        criteria: list(
+            attributes.required("criteria")?,
+            COMPARE_AXIS_MAX,
+            LABEL_MAX_BYTES,
+        )?,
+        title: attributes
+            .get("title")
+            .map(|title| bounded(title, TITLE_MAX_BYTES)),
+    })
+}
+
+/// `option` and `criterion` name the cell; `col` and `row` are accepted for them, since rows are
+/// criteria and columns are options on the card.
 fn cell(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
-    let row = axis(attributes.required("row")?);
-    let col = axis(attributes.required("col")?);
+    let missing = || bad("a required attribute is missing");
+    let criterion = axis(
+        attributes
+            .get("criterion")
+            .or_else(|| attributes.get("row"))
+            .ok_or_else(missing)?,
+    );
+    let option = axis(
+        attributes
+            .get("option")
+            .or_else(|| attributes.get("col"))
+            .ok_or_else(missing)?,
+    );
     let text = attributes.get("text");
     let mark = match (attributes.get("mark").map(str::to_ascii_lowercase), text) {
         (Some(mark), _) if mark == "yes" => CellMark::Yes,
@@ -333,15 +413,19 @@ fn cell(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         },
         (Some(_) | None, None) => return Err(bad("a cell needs a mark or text")),
     };
-    Ok(NarrationOp::Cell { row, col, mark })
+    Ok(NarrationOp::Cell {
+        criterion,
+        option,
+        mark,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{TAG_NAMES, bounded, to_op};
-    use crate::narration::ops::{Direction, NarrationOp, Placement};
+    use crate::narration::ops::{AxisRef, Direction, NarrationOp, Placement};
     use crate::narration::parser::RawTag;
-    use crate::protocol::NodeShape;
+    use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
 
     fn tag(name: &str, attributes: &[(&str, &str)]) -> RawTag {
         RawTag {
@@ -373,8 +457,15 @@ mod tests {
                 "compare",
                 &[("options", "Redis|Memcached"), ("criteria", "Speed")],
             ),
-            ("cell", &[("row", "0"), ("col", "Speed"), ("mark", "yes")]),
+            (
+                "cell",
+                &[("option", "0"), ("criterion", "Speed"), ("mark", "yes")],
+            ),
             ("close", &[("surface", "code")]),
+            (
+                "recap",
+                &[("bullets", "Reads try Redis first|A miss reads Postgres")],
+            ),
         ];
         assert_eq!(minimal.len(), TAG_NAMES.len());
         for ((name, attributes), expected) in minimal.iter().zip(TAG_NAMES) {
@@ -387,8 +478,6 @@ mod tests {
     fn bad_values_and_missing_attributes_drop_the_tag() {
         let bad: &[(&str, &[(&str, &str)])] = &[
             ("node", &[("id", "has space")]),
-            ("node", &[("id", "a"), ("kind", "spaceship")]),
-            ("node", &[("id", "a"), ("near", "b"), ("dir", "diagonal")]),
             ("edge", &[("from", "a")]),
             ("edge", &[("from", "a"), ("to", "a")]),
             ("step", &[("n", "0")]),
@@ -396,8 +485,11 @@ mod tests {
             ("code", &[("path", "a.go"), ("lines", "9-4")]),
             ("trace", &[("path", "only")]),
             ("cell", &[("row", "0"), ("col", "0")]),
+            ("cell", &[("option", "Redis"), ("mark", "yes")]),
             ("close", &[("surface", "window")]),
             ("plan", &[("steps", " | ")]),
+            ("annotate", &[("line", "0"), ("code", "x")]),
+            ("recap", &[("bullets", "|")]),
         ];
         for (name, attributes) in bad {
             assert!(
@@ -429,6 +521,125 @@ mod tests {
                     direction: Direction::Right,
                 },
                 stack: 3,
+                fill: None,
+            })
+        );
+    }
+
+    /// A near miss in an optional value keeps the drawing: synonyms map, unknown values default.
+    #[test]
+    fn unknown_optional_values_fall_back_to_their_defaults() {
+        let shape = |kind: &str| match to_op(&tag("node", &[("id", "a"), ("kind", kind)])) {
+            Ok(NarrationOp::Node { shape, .. }) => Some(shape),
+            Ok(_) | Err(_) => None,
+        };
+        assert_eq!(shape("Database"), Some(NodeShape::Db));
+        assert_eq!(shape("cache"), Some(NodeShape::Db));
+        assert_eq!(shape("topic"), Some(NodeShape::Queue));
+        assert_eq!(shape("browser"), Some(NodeShape::Actor));
+        assert_eq!(shape("cluster"), Some(NodeShape::Group));
+        assert_eq!(shape("spaceship"), Some(NodeShape::Service));
+        let placed = to_op(&tag(
+            "node",
+            &[("id", "a"), ("near", "b"), ("dir", "diagonal")],
+        ));
+        assert!(matches!(
+            placed,
+            Ok(NarrationOp::Node {
+                placement: Placement::Near {
+                    direction: Direction::Right,
+                    ..
+                },
+                ..
+            })
+        ));
+        let edge = to_op(&tag(
+            "edge",
+            &[("from", "a"), ("to", "b"), ("style", "dull")],
+        ));
+        assert!(matches!(
+            edge,
+            Ok(NarrationOp::Edge {
+                style: LineStyle::Solid,
+                ..
+            })
+        ));
+        let annotate = to_op(&tag("annotate", &[("target", "a"), ("mark", "zigzag")]));
+        assert!(matches!(
+            annotate,
+            Ok(NarrationOp::Annotate {
+                mark: Mark::Circle,
+                ..
+            })
+        ));
+        let code = to_op(&tag("annotate", &[("line", "4"), ("mark", "zigzag")]));
+        assert!(matches!(
+            code,
+            Ok(NarrationOp::MarkCode {
+                mark: Mark::Underline,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn node_tones_compare_titles_cells_and_code_marks() {
+        let node = to_op(&tag(
+            "node",
+            &[("id", "q"), ("kind", "queue"), ("fill", "Blush")],
+        ));
+        assert!(matches!(
+            node,
+            Ok(NarrationOp::Node {
+                fill: Some(Fill::Blush),
+                ..
+            })
+        ));
+        let unknown = to_op(&tag("node", &[("id", "q"), ("fill", "plaid")]));
+        assert!(matches!(unknown, Ok(NarrationOp::Node { fill: None, .. })));
+        let compare = to_op(&tag(
+            "compare",
+            &[
+                ("title", "Raft vs Paxos"),
+                ("options", "Raft|Paxos"),
+                ("criteria", "Easy"),
+            ],
+        ));
+        assert!(matches!(
+            compare,
+            Ok(NarrationOp::Compare { title: Some(ref title), .. }) if title == "Raft vs Paxos"
+        ));
+        let by_row = to_op(&tag(
+            "cell",
+            &[("row", "Easy"), ("col", "Raft"), ("mark", "no")],
+        ));
+        assert_eq!(
+            by_row,
+            Ok(NarrationOp::Cell {
+                criterion: AxisRef::Name("Easy".into()),
+                option: AxisRef::Name("Raft".into()),
+                mark: CellMark::No,
+            })
+        );
+        let underline = to_op(&tag(
+            "annotate",
+            &[("line", "43"), ("code", "s.cache.Get(")],
+        ));
+        assert_eq!(
+            underline,
+            Ok(NarrationOp::MarkCode {
+                line: 43,
+                code: Some("s.cache.Get(".into()),
+                mark: Mark::Underline,
+            })
+        );
+        let circle = to_op(&tag("annotate", &[("line", "44"), ("mark", "circle")]));
+        assert_eq!(
+            circle,
+            Ok(NarrationOp::MarkCode {
+                line: 44,
+                code: None,
+                mark: Mark::Circle,
             })
         );
     }

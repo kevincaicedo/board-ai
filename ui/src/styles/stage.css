@@ -242,6 +242,16 @@
   color: var(--ink-3);
 }
 
+.code-marks {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .code-keyword {
   font-weight: 500;
 }
@@ -435,6 +445,23 @@
 .caption-previous {
   font-size: var(--type-caption-previous);
   line-height: var(--type-caption-previous-line);
+}
+
+/* The idle suggestion under the orb (frame 1) */
+
+.suggestion {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% + var(--suggestion-offset));
+  text-align: center;
+  font-size: var(--type-suggestion);
+  font-weight: 300;
+  letter-spacing: -0.005em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
 }
 
 /* Controls */

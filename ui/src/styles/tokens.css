@@ -122,6 +122,9 @@
   --duration-mic-on: 150ms;
   --duration-mic-off: 350ms;
   --duration-glow-delay: 750ms;
+  --duration-suggestion-in: 900ms;
+  --duration-suggestion-out: 450ms;
+  --duration-code-mark: 500ms;
 
   /* Type (bundled locally: the CSP allows no remote fonts) */
   --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -190,6 +193,20 @@
   --dof-blur: 2px;
   --dof-fade: 0.4;
   --caption-bottom: 110px;
+  /* The idle suggestion (frame 1): its top 110px below the stage's middle (560px of 900). */
+  --suggestion-offset: 110px;
+  --suggestion-rise: 10px;
+  --suggestion-blur: 6px;
+  /* The board's area for camera follow: clear of the thread bar's 120px band and of the two
+     caption lines above --caption-bottom (the previous line rises 30px), with side room. A
+     detour board sits below its card head. A frame is never enlarged past natural size. */
+  --board-top: 120px;
+  --board-bottom: 150px;
+  --board-side: 48px;
+  --detour-board-top: 58px;
+  --detour-board-bottom: 0px;
+  --detour-board-side: 0px;
+  --camera-scale-max: 1;
   --caption-rise: 10px;
   --caption-previous-rise: 30px;
   --caption-width: 1000px;

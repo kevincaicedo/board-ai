@@ -7,7 +7,7 @@ import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Vec } from "./geometry.ts";
 import { type OpPlan, type PlanTokens, planOp, traceStroke } from "./plan.ts";
-import { itemEnd, itemStart, type Stroke, type Tone, travelMs } from "./stroke.ts";
+import { itemEnd, itemStart, type Stroke, travelMs } from "./stroke.ts";
 import {
   freezeClock,
   isDone,
@@ -87,9 +87,6 @@ export interface BoardCounters {
   orphanEvents: number;
 }
 
-/** Fill tones in the order new subjects get them (the design's demo: sky, lilac, mint, blush). */
-const FILL_CYCLE: readonly Tone[] = ["sky", "lilac", "mint", "blush"];
-
 const NO_CAMERA: Camera = {
   frame: null,
   previous: null,
@@ -118,8 +115,6 @@ export class BoardModel {
   /** Bumped on every structural change (a run added or replaced, a layer pushed or popped). */
   version = 0;
   readonly #tokens: PlanTokens;
-  readonly #labelFills = new Map<string, Tone>();
-  readonly #layerFillCounts = new Map<number, number>();
   #serial = 0;
 
   constructor(tokens: PlanTokens) {
@@ -130,8 +125,6 @@ export class BoardModel {
   reset(): void {
     this.layers.clear();
     this.detours.length = 0;
-    this.#labelFills.clear();
-    this.#layerFillCounts.clear();
     this.counters.droppedOps = 0;
     this.counters.orphanEvents = 0;
     this.layers.set(0, {
@@ -198,37 +191,6 @@ export class BoardModel {
     return null;
   }
 
-  fillFor(op: DrawOp, layer: number): Tone | null {
-    if (op.kind !== "Node") {
-      return null;
-    }
-    switch (op.shape) {
-      case "Db":
-        return "sky";
-      case "Queue":
-        return "mint";
-      case "Actor":
-      case "Group":
-      case "Note":
-        return null;
-      case "Service":
-        break;
-    }
-    // The protocol carries no fill yet, so the tone is derived, deterministically for replay:
-    // the same subject keeps its tone everywhere, and a new one takes the next tone on its
-    // layer. Detours start two tones along so a detour card doesn't echo the board behind it.
-    const label = op.label.trim().toLowerCase();
-    const known = this.#labelFills.get(label);
-    if (known !== undefined) {
-      return known;
-    }
-    const count = this.#layerFillCounts.get(layer) ?? 0;
-    const tone = FILL_CYCLE[(layer * 2 + count) % FILL_CYCLE.length] ?? "sky";
-    this.#layerFillCounts.set(layer, count + 1);
-    this.#labelFills.set(label, tone);
-    return tone;
-  }
-
   #layer(id: number, at: number): Layer | null {
     const existing = this.layers.get(id);
     if (existing !== undefined) {
@@ -255,7 +217,7 @@ export class BoardModel {
         run.replacedAt = at;
       }
     }
-    const plan = planOp(op, this.fillFor(op, layerId), this.#tokens);
+    const plan = planOp(op, this.#tokens);
     let lead: Lead = { kind: "none" };
     let leadMs = 0;
     const first = plan.items[0];

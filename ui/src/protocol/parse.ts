@@ -6,8 +6,10 @@
 
 import type { CellMark } from "./generated/CellMark.ts";
 import type { ChipKind } from "./generated/ChipKind.ts";
+import type { ColumnRange } from "./generated/ColumnRange.ts";
 import type { DrawOp } from "./generated/DrawOp.ts";
 import type { EdgePath } from "./generated/EdgePath.ts";
+import type { Fill } from "./generated/Fill.ts";
 import type { LineStyle } from "./generated/LineStyle.ts";
 import type { Mark } from "./generated/Mark.ts";
 import type { NodeShape } from "./generated/NodeShape.ts";
@@ -69,6 +71,14 @@ function nullable<T>(value: unknown, parse: (value: unknown) => T | null): T | n
   return parsed === null ? undefined : parsed;
 }
 
+/**
+ * A field protocol v2 added: a missing key reads as `null`, so event logs written before it
+ * still replay; a present value must parse like a `nullable` one. `undefined` marks a failure.
+ */
+function optional<T>(value: unknown, parse: (value: unknown) => T | null): T | null | undefined {
+  return value === undefined ? null : nullable(value, parse);
+}
+
 function list<T>(value: unknown, parse: (value: unknown) => T | null): T[] | null {
   if (!Array.isArray(value)) {
     return null;
@@ -107,6 +117,14 @@ function rect(value: unknown): Rect | null {
   return x === null || y === null || w === null || h === null ? null : { x, y, w, h };
 }
 
+/** `[begin, end)` in characters; an empty or reversed range is malformed. */
+function columnRange(value: unknown): ColumnRange | null {
+  const f = fields(value);
+  const begin = u32(f?.begin);
+  const end = u32(f?.end);
+  return begin === null || end === null || begin >= end ? null : { begin, end };
+}
+
 function edgePath(value: unknown): EdgePath | null {
   const f = fields(value);
   const start = point(f?.start);
@@ -128,6 +146,9 @@ const NODE_SHAPES: readonly NodeShape[] = ["Service", "Db", "Queue", "Actor", "G
 const LINE_STYLES: readonly LineStyle[] = ["Solid", "Dashed"];
 const MARKS: readonly Mark[] = ["Circle", "Underline", "Arrow", "Bracket"];
 const CHIP_KINDS: readonly ChipKind[] = ["Note", "Task", "Memory", "Source"];
+const FILLS: readonly Fill[] = ["Lilac", "Sky", "Mint", "Blush"];
+
+const fill = (value: unknown): Fill | null => oneOf(value, FILLS);
 
 type Tagged<U, Tag extends string> = {
   [K in U extends Record<Tag, infer N extends string> ? N : never]: (
@@ -143,14 +164,16 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
     const label = text(f.label);
     const r = rect(f.rect);
     const stack = u8(f.stack);
+    const tone = optional(f.fill, fill);
     return id === null ||
       op === null ||
       shape === null ||
       label === null ||
       r === null ||
-      stack === null
+      stack === null ||
+      tone === undefined
       ? null
-      : { kind: "Node", id, op, shape, label, rect: r, stack };
+      : { kind: "Node", id, op, shape, label, rect: r, stack, fill: tone };
   },
   Edge: (f) => {
     const id = elementId(f.id);
@@ -250,9 +273,10 @@ const SURFACES: Tagged<Surface, "kind"> = {
     const id = u32(f.id);
     const options = list(f.options, text);
     const criteria = list(f.criteria, text);
-    return id === null || options === null || criteria === null
+    const title = optional(f.title, text);
+    return id === null || options === null || criteria === null || title === undefined
       ? null
-      : { kind: "Compare", id, options, criteria };
+      : { kind: "Compare", id, options, criteria, title };
   },
   Recap: (f) => {
     const id = u32(f.id);
@@ -271,6 +295,14 @@ const SURFACE_UPDATES: Tagged<SurfaceUpdate, "kind"> = {
     const col = u8(f.col);
     const mark = tagged<CellMark>(CELL_MARKS, "kind", f.mark);
     return row === null || col === null || mark === null ? null : { kind: "Cell", row, col, mark };
+  },
+  Mark: (f) => {
+    const line = u32(f.line);
+    const columns = columnRange(f.columns);
+    const mark = oneOf(f.mark, MARKS);
+    return line === null || columns === null || mark === null
+      ? null
+      : { kind: "Mark", line, columns, mark };
   },
 };
 
@@ -317,7 +349,10 @@ const EVENTS: Tagged<UiEvent, "type"> = {
   LayerPush: (f) => {
     const layer = u8(f.layer);
     const title = text(f.title);
-    return layer === null || title === null ? null : { type: "LayerPush", layer, title };
+    const question = optional(f.question, text);
+    return layer === null || title === null || question === undefined
+      ? null
+      : { type: "LayerPush", layer, title, question };
   },
   LayerPop: (f) => {
     const layer = u8(f.layer);
@@ -353,6 +388,10 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const spoken = text(f.spoken);
     const detail = text(f.detail);
     return spoken === null || detail === null ? null : { type: "Problem", spoken, detail };
+  },
+  Suggestion: (f) => {
+    const value = nullable(f.text, text);
+    return value === undefined ? null : { type: "Suggestion", text: value };
   },
 };
 

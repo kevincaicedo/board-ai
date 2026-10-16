@@ -1,8 +1,8 @@
 //! A seeded fuzzer over conversation interleavings (LLD §7). Random talker replies (good, bad
 //! and malformed narration, tools, refusals, failures) meet random user behaviour (questions,
-//! backchannels, interruptions, pointing, mute, push-to-talk, yes and no) and a voice that
-//! sometimes fails to synthesize a clause, on the simulator's fake clock. Every step is checked
-//! for I1–I7 and I9; any panic fails the test.
+//! backchannels, interruptions, pointing, mute, push-to-talk, the Esc stop, yes and no) and a
+//! voice that sometimes fails to synthesize a clause, on the simulator's fake clock. Every step is
+//! checked for I1–I7, I9 and I11; any panic fails the test.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
@@ -62,6 +62,11 @@ const FRAGMENTS: &[&str] = &[
     r#"Broken <node id=bad/> tags and <blink/> are dropped, speech goes on. "#,
     "A long clause that keeps going without a full stop, with commas, with more words, with even more words, until it gets long enough to be cut on a comma somewhere, and then some more. ",
     "Calls getUserByID in service.go at L42. ",
+    r#"A <node id="jobs" label="Jobs" kind="queue" near="api" fill="blush"/>queue takes the writes. "#,
+    r#"<compare title="Raft vs Paxos" options="Raft|Paxos" criteria="Easy|Used by"/>Two ways. <cell option="Raft" criterion="Easy" mark="yes"/>Raft is easy. "#,
+    r#"<annotate line="42" code="40"/>Look at line 42. "#,
+    r#"<recap bullets="Cache first|Postgres on a miss"/>To recap, the cache comes first. "#,
+    "The client->CDN hop is **cached**.\n- Then the API. ",
 ];
 
 const QUESTIONS: &[&str] = &[
@@ -161,6 +166,10 @@ fn act(sim: &mut Sim, rng: &mut Rng, last_pointer_ms: &mut u64) -> u64 {
             now,
             rng.pick(&["yes", "yes, go ahead", "go", "no", "hmm, not now"]),
         ),
+        9 => {
+            sim.at(now, Input::Command(UiCommand::Stop));
+            0
+        }
         _ => 0,
     }
 }
@@ -194,6 +203,9 @@ const PATHS: &[(&str, Reached)] = &[
     }),
     ("op", |effect| {
         matches!(effect, Effect::Ui(UiEvent::OpStart { .. }))
+    }),
+    ("camera", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::Camera { .. }))
     }),
     (
         "change",
@@ -246,7 +258,11 @@ impl Coverage {
 
 fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
-    let mut sim = Sim::new(CoreConfig { mic, ..config() });
+    let mut sim = Sim::new(CoreConfig {
+        mic,
+        suggestion: Some("Pick up where we left off?".to_owned()),
+        ..config()
+    });
     sim.talker.chunk_interval_ms = 10 + rng.below(300);
     sim.talker.first_token_ms = 100 + rng.below(1_500);
     sim.harness.run_ms = 1_000 + rng.below(10_000);
@@ -294,6 +310,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "detour",
         "problem",
         "op",
+        "camera",
         "change",
         "dropped",
         "skipped clause",

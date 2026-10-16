@@ -9,6 +9,7 @@
 pub mod clauses;
 pub mod ops;
 pub mod parser;
+pub mod quality;
 pub mod speakable;
 pub mod tags;
 
@@ -237,7 +238,9 @@ impl NarrationStream {
             | NarrationOp::Trace { .. }
             | NarrationOp::Compare { .. }
             | NarrationOp::Cell { .. }
-            | NarrationOp::Close { .. } => {}
+            | NarrationOp::Close { .. }
+            | NarrationOp::MarkCode { .. }
+            | NarrationOp::Recap { .. } => {}
         }
         let index = self.ops_kept;
         self.ops_kept += 1;

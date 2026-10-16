@@ -1,6 +1,7 @@
 //! Prints the session as it happens, stamped with session time, and keeps the numbers spikes
-//! S3 and S5 need per answer: time to first token, first audio and first op, ops drawn, and
-//! narration tags dropped.
+//! S3 and S5 need per answer: time to first token, first audio and first op, ops drawn,
+//! narration tags dropped, and how well the narration follows the drawing rules (words spoken
+//! before the first drawing tag, tags standing in for a word, tags piled on one word, markup).
 //!
 //! It is the session's store: everything the core decides passes through a store, so the
 //! printer sees inputs, UI events and latency marks in order, at their step's time.
@@ -10,6 +11,7 @@ use std::sync::Mutex;
 use boardai_core::effect::{Dropped, LogRecord, Milestone};
 use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
+use boardai_core::narration::quality::{NarrationQuality, assess};
 use boardai_core::narration::tags::TAG_NAMES;
 use boardai_core::protocol::{DrawOp, OrbState, Speaker, Surface, UiEvent};
 use boardai_core::time::SessionTime;
@@ -57,6 +59,11 @@ impl Answer {
                 u32::try_from(found).unwrap_or(u32::MAX)
             })
             .sum()
+    }
+
+    /// The drawing-rule numbers for everything the talker wrote in this answer.
+    pub fn quality(&self) -> NarrationQuality {
+        assess(&self.text)
     }
 }
 
@@ -154,9 +161,11 @@ impl Printer {
         let Some(answer) = state.open.take() else {
             return;
         };
+        let quality = answer.quality();
         let summary = format!(
             "first token {} · first audio {} · first op {} · ops {} · tags {} written, {} dropped \
-             · ops dropped {}{}",
+             · ops dropped {} · preamble {} words · missing words {} · tags on one word {} · \
+             markup {}{}",
             ms(answer.first_token_ms),
             ms(answer.first_audio_ms),
             ms(answer.first_op_ms),
@@ -164,6 +173,10 @@ impl Printer {
             answer.tags_written(),
             answer.dropped_tags,
             answer.dropped_ops,
+            quality.preamble_words,
+            quality.missing_words,
+            quality.drawing_tags_per_word_max,
+            quality.markup,
             if answer.interrupted {
                 " · interrupted"
             } else {
@@ -206,26 +219,10 @@ impl Printer {
             UiEvent::Resume { layer, budget_ms } => {
                 line(at, "resume", &format!("L{} budget {budget_ms} ms", layer.0));
             }
-            UiEvent::LayerPush { layer, title } => {
-                line(at, "detour", &format!("open L{} \"{title}\"", layer.0));
+            UiEvent::LayerPush { .. } | UiEvent::Thread { .. } | UiEvent::Camera { .. } => {
+                board_line(at, event);
             }
             UiEvent::LayerPop { layer } => line(at, "detour", &format!("close L{}", layer.0)),
-            UiEvent::Thread {
-                steps,
-                current,
-                detours,
-            } => {
-                let current = current.map_or_else(|| "-".to_owned(), |step| step.to_string());
-                let text = format!(
-                    "{} · step {current} · detours {detours:?}",
-                    steps.join(" > ")
-                );
-                line(at, "thread", &text);
-            }
-            UiEvent::Camera { layer, focus, .. } => {
-                let focus = focus.as_ref().map_or("-", |id| id.as_str());
-                line(at, "focus", &format!("L{} {focus}", layer.0));
-            }
             UiEvent::SurfaceShow { surface } => line(at, "surface", &surface_line(surface)),
             UiEvent::SurfaceUpdate { id, update } => {
                 line(at, "surface", &format!("#{} {update:?}", id.0));
@@ -236,6 +233,9 @@ impl Printer {
                 line(at, "problem", &format!("\"{spoken}\" ({detail})"));
             }
             UiEvent::Acknowledge => line(at, "ack", "backchannel heard; still speaking"),
+            UiEvent::Suggestion { text } => {
+                line(at, "suggest", text.as_deref().unwrap_or("(cleared)"));
+            }
             UiEvent::Orb { state, .. } => {
                 if self.verbose {
                     line(at, "orb", &format!("{state:?}"));
@@ -359,6 +359,49 @@ fn line(at: SessionTime, label: &str, text: &str) {
     println!("[{seconds:>4}.{millis:03}] {label:<8} {text}");
 }
 
+/// Detours, the thread and the camera, which take a few fields each.
+fn board_line(at: SessionTime, event: &UiEvent) {
+    if let UiEvent::LayerPush {
+        layer,
+        title,
+        question,
+    } = event
+    {
+        let question = question
+            .as_ref()
+            .map_or_else(String::new, |question| format!(" for \"{question}\""));
+        line(
+            at,
+            "detour",
+            &format!("open L{} \"{title}\"{question}", layer.0),
+        );
+    } else if let UiEvent::Thread {
+        steps,
+        current,
+        detours,
+    } = event
+    {
+        let current = current.map_or_else(|| "-".to_owned(), |step| step.to_string());
+        let text = format!(
+            "{} · step {current} · detours {detours:?}",
+            steps.join(" > ")
+        );
+        line(at, "thread", &text);
+    } else if let UiEvent::Camera {
+        layer,
+        frame,
+        focus,
+    } = event
+    {
+        let focus = focus.as_ref().map_or("-", |id| id.as_str());
+        let text = format!(
+            "L{} frame {}x{} at ({}, {}) focus {focus}",
+            layer.0, frame.w, frame.h, frame.x, frame.y
+        );
+        line(at, "camera", &text);
+    }
+}
+
 fn ms(value: Option<u64>) -> String {
     value.map_or_else(|| "-".to_owned(), |ms| format!("{ms} ms"))
 }
@@ -440,8 +483,10 @@ fn surface_line(surface: &Surface) -> String {
             id,
             options,
             criteria,
+            title,
         } => {
-            format!("#{} compare {options:?} by {criteria:?}", id.0)
+            let title = title.as_deref().unwrap_or("compare");
+            format!("#{} {title}: {options:?} by {criteria:?}", id.0)
         }
         Surface::Recap { id, bullets } => format!("#{} recap ({} bullets)", id.0, bullets.len()),
     }

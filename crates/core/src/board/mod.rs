@@ -12,6 +12,7 @@ pub mod layout;
 pub mod metrics;
 mod place;
 pub mod summary;
+mod tone;
 
 use std::collections::BTreeMap;
 
@@ -19,10 +20,11 @@ use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::limits::{ELEMENTS_PER_LAYER_MAX, LAYERS_PER_SESSION_MAX};
 use crate::narration::ops::Placement;
-use crate::protocol::{DrawOp, EdgePath, LineStyle, Mark, NodeShape};
+use crate::protocol::{DrawOp, EdgePath, Fill, LineStyle, Mark, NodeShape};
 use crate::time::SessionTime;
 use layout::{CellSpan, Grid};
 use place::{edge_between, node_cell, repeated, strike};
+use tone::Tones;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Element {
@@ -42,6 +44,7 @@ pub enum ElementKind {
         stack: u8,
         group: Option<ElementId>,
         span: CellSpan,
+        fill: Option<Fill>,
     },
     Edge {
         from: ElementId,
@@ -119,7 +122,6 @@ pub enum Rejected {
     LayerMissing,
     LayerFull,
     UnknownElement(ElementId),
-    NotAGroup(ElementId),
     NoEdge { from: ElementId, to: ElementId },
 }
 
@@ -240,6 +242,7 @@ pub struct FrozenOp {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Board {
     layers: Vec<Layer>,
+    tones: Tones,
 }
 
 impl Default for Board {
@@ -253,6 +256,7 @@ impl Board {
     pub fn new() -> Self {
         Self {
             layers: vec![Layer::new(LayerId::MAIN, "main".to_owned())],
+            tones: Tones::default(),
         }
     }
 
@@ -295,10 +299,11 @@ impl Board {
         op: OpId,
         node: NodeRequest<'_>,
     ) -> Result<Placed, Rejected> {
-        let layer = self.layer_mut(layer_id)?;
-        if let Some(existing) = layer.element(node.id) {
+        if let Some(existing) = self.layer_mut(layer_id)?.element(node.id) {
             return Ok(repeated(existing, op, node.label));
         }
+        let fill = self.tones.pick(layer_id, node.shape, node.label, node.fill);
+        let layer = self.layer_mut(layer_id)?;
         let (width, height) = layout::node_size(node.shape, node.label);
         let cols = layout::columns_for(width);
         let (cell, group) = node_cell(layer, node.placement, cols)?;
@@ -317,6 +322,7 @@ impl Board {
                 stack: node.stack,
                 group,
                 span,
+                fill,
             },
             label: node.label.to_owned(),
             geometry: Geometry::Box(rect),
@@ -649,6 +655,9 @@ pub struct NodeRequest<'a> {
     pub shape: NodeShape,
     pub placement: &'a Placement,
     pub stack: u8,
+    /// The talker's tone; the board picks one when it is `None` (and for shapes with no fill
+    /// ignores it).
+    pub fill: Option<Fill>,
 }
 
 /// An edge to lay out.
@@ -669,10 +678,12 @@ fn generated_id(prefix: &str, op: OpId) -> ElementId {
 }
 
 fn node_draw(element: &Element, rect: Rect) -> DrawOp {
-    let (shape, stack) = match element.kind {
-        ElementKind::Node { shape, stack, .. } => (shape, stack),
+    let (shape, stack, fill) = match element.kind {
+        ElementKind::Node {
+            shape, stack, fill, ..
+        } => (shape, stack, fill),
         ElementKind::Edge { .. } | ElementKind::Annotation { .. } | ElementKind::Trace => {
-            (NodeShape::Note, 1)
+            (NodeShape::Note, 1, None)
         }
     };
     DrawOp::Node {
@@ -682,5 +693,6 @@ fn node_draw(element: &Element, rect: Rect) -> DrawOp {
         label: element.label.clone(),
         rect,
         stack,
+        fill,
     }
 }

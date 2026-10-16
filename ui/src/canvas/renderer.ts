@@ -6,7 +6,7 @@
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import { type BoardModel, type Layer, type Run, runActive } from "./board.ts";
-import { cameraAt, depthOfField, type Viewport } from "./camera.ts";
+import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
 import type { Vec } from "./geometry.ts";
 import { clamp, easeInOutCubic, easeOut, ramp, round1, round2 } from "./math.ts";
 import { type Anchors, type NibFrame, nibAt, type Presence, type Transform } from "./presence.ts";
@@ -191,7 +191,8 @@ export class BoardView {
     this.#hovered = null;
   }
 
-  render(at: number, stage: Viewport, card: Viewport, anchors: Anchors): void {
+  /** `stage` and `card` are where the main and detour layers fit their camera frames. */
+  render(at: number, stage: FitArea, card: FitArea, anchors: Anchors): void {
     if (this.#syncedVersion !== this.#model.version) {
       this.#sync();
       this.#syncedVersion = this.#model.version;
@@ -402,9 +403,9 @@ export class BoardView {
     }
   }
 
-  #renderLayer(view: LayerView, layer: Layer, at: number, viewport: Viewport): void {
+  #renderLayer(view: LayerView, layer: Layer, at: number, area: FitArea): void {
     const tokens = this.#options.tokens;
-    cameraAt(layer.camera, at, viewport, tokens.durationSceneMs, view.transform);
+    cameraAt(layer.camera, at, area, tokens.durationSceneMs, view.transform);
     const scale = Math.round(view.transform.scale * 1000) / 1000;
     const x = round1(view.transform.x);
     const y = round1(view.transform.y);
