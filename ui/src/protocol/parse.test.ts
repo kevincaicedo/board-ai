@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DrawOp } from "./generated/DrawOp.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { View } from "./generated/View.ts";
 import { parseLogLine, parseUiBatch, parseUiEvent, parseView, type RowSkips } from "./parse.ts";
@@ -56,6 +57,7 @@ const EVERY_VIEW: View[] = [
             rect: { x: 120, y: 250, w: 150, h: 64 },
             stack: 1,
             fill: null,
+            link: null,
           },
         ],
       },
@@ -64,6 +66,65 @@ const EVERY_VIEW: View[] = [
     ops_left_out: 2,
   },
   { kind: "Replay", session: { ...CARD, cover: [] } },
+];
+
+/** The diagram ops (D-150), as the Rust side serializes them. */
+const DIAGRAM_OPS: DrawOp[] = [
+  {
+    kind: "Node",
+    id: "n3",
+    op: 8,
+    shape: "Circle",
+    label: "3",
+    rect: { x: -88, y: 154, w: 56, h: 56 },
+    stack: 1,
+    fill: null,
+    link: { start: { x: 100, y: 98 }, control: null, end: { x: -60, y: 154 } },
+  },
+  {
+    kind: "Participant",
+    id: "c",
+    op: 9,
+    label: "Client",
+    rect: { x: 47, y: 46, w: 105, h: 48 },
+    lifeline_bottom: 242,
+  },
+  {
+    kind: "Message",
+    id: "m:10",
+    op: 10,
+    from: "c",
+    to: "s",
+    points: [
+      { x: 99, y: 242 },
+      { x: 300, y: 242 },
+    ],
+    label: "ACK",
+    style: "Dashed",
+    extend: [{ participant: "c", x: 99, top: 242, bottom: 346 }],
+  },
+  {
+    kind: "Cells",
+    id: "arr",
+    op: 11,
+    label: "",
+    cells: [
+      { id: "arr.0", rect: { x: 0, y: 0, w: 48, h: 48 }, value: "3", index: "0" },
+      { id: "arr.1", rect: { x: 48, y: 0, w: 48, h: 48 }, value: "", index: null },
+    ],
+    vertical: false,
+  },
+  { kind: "Write", op: 12, target: "arr.1", label: "7", rect: { x: 48, y: 0, w: 48, h: 48 } },
+  {
+    kind: "Annotate",
+    id: "a:13",
+    op: 13,
+    target: "arr.0",
+    mark: "Highlight",
+    rect: { x: 0, y: 0, w: 48, h: 48 },
+    text: "i",
+    fill: "Mint",
+  },
 ];
 
 /** One well-formed example of every event, as the Rust side serializes them. */
@@ -85,6 +146,7 @@ const EVERY_EVENT: UiEvent[] = [
       rect: { x: 0, y: 0, w: 160, h: 64 },
       stack: 1,
       fill: "Lilac",
+      link: null,
     },
   },
   {
@@ -100,6 +162,7 @@ const EVERY_EVENT: UiEvent[] = [
       rect: { x: 0, y: 0, w: 42, h: 86 },
       stack: 1,
       fill: null,
+      link: null,
     },
   },
   {
@@ -129,6 +192,7 @@ const EVERY_EVENT: UiEvent[] = [
       mark: "Circle",
       rect: { x: -4, y: 2, w: 10, h: 10 },
       text: null,
+      fill: null,
     },
   },
   {
@@ -185,7 +249,14 @@ const EVERY_EVENT: UiEvent[] = [
     update: { kind: "Mark", line: 43, columns: { begin: 17, end: 29 }, mark: "Underline" },
   },
   { type: "SurfaceDismiss", id: 1 },
-  { type: "Chip", kind: "Task", text: "Check TTLs" },
+  { type: "Chip", kind: "Task", text: "Check TTLs", source: null },
+  {
+    type: "Chip",
+    kind: "Source",
+    text: "internal/user/service.go:43",
+    source: { path: "internal/user/service.go", line: 43 },
+  },
+  ...DIAGRAM_OPS.map((op): UiEvent => ({ type: "OpStart", layer: 0, budget_ms: 600, op })),
   { type: "Problem", spoken: "I lost the connection.", detail: "timeout" },
   { type: "Suggestion", text: "Pick up Raft log compaction where we left off?" },
   { type: "Suggestion", text: null },
@@ -230,6 +301,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
         fill: null,
+        link: null,
       },
     },
     {
@@ -245,6 +317,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
         fill: null,
+        link: null,
       },
     },
     {
@@ -260,6 +333,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
         fill: null,
+        link: null,
       },
     },
     {
@@ -275,6 +349,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         rect: { x: 0, y: 0, w: -1, h: 1 },
         stack: 1,
         fill: null,
+        link: null,
       },
     },
     {
@@ -306,6 +381,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
         fill: "Plaid",
+        link: null,
       },
     },
     { type: "LayerPush", layer: 1, title: "t", question: 7 },
@@ -349,10 +425,14 @@ test("protocol v1 logs still replay: v2's optional fields read a missing key as 
       label: "LB",
       rect: { x: 0, y: 0, w: 160, h: 64 },
       stack: 1,
-      fill: null,
     },
   });
-  assert.ok(node?.type === "OpStart" && node.op.kind === "Node" && node.op.fill === null);
+  assert.ok(
+    node?.type === "OpStart" &&
+      node.op.kind === "Node" &&
+      node.op.fill === null &&
+      node.op.link === null,
+  );
   assert.deepEqual(parseUiEvent({ type: "LayerPush", layer: 1, title: "t" }), {
     type: "LayerPush",
     layer: 1,
@@ -368,6 +448,52 @@ test("protocol v1 logs still replay: v2's optional fields read a missing key as 
       compare.surface.kind === "Compare" &&
       compare.surface.title === null,
   );
+});
+
+test("v3's diagram fields read a missing key as null, and malformed diagram ops are rejected", () => {
+  const annotate = parseUiEvent({
+    type: "OpStart",
+    layer: 0,
+    budget_ms: 300,
+    op: {
+      kind: "Annotate",
+      id: "a",
+      op: 1,
+      target: "x",
+      mark: "Circle",
+      rect: { x: 0, y: 0, w: 1, h: 1 },
+      text: null,
+    },
+  });
+  assert.ok(
+    annotate?.type === "OpStart" && annotate.op.kind === "Annotate" && annotate.op.fill === null,
+  );
+  assert.deepEqual(parseUiEvent({ type: "Chip", kind: "Source", text: "service.go" }), {
+    type: "Chip",
+    kind: "Source",
+    text: "service.go",
+    source: null,
+  });
+  const op = (value: Record<string, unknown>): unknown => ({
+    type: "OpStart",
+    layer: 0,
+    budget_ms: 300,
+    op: value,
+  });
+  const message = DIAGRAM_OPS[2] ?? {};
+  const cells = DIAGRAM_OPS[3] ?? {};
+  for (const bad of [
+    op({ ...message, points: [{ x: 0, y: 0 }] }),
+    op({ ...message, extend: [{ participant: "has space", x: 0, top: 0, bottom: 1 }] }),
+    op({ ...cells, cells: [] }),
+    op({ ...cells, vertical: "yes" }),
+    op({ kind: "Write", op: 1, target: "a", rect: { x: 0, y: 0, w: 1, h: 1 } }),
+    op({ ...(DIAGRAM_OPS[0] ?? {}), shape: "Hexagon" }),
+    { type: "Chip", kind: "Source", text: "a.go:0", source: { path: "a.go", line: 0 } },
+    { type: "Chip", kind: "Source", text: "a.go:3", source: { path: " ", line: 3 } },
+  ]) {
+    assert.equal(parseUiEvent(bad), null, JSON.stringify(bad));
+  }
 });
 
 test("a batch keeps its good events and counts the rest", () => {

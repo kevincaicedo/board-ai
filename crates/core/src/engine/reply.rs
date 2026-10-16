@@ -5,7 +5,7 @@
 //! the next request continues the same spoken reply. At most one stream is in flight (I5), and a
 //! `CancelTalk` always precedes a new `Talk`.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::board::summary::summary;
 use crate::conversation::cues::CancelTarget;
@@ -68,6 +68,8 @@ pub(super) struct Reply {
     rounds: usize,
     /// The talker has nothing more to say this turn.
     pub done: bool,
+    /// The `path:line` citations this reply showed a source chip for.
+    pub cited: BTreeSet<(String, u32)>,
 }
 
 impl Reply {
@@ -663,9 +665,11 @@ impl Core {
             return;
         };
         if let HarnessEvent::FileTouched { path } = &event {
+            // A harness names a file, never a line it read here: the chip opens nothing.
             effects.push(Effect::Ui(UiEvent::Chip {
                 kind: ChipKind::Source,
                 text: path.clone(),
+                source: None,
             }));
         }
         if let Some(report) = harness_report(task, &kind, &event) {

@@ -3,6 +3,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { demoJsonl } from "./demo.ts";
+import { diagramsJsonl } from "./diagrams.ts";
 import { primitivesJsonl } from "./primitives.ts";
 import { sessionFixtures, viewsJsonl } from "./views.ts";
 
@@ -10,6 +11,7 @@ mkdirSync(new URL("../../public/fixtures/sessions/", import.meta.url), { recursi
 for (const [name, text] of [
   ["demo", demoJsonl()],
   ["primitives", primitivesJsonl()],
+  ["diagrams", diagramsJsonl()],
   ["views", viewsJsonl()],
   ...sessionFixtures().map(([id, log]) => [`sessions/${id}`, log] as const),
 ] as const) {

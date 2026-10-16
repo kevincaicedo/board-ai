@@ -8,8 +8,10 @@ import type { ChipKind } from "../protocol/generated/ChipKind.ts";
 import type { ColumnRange } from "../protocol/generated/ColumnRange.ts";
 import type { Mark } from "../protocol/generated/Mark.ts";
 import type { OrbState } from "../protocol/generated/OrbState.ts";
+import type { SourceRef } from "../protocol/generated/SourceRef.ts";
 import type { Speaker } from "../protocol/generated/Speaker.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
+import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import { type ColumnTokens, type Placed, SURFACES_VISIBLE_MAX, surfaceHeight } from "./layout.ts";
@@ -110,6 +112,8 @@ export interface Chip {
   readonly serial: number;
   readonly kind: ChipKind;
   readonly text: string;
+  /** The code line a source chip opens when clicked; `null` for other chips. */
+  readonly source: SourceRef | null;
   readonly at: number;
   readonly slot: number;
   /** When it flies to the brain edge (a source chip fades instead). */
@@ -212,7 +216,7 @@ export class SessionStore {
         this.#leave(key({ kind: "surface", id: event.id }), at);
         break;
       case "Chip":
-        this.#chip(event.kind, event.text, at);
+        this.#chip(event.kind, event.text, event.source, at);
         break;
       case "Suggestion":
         this.#suggest(event.text, at);
@@ -440,7 +444,7 @@ export class SessionStore {
     );
   }
 
-  #chip(kind: ChipKind, text: string, at: number): void {
+  #chip(kind: ChipKind, text: string, source: SourceRef | null, at: number): void {
     const tokens = this.#tokens;
     const waiting = this.chips.value.filter((chip) => chip.flyAt + tokens.durationChipFlyMs > at);
     const taken = new Set(waiting.map((chip) => chip.slot));
@@ -453,6 +457,7 @@ export class SessionStore {
       serial: this.#chipSerial,
       kind,
       text,
+      source,
       at,
       slot,
       flyAt: at + tokens.durationChipHoldMaxMs,
@@ -482,6 +487,17 @@ export class SessionStore {
       this.chips.value = chips;
     }
   }
+}
+
+/**
+ * What clicking a chip asks of the core: a source chip opens its code line (the core shows it only
+ * if that line was read this session); any other chip asks nothing.
+ */
+export function chipCommand(chip: Pick<Chip, "kind" | "source">): UiCommand | null {
+  if (chip.kind !== "Source" || chip.source === null) {
+    return null;
+  }
+  return { type: "OpenSource", path: chip.source.path, line: chip.source.line };
 }
 
 /** A surface card with one update applied: a highlight move, a compare cell or a pen mark. */

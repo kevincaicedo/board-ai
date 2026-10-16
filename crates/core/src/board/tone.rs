@@ -6,7 +6,8 @@
 //! subject takes the next tone of sky, lilac, mint, blush on its layer, and a subject keeps its
 //! tone everywhere (the detour's Redis is the main board's Redis). A detour starts two tones
 //! along, so its card doesn't echo the board behind it. The talker may name a tone (`fill="mint"`),
-//! and the subject keeps that one too. Actors, groups and notes have no fill.
+//! and the subject keeps that one too. Actors, groups and notes have no fill; circles (tree nodes,
+//! states) have only the talker's.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +41,9 @@ impl Tones {
         let subject = label.trim().to_lowercase();
         match shape {
             NodeShape::Actor | NodeShape::Group | NodeShape::Note => return None,
+            // Tree nodes and states are plain ink unless the talker gives a tone: a tone per
+            // subject would make every node of a tree a different color.
+            NodeShape::Circle => return chosen,
             NodeShape::Db | NodeShape::Queue | NodeShape::Service => {}
         }
         if let Some(chosen) = chosen {
@@ -49,7 +53,11 @@ impl Tones {
         match shape {
             NodeShape::Db => return Some(Fill::Sky),
             NodeShape::Queue => return Some(Fill::Mint),
-            NodeShape::Service | NodeShape::Actor | NodeShape::Group | NodeShape::Note => {}
+            NodeShape::Service
+            | NodeShape::Actor
+            | NodeShape::Group
+            | NodeShape::Note
+            | NodeShape::Circle => {}
         }
         if let Some(known) = self.by_subject.get(&subject) {
             return Some(*known);

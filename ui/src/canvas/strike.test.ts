@@ -29,6 +29,7 @@ const node = (shape: NodeShape, label: string, h: number): Extract<DrawOp, { kin
   rect: { x: 0, y: 0, w: 300, h },
   stack: 1,
   fill: null,
+  link: null,
 });
 
 function draw(board: BoardModel, op: DrawOp, at: number): void {

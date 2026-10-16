@@ -5,10 +5,19 @@
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Fill } from "../protocol/generated/Fill.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
-import type { Tokens } from "../styles/tokens.ts";
+import {
+  cellsItems,
+  circleItems,
+  linkItem,
+  messageItems,
+  type PlanTarget,
+  participantItems,
+  writeItems,
+} from "./diagrams.ts";
 import {
   arrowHead,
   cylinderPolygon,
+  ellipsePolygon,
   hachure,
   rectPolygon,
   roughCurve,
@@ -18,6 +27,23 @@ import {
 } from "./geometry.ts";
 import { type Random, randomFor } from "./rng.ts";
 import {
+  boxSides,
+  CONNECTOR_WIDTH,
+  EDGE_LABEL_GAP,
+  GROUP_PACE,
+  GROUP_WIDTH,
+  HATCH_DEGREES,
+  HATCH_GAP,
+  HATCH_INSET,
+  LABEL_ABOVE,
+  labelSize,
+  OUTLINE_WIDTH,
+  type PlanTokens,
+} from "./sketch.ts";
+
+export type { PlanTokens } from "./sketch.ts";
+
+import {
   type Item,
   itemEnd,
   itemStart,
@@ -25,14 +51,10 @@ import {
   makeStroke,
   makeText,
   type Stroke,
+  type TextAlign,
   type Tone,
   travelMs,
 } from "./stroke.ts";
-
-export type PlanTokens = Pick<
-  Tokens,
-  "handNode" | "handNodeSmall" | "handNodeSmallBelow" | "handGroup" | "handEdge" | "handAnnotation"
->;
 
 export interface OpPlan {
   readonly items: readonly Item[];
@@ -42,21 +64,13 @@ export interface OpPlan {
   readonly naturalMs: number;
   /** World-space bounds, for pointer hit testing and the hover highlight. */
   readonly bounds: Rect;
+  /** Elements inside the drawing (a row's cells), each pointable and strikable on its own. */
+  readonly targets: readonly PlanTarget[];
 }
 
-const OUTLINE_WIDTH = 2.1;
-const CONNECTOR_WIDTH = 2;
-const GROUP_WIDTH = 1.6;
-/** The design draws a group's frame quicker than a box: it is scaffolding, not the subject. */
-const GROUP_PACE = 0.55;
-const HATCH_GAP = 7;
-const HATCH_DEGREES = -41;
-const HATCH_INSET = 4;
 const STACK_OFFSET = 8;
 const QUEUE_SLOTS = 5;
 const QUEUE_FILLED_SLOTS = 3;
-const LABEL_ABOVE = 21;
-const EDGE_LABEL_GAP = 20;
 const ANNOTATION_PAD = 10;
 
 /** Sequential natural times: each item starts after the previous one plus the pen's travel. */
@@ -84,31 +98,6 @@ export function schedule(items: readonly Item[]): {
     ends[index] = time;
   }
   return { starts, ends, naturalMs: time };
-}
-
-function boxSides(random: Random, rect: Rect, tone: Tone, width: number, pace: number): Stroke[] {
-  const { x, y, w, h } = rect;
-  const side = (x1: number, y1: number, x2: number, y2: number, overshoot?: number): Stroke =>
-    makeStroke(
-      roughLine(random, x1, y1, x2, y2, overshoot === undefined ? {} : { overshoot }),
-      tone,
-      width,
-      { pace },
-    );
-  return [
-    side(x, y, x + w, y),
-    side(x + w, y, x + w, y + h),
-    side(x + w, y + h, x, y + h),
-    side(x, y + h, x, y, 4),
-  ];
-}
-
-function labelSize(tokens: PlanTokens, rect: Rect, label: string): number {
-  const preferred = rect.h < tokens.handNodeSmallBelow ? tokens.handNodeSmall : tokens.handNode;
-  const letters = Math.max(1, Array.from(label).length);
-  // Handwriting advances half its size per letter; keep a margin inside the box.
-  const fitting = (rect.w - 16) / (letters * 0.5);
-  return Math.max(12, Math.min(preferred, Math.floor(fitting)));
 }
 
 function service(
@@ -377,6 +366,7 @@ function annotateItems(
   op: Extract<DrawOp, { kind: "Annotate" }>,
   random: Random,
   tokens: PlanTokens,
+  round: boolean,
 ): Item[] {
   const { x, y, w, h } = op.rect;
   const cx = x + w / 2;
@@ -384,7 +374,23 @@ function annotateItems(
   const items: Item[] = [];
   let textAt: Vec = [x + w + ANNOTATION_PAD * 2, cy];
   let textAlign: "center" | "left" = "left";
+  let textTone: Tone = "annotate";
   switch (op.mark) {
+    case "Highlight": {
+      // A shade under the ink in the core's tone, like the canvas's tinted pages (Ex-SSD), inside
+      // a round target's outline; its note is written above it in the second ink, clear of a
+      // row's neighbouring cells, as the design labels those pages.
+      const outline = round
+        ? ellipsePolygon(cx, cy, w / 2, h / 2, HATCH_INSET)
+        : rectPolygon(x, y, w, h, HATCH_INSET);
+      items.push(
+        makeHatch(hachure(random, outline, HATCH_GAP, HATCH_DEGREES), toneOf(op.fill) ?? "blush"),
+      );
+      textAt = [cx, y - LABEL_ABOVE];
+      textAlign = "center";
+      textTone = "ink2";
+      break;
+    }
     case "Circle": {
       const rx = (w / 2) * 1.08 + ANNOTATION_PAD;
       const ry = (h / 2) * 1.08 + ANNOTATION_PAD * 0.6;
@@ -451,9 +457,7 @@ function annotateItems(
     }
   }
   if (op.text !== null && op.text !== "") {
-    items.push(
-      makeText(textAt[0], textAt[1], op.text, tokens.handAnnotation, "annotate", textAlign),
-    );
+    items.push(makeText(textAt[0], textAt[1], op.text, tokens.handAnnotation, textTone, textAlign));
   }
   return items;
 }
@@ -466,7 +470,7 @@ export interface StruckLabel {
   readonly right: number;
   readonly size: number;
   readonly tone: Tone;
-  readonly align: "center" | "left";
+  readonly align: TextAlign;
 }
 
 /** The handwritten label of an element's plan (its first text), or `null` when it has none. */
@@ -569,9 +573,39 @@ function boundsOf(items: readonly Item[], fallback: Rect): Rect {
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
-/** The element id that seeds an op's randomness; a strike has none, so it uses its target's. */
+/** The label a target inside a drawing (a cell) shows, for a strike to cross. */
+export function labelOfTarget(plan: OpPlan, id: string): StruckLabel | null {
+  const label = plan.targets.find((target) => target.id === id)?.label ?? null;
+  return label === null
+    ? null
+    : {
+        x: label.x,
+        y: label.y,
+        left: label.start[0],
+        right: label.end[0],
+        size: label.size,
+        tone: label.tone,
+        align: label.align,
+      };
+}
+
+/** The element id that seeds an op's randomness; a strike or a write has none, so it uses its
+ * target's. */
 export function seedKey(op: DrawOp): string {
-  return op.kind === "Strike" ? `${op.target}#strike` : op.id;
+  switch (op.kind) {
+    case "Strike":
+      return `${op.target}#strike`;
+    case "Write":
+      return `${op.target}#write`;
+    case "Node":
+    case "Edge":
+    case "Annotate":
+    case "Trace":
+    case "Participant":
+    case "Message":
+    case "Cells":
+      return op.id;
+  }
 }
 
 /** The hachure tone the core chose for a node; the UI never picks one itself (D-031 retired). */
@@ -590,15 +624,26 @@ export function toneOf(fill: Fill | null): Tone | null {
   }
 }
 
-/** `struck` is the label a strike crosses out: its target's, from the board (`labelOf`). */
-export function planOp(op: DrawOp, tokens: PlanTokens, struck: StruckLabel | null = null): OpPlan {
+/**
+ * `struck` is the label a strike crosses out: its target's, from the board (`labelOf`); `round`
+ * says a highlight's target is a circle, so its shade stays inside the outline.
+ */
+export function planOp(
+  op: DrawOp,
+  tokens: PlanTokens,
+  struck: StruckLabel | null = null,
+  round = false,
+): OpPlan {
   const random = randomFor(seedKey(op));
   let items: Item[];
   let fallback: Rect;
+  let targets: readonly PlanTarget[] = [];
   switch (op.kind) {
     case "Node": {
       fallback = op.rect;
       const fill = toneOf(op.fill);
+      // The line from a tree node's parent comes first, drawing the pen down to the node.
+      const link = op.link === null ? [] : [linkItem(op.link, random)];
       switch (op.shape) {
         case "Service":
           items = service(random, op.rect, op.label, op.stack, fill, tokens);
@@ -626,7 +671,11 @@ export function planOp(op: DrawOp, tokens: PlanTokens, struck: StruckLabel | nul
             ),
           ];
           break;
+        case "Circle":
+          items = circleItems(random, op.rect, op.label, fill, tokens);
+          break;
       }
+      items = [...link, ...items];
       break;
     }
     case "Edge":
@@ -634,7 +683,7 @@ export function planOp(op: DrawOp, tokens: PlanTokens, struck: StruckLabel | nul
       fallback = { x: op.path.start.x, y: op.path.start.y, w: 0, h: 0 };
       break;
     case "Annotate":
-      items = annotateItems(op, random, tokens);
+      items = annotateItems(op, random, tokens, round);
       fallback = op.rect;
       break;
     case "Strike":
@@ -645,9 +694,28 @@ export function planOp(op: DrawOp, tokens: PlanTokens, struck: StruckLabel | nul
       items = [];
       fallback = traceBounds(op.points);
       break;
+    case "Participant":
+      items = participantItems(op, random, tokens);
+      fallback = op.rect;
+      break;
+    case "Message":
+      items = messageItems(op, random, tokens);
+      fallback = traceBounds(op.points);
+      break;
+    case "Cells": {
+      const cells = cellsItems(op, random, tokens);
+      items = cells.items;
+      targets = cells.targets;
+      fallback = op.cells[0]?.rect ?? { x: 0, y: 0, w: 0, h: 0 };
+      break;
+    }
+    case "Write":
+      items = writeItems(op, tokens);
+      fallback = op.rect;
+      break;
   }
   const { starts, ends, naturalMs } = schedule(items);
-  return { items, starts, ends, naturalMs, bounds: boundsOf(items, fallback) };
+  return { items, starts, ends, naturalMs, bounds: boundsOf(items, fallback), targets };
 }
 
 function traceBounds(points: readonly { x: number; y: number }[]): Rect {

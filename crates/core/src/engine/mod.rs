@@ -12,6 +12,7 @@ mod listen;
 mod memory;
 mod ops;
 mod reply;
+mod sources;
 mod stop;
 pub mod text;
 pub mod views;
@@ -234,6 +235,9 @@ impl Core {
             Input::Command(UiCommand::Mic { action }) => self.on_mic(now, action, effects),
             Input::Command(UiCommand::Stop) => self.on_stop(now, effects),
             Input::Command(UiCommand::CloseView) => self.close_view(effects),
+            Input::Command(UiCommand::OpenSource { path, line }) => {
+                self.open_source(&path, line, effects);
+            }
             Input::Tick => self.on_tick(now, effects),
             Input::MemoryFailed { change, detail } => {
                 self.on_memory_failed(change, &detail, effects);

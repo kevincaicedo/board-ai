@@ -149,6 +149,7 @@ fn views() -> Vec<View> {
         },
         stack: 1,
         fill: None,
+        link: None,
     };
     vec![
         View::Library {

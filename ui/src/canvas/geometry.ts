@@ -232,3 +232,19 @@ export function cylinderPolygon(
   }
   return points;
 }
+
+/** An ellipse's outline as a polygon, `inset` inside it, for a circle node's hachure. */
+export function ellipsePolygon(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  inset: number,
+): Vec[] {
+  const points: Vec[] = [];
+  for (let index = 0; index < 24; index += 1) {
+    const angle = (Math.PI * 2 * index) / 24;
+    points.push([cx + Math.cos(angle) * (rx - inset), cy + Math.sin(angle) * (ry - inset)]);
+  }
+  return points;
+}

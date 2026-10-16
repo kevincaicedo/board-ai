@@ -175,6 +175,7 @@ pub fn node(layer: u8, id: &str, label: &str) -> UiEvent {
             },
             stack: 1,
             fill: None,
+            link: None,
         },
         budget_ms: 600,
     }

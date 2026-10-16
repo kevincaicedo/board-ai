@@ -11,7 +11,7 @@ import {
   suggestionLook,
   surfaceHeight,
 } from "./layout.ts";
-import { CODE_MARKS_MAX, SessionStore } from "./session.ts";
+import { CODE_MARKS_MAX, chipCommand, SessionStore } from "./session.ts";
 
 const tokens = readTokens(
   tokenSourceFromCss(readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8")),
@@ -257,15 +257,33 @@ test("the column centers one card, stacks two, and springs between them", () => 
 
 test("chips wait for BoardAI to confirm out loud, then fly in a stagger", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "Chip", kind: "Note", text: "Cache-aside" }, 33_842);
-  store.apply({ type: "Chip", kind: "Task", text: "Check TTLs" }, 35_477);
+  store.apply({ type: "Chip", kind: "Note", text: "Cache-aside", source: null }, 33_842);
+  store.apply({ type: "Chip", kind: "Task", text: "Check TTLs", source: null }, 35_477);
   store.apply({ type: "Caption", who: "Assistant", text: "Noted.", is_final: false }, 35_927);
   const [note, task] = store.chips.value;
   assert.equal(note?.flyAt, 35_927 + tokens.durationChipConfirmMs);
   assert.equal(task?.flyAt, 35_927 + tokens.durationChipConfirmMs + tokens.durationChipStaggerMs);
   assert.deepEqual([note?.slot, task?.slot], [0, 1]);
-  store.apply({ type: "Chip", kind: "Note", text: "Unconfirmed" }, 50_000);
+  store.apply({ type: "Chip", kind: "Note", text: "Unconfirmed", source: null }, 50_000);
   assert.equal(store.chips.value[2]?.flyAt, 50_000 + tokens.durationChipHoldMaxMs, "never stuck");
+});
+
+test("a source chip with a location opens its line; other chips ask nothing", () => {
+  const store = new SessionStore(tokens);
+  const source = { path: "internal/user/service.go", line: 43 };
+  store.apply({ type: "Chip", kind: "Source", text: "service.go:43", source }, 1_000);
+  store.apply({ type: "Chip", kind: "Source", text: "internal/api", source: null }, 1_100);
+  store.apply({ type: "Chip", kind: "Note", text: "Cache-aside", source: null }, 1_200);
+  const [cited, touched, note] = store.chips.value;
+  assert.deepEqual(cited?.source, source);
+  assert.deepEqual(cited && chipCommand(cited), {
+    type: "OpenSource",
+    path: "internal/user/service.go",
+    line: 43,
+  });
+  assert.equal(touched && chipCommand(touched), null, "a file a harness touched opens nothing");
+  assert.equal(note && chipCommand(note), null);
+  assert.equal(chipCommand({ kind: "Memory", source }), null, "only a source chip opens code");
 });
 
 test("a chip flight rises in, arcs to the target and shrinks into it", () => {

@@ -1,0 +1,55 @@
+clause 0 [talker@0]
+  caption: "The client opens with a SYN, the server answers,"
+  speech:  "The client opens with a SYN, the server answers,"
+op 0 at clause 0 byte 4: Participant { id: ElementId("c"), label: "Client" }
+op 1 at clause 0 byte 24: Participant { id: ElementId("s"), label: "Server" }
+op 2 at clause 0 byte 24: Message { from: ElementId("c"), to: ElementId("s"), label: Some("SYN"), style: Solid }
+op 3 at clause 0 byte 40: Message { from: ElementId("s"), to: ElementId("c"), label: Some("SYN-ACK"), style: Dashed }
+clause 1 [talker@49]
+  caption: "and the client acknowledges."
+  speech:  "and the client acknowledges."
+op 4 at clause 1 byte 15: Message { from: ElementId("c"), to: ElementId("s"), label: Some("ACK"), style: Solid }
+dropped NarrationTag
+clause 2 [talker@78]
+  caption: "It may retry on its own, and a broken close is dropped."
+  speech:  "It may retry on its own, and a broken close is dropped."
+op 5 at clause 2 byte 7: Message { from: ElementId("s"), to: ElementId("s"), label: Some("retry"), style: Solid }
+clause 3 [talker@134]
+  caption: "An array holds six slots."
+  speech:  "An array holds six slots."
+op 6 at clause 3 byte 9: Cells(CellsSpec { id: ElementId("arr"), label: "nums", values: ["3", "1", "", "4"], count: 6, index: From(0), vertical: false, placement: Auto })
+clause 4 [talker@160]
+  caption: "We store seven in slot two, then look at slot three and replace the first."
+  speech:  "We store seven in slot two, then look at slot three and replace the first."
+op 7 at clause 4 byte 3: Write { target: ElementId("arr.2"), text: "7" }
+op 8 at clause 4 byte 33: Annotate { target: ElementId("arr.3"), mark: Highlight, text: Some("i"), fill: Some(Mint) }
+op 9 at clause 4 byte 56: Strike { target: ElementId("arr.0"), text: "9" }
+clause 5 [talker@235]
+  caption: "Buckets sit in a column, and apple lands in bucket two."
+  speech:  "Buckets sit in a column, and apple lands in bucket two."
+op 10 at clause 5 byte 8: Cells(CellsSpec { id: ElementId("ht"), label: "buckets", values: [], count: 4, index: None, vertical: true, placement: Auto })
+op 11 at clause 5 byte 29: Node { id: ElementId("k1"), label: "apple: 3", shape: None, placement: Near { target: ElementId("ht.2"), direction: Right }, stack: 1, fill: None }
+op 12 at clause 5 byte 29: Edge { from: ElementId("ht.2"), to: ElementId("k1"), label: None, style: Solid }
+dropped NarrationTag
+clause 6 [talker@291]
+  caption: "Pages have addresses, and this one is dropped."
+  speech:  "Pages have addresses, and this one is dropped."
+op 13 at clause 6 byte 0: Cells(CellsSpec { id: ElementId("blk"), label: "", values: ["A", "B"], count: 2, index: Named(["0x10", "0x14"]), vertical: false, placement: Auto })
+clause 7 [talker@338]
+  caption: "A tree starts at five, three goes left, eight goes right,"
+  speech:  "A tree starts at five, three goes left, eight goes right,"
+op 14 at clause 7 byte 7: Node { id: ElementId("n5"), label: "5", shape: Some(Circle), placement: Auto, stack: 1, fill: None }
+op 15 at clause 7 byte 23: Node { id: ElementId("n3"), label: "3", shape: None, placement: Child { parent: ElementId("n5"), side: Some(Left) }, stack: 1, fill: None }
+op 16 at clause 7 byte 40: Node { id: ElementId("n8"), label: "8", shape: None, placement: Child { parent: ElementId("n5"), side: Some(Right) }, stack: 1, fill: None }
+clause 8 [talker@396]
+  caption: "and one under three."
+  speech:  "and one under three."
+op 17 at clause 8 byte 4: Node { id: ElementId("n1"), label: "1", shape: None, placement: Child { parent: ElementId("n3"), side: Some(Left) }, stack: 1, fill: None }
+clause 9 [talker@417]
+  caption: "See `internal/net/tcp.go:88-95`, and handler.go:L12."
+  speech:  "See internal slash net slash tcp dot go:88-95, and handler dot go:L12."
+op 18 at clause 9 byte 4: Cite { path: "internal/net/tcp.go", line: 88 }
+op 19 at clause 9 byte 37: Cite { path: "handler.go", line: 12 }
+clause 10 [talker@470]
+  caption: "The port is localhost:8080 at 12:30."
+  speech:  "The port is localhost line 8080 at 12 line 30."

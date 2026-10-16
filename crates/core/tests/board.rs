@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use boardai_core::board::excalidraw::export_layer;
 use boardai_core::board::summary::summary;
-use boardai_core::board::{Board, EdgeRequest, ElementState, NodeRequest, Placed};
+use boardai_core::board::{
+    AnnotationRequest, Board, EdgeRequest, ElementState, NodeRequest, Placed,
+};
 use boardai_core::geometry::Rect;
 use boardai_core::ids::{ElementId, LayerId, OpId};
 use boardai_core::narration::ops::{Direction, Placement};
@@ -52,7 +54,7 @@ impl Builder {
         let request = NodeRequest {
             id: &node_id,
             label,
-            shape,
+            shape: Some(shape),
             placement: &placement,
             stack: 1,
             fill: None,
@@ -197,7 +199,7 @@ fn a_repeated_id_strikes_or_does_nothing_and_never_duplicates() {
     let same = NodeRequest {
         id: &queue,
         label: "SQS",
-        shape: NodeShape::Queue,
+        shape: Some(NodeShape::Queue),
         placement: &Placement::Auto,
         stack: 1,
         fill: None,
@@ -349,7 +351,16 @@ fn the_excalidraw_export_has_the_expected_structure() {
     let op = OpId(50);
     let placed = board
         .board
-        .place_annotation(LayerId::MAIN, op, &id("cdn"), Mark::Circle, Some("hot"))
+        .place_annotation(
+            LayerId::MAIN,
+            op,
+            AnnotationRequest {
+                target: &id("cdn"),
+                mark: Mark::Circle,
+                text: Some("hot"),
+                fill: None,
+            },
+        )
         .expect("placed");
     board.start(placed);
     let layer = board.board.layer(LayerId::MAIN).expect("main");

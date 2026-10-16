@@ -44,6 +44,48 @@ impl ReadFiles {
         self.files.contains_key(&normalize(path))
     }
 
+    /// The read file `path` names: the path itself, or the one read file it ends ("service.go"
+    /// for "internal/user/service.go"). `None` when it names none, or more than one.
+    #[must_use]
+    pub fn resolve(&self, path: &str) -> Option<String> {
+        let path = normalize(path);
+        if self.files.contains_key(&path) {
+            return Some(path);
+        }
+        let suffix = format!("/{path}");
+        let mut matches = self.files.keys().filter(|read| read.ends_with(&suffix));
+        let found = matches.next()?;
+        matches.next().is_none().then(|| found.clone())
+    }
+
+    /// Whether `line` of the read file `path` was read.
+    #[must_use]
+    pub fn has_line(&self, path: &str, line: u32) -> bool {
+        self.files
+            .get(&normalize(path))
+            .is_some_and(|file| file.contains_key(&line))
+    }
+
+    /// The read lines a card opened on `line` shows: up to `before` read lines above it, then
+    /// as many as were read after, at most `count` in all.
+    #[must_use]
+    pub fn around(&self, path: &str, line: u32, before: u32, count: u32) -> Option<LineRange> {
+        let file = self.files.get(&normalize(path))?;
+        file.get(&line)?;
+        let first = (1..=before)
+            .map_while(|back| {
+                line.checked_sub(back)
+                    .filter(|line| file.contains_key(line))
+            })
+            .last()
+            .unwrap_or(line);
+        let last = (first..first.saturating_add(count))
+            .take_while(|line| file.contains_key(line))
+            .last()
+            .unwrap_or(line);
+        LineRange::new(first, last)
+    }
+
     /// Contiguous read lines starting at the range's first line (or the first line read).
     fn snippet(&self, path: &str, range: Option<LineRange>) -> Option<(u32, Vec<String>)> {
         let file = self.files.get(&normalize(path))?;

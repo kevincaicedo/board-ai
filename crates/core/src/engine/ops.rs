@@ -8,14 +8,14 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use crate::board::{EdgeRequest, NodeRequest, Placed, Rejected, layout};
+use crate::board::{AnnotationRequest, EdgeRequest, NodeRequest, Placed, Rejected, layout};
 use crate::effect::{Dropped, Effect, LogRecord, Milestone};
 use crate::engine::{Core, milestone};
 use crate::geometry::Rect;
 use crate::ids::{ClauseId, ElementId, LayerId, OpId};
 use crate::limits::{OP_BUDGET_MAX_MS, OP_BUDGET_MIN_MS, OP_SPACING_MIN_MS};
 use crate::narration::ops::NarrationOp;
-use crate::protocol::{DrawOp, UiEvent};
+use crate::protocol::{DrawOp, LineStyle, UiEvent};
 use crate::surfaces::SurfaceRefused;
 use crate::thread::Detour;
 use crate::time::SessionTime;
@@ -88,7 +88,12 @@ impl OpQueue {
                 | NarrationOp::Cell { .. }
                 | NarrationOp::Close { .. }
                 | NarrationOp::MarkCode { .. }
-                | NarrationOp::Recap { .. } => depth,
+                | NarrationOp::Recap { .. }
+                | NarrationOp::Participant { .. }
+                | NarrationOp::Message { .. }
+                | NarrationOp::Cells(_)
+                | NarrationOp::Write { .. }
+                | NarrationOp::Cite { .. } => depth,
             })
     }
 }
@@ -99,6 +104,21 @@ enum Due {
     Now,
     /// Anchored in a clause that will never play: it is never drawn.
     Never,
+}
+
+/// What an edge or a message joins.
+fn link<'a>(
+    from: &'a ElementId,
+    to: &'a ElementId,
+    label: &'a Option<String>,
+    style: LineStyle,
+) -> EdgeRequest<'a> {
+    EdgeRequest {
+        from,
+        to,
+        label: label.as_deref(),
+        style,
+    }
 }
 
 fn clamp_budget(ms: u64) -> u32 {
@@ -195,42 +215,51 @@ impl Core {
                 placement,
                 stack,
                 fill,
-            } => self.board.place_node(
-                layer,
-                queued.id,
-                NodeRequest {
+            } => {
+                let node = NodeRequest {
                     id,
                     label,
                     shape: *shape,
                     placement,
                     stack: *stack,
                     fill: *fill,
-                },
-            )?,
+                };
+                self.board.place_node(layer, queued.id, node)?
+            }
             NarrationOp::Edge {
                 from,
                 to,
                 label,
                 style,
-            } => self.board.place_edge(
+            } => self
+                .board
+                .place_edge(layer, queued.id, link(from, to, label, *style))?,
+            NarrationOp::Annotate {
+                target,
+                mark,
+                text,
+                fill,
+            } => self.board.place_annotation(
                 layer,
                 queued.id,
-                EdgeRequest {
-                    from,
-                    to,
-                    label: label.as_deref(),
-                    style: *style,
+                AnnotationRequest {
+                    target,
+                    mark: *mark,
+                    text: text.as_deref(),
+                    fill: *fill,
                 },
             )?,
-            NarrationOp::Annotate { target, mark, text } => {
-                self.board
-                    .place_annotation(layer, queued.id, target, *mark, text.as_deref())?
-            }
             NarrationOp::Strike { target, text } => {
                 self.board.place_strike(layer, queued.id, target, text)?
             }
             NarrationOp::Trace { hops } => self.board.place_trace(layer, queued.id, hops)?,
-            NarrationOp::Plan { .. }
+            NarrationOp::Participant { .. }
+            | NarrationOp::Message { .. }
+            | NarrationOp::Cells(_)
+            | NarrationOp::Write { .. } => self.place_diagram(layer, queued)?,
+            // Ops that don't draw are applied, never laid out.
+            NarrationOp::Cite { .. }
+            | NarrationOp::Plan { .. }
             | NarrationOp::Step { .. }
             | NarrationOp::Focus { .. }
             | NarrationOp::Detour { .. }
@@ -244,6 +273,44 @@ impl Core {
             | NarrationOp::Recap { .. } => Placed::Unchanged,
         };
         Ok((layer, placed))
+    }
+
+    /// Lays out a sequence diagram's or a row of cells' op.
+    fn place_diagram(&mut self, layer: LayerId, queued: &QueuedOp) -> Result<Placed, Rejected> {
+        let op = queued.id;
+        match &queued.op {
+            NarrationOp::Participant { id, label } => {
+                self.board.place_participant(layer, op, id, label)
+            }
+            NarrationOp::Message {
+                from,
+                to,
+                label,
+                style,
+            } => self
+                .board
+                .place_message(layer, op, link(from, to, label, *style)),
+            NarrationOp::Cells(spec) => self.board.place_cells(layer, op, spec),
+            NarrationOp::Write { target, text } => self.board.place_write(layer, op, target, text),
+            NarrationOp::Node { .. }
+            | NarrationOp::Edge { .. }
+            | NarrationOp::Annotate { .. }
+            | NarrationOp::Strike { .. }
+            | NarrationOp::Trace { .. }
+            | NarrationOp::Cite { .. }
+            | NarrationOp::Plan { .. }
+            | NarrationOp::Step { .. }
+            | NarrationOp::Focus { .. }
+            | NarrationOp::Detour { .. }
+            | NarrationOp::Resume
+            | NarrationOp::Code { .. }
+            | NarrationOp::Line { .. }
+            | NarrationOp::Compare { .. }
+            | NarrationOp::Cell { .. }
+            | NarrationOp::Close { .. }
+            | NarrationOp::MarkCode { .. }
+            | NarrationOp::Recap { .. } => Ok(Placed::Unchanged),
+        }
     }
 
     fn start_draw(&mut self, now: SessionTime, queued: QueuedOp, effects: &mut Vec<Effect>) {
@@ -270,6 +337,24 @@ impl Core {
                 }
                 self.follow_camera(layer, layout::op_bounds(&draw), effects);
                 self.op_start(now, layer, draw, budget_ms, effects);
+            }
+            Placed::Write { target, draw } => {
+                if let DrawOp::Write { label, .. } = &draw {
+                    self.board.apply_write(layer, &target, label);
+                }
+                self.follow_camera(layer, layout::op_bounds(&draw), effects);
+                self.op_start(now, layer, draw, budget_ms, effects);
+            }
+            Placed::Before { id, draw } => {
+                let _ = self.board.start(layer, &id, now, budget_ms);
+                self.follow_camera(layer, layout::op_bounds(&draw), effects);
+                self.op_start(now, layer, draw, budget_ms, effects);
+                // The op itself is laid out again at its next slot, with what it needed drawn.
+                self.queue.ops.push_front(QueuedOp::new(
+                    queued.id,
+                    queued.op.clone(),
+                    queued.anchor,
+                ));
             }
             Placed::ResumeFrozen => self.resume_frozen(now, layer, effects),
             Placed::Unchanged => {}
@@ -362,7 +447,9 @@ impl Core {
     pub(super) fn drop_queued_ops(&mut self) -> usize {
         let mut dropped = 0;
         for queued in std::mem::take(&mut self.queue.ops) {
-            if let Some((layer, Placed::New { id, .. })) = &queued.placed {
+            if let Some((layer, Placed::New { id, .. } | Placed::Before { id, .. })) =
+                &queued.placed
+            {
                 self.board.remove_pending(*layer, id);
             }
             if queued.op.draws() {
@@ -404,11 +491,20 @@ impl Core {
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
             | NarrationOp::Recap { .. } => self.apply_surface(&queued.op, &mut events),
+            // A citation is speech, not a tag: one that shows no chip drops nothing.
+            NarrationOp::Cite { path, line } => {
+                self.cite(path, *line, &mut events);
+                true
+            }
             NarrationOp::Node { .. }
             | NarrationOp::Edge { .. }
             | NarrationOp::Annotate { .. }
             | NarrationOp::Strike { .. }
-            | NarrationOp::Trace { .. } => false,
+            | NarrationOp::Trace { .. }
+            | NarrationOp::Participant { .. }
+            | NarrationOp::Message { .. }
+            | NarrationOp::Cells(_)
+            | NarrationOp::Write { .. } => false,
         };
         effects.extend(events.into_iter().map(Effect::Ui));
         if applied {
@@ -475,7 +571,12 @@ impl Core {
             | NarrationOp::Focus { .. }
             | NarrationOp::Detour { .. }
             | NarrationOp::Resume
-            | NarrationOp::Trace { .. } => false,
+            | NarrationOp::Trace { .. }
+            | NarrationOp::Participant { .. }
+            | NarrationOp::Message { .. }
+            | NarrationOp::Cells(_)
+            | NarrationOp::Write { .. }
+            | NarrationOp::Cite { .. } => false,
         }
     }
 

@@ -36,6 +36,7 @@ const box = (id: string, label = id, x = 0): Extract<DrawOp, { kind: "Node" }> =
   rect: { x, y: 0, w: 132, h: 76 },
   stack: 1,
   fill: null,
+  link: null,
 });
 
 function scene() {
@@ -97,6 +98,7 @@ test("every op kind and shape plans without throwing", () => {
       mark,
       rect: { x: 0, y: 0, w: 60, h: 20 },
       text: "TTL",
+      fill: null,
     };
     assert.equal(planOp(op, tokens).items.at(-1)?.type, "text", mark);
   }

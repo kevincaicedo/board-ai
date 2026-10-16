@@ -153,6 +153,8 @@
   --hand-group: 20px;
   --hand-edge: 18px;
   --hand-annotation: 20px;
+  /* Index labels beside cells, and other small notes on a diagram (UseCases: 15px) */
+  --hand-index: 15px;
   --hand-dash: 7px;
   --hand-dash-gap: 7px;
 

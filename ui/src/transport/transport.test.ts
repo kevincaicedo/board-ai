@@ -94,8 +94,8 @@ test("chapters follow what the session is doing", () => {
     { at: 20_000, events: [{ type: "LayerPush", layer: 1, title: "cache-aside", question: null }] },
     { at: 33_000, events: [{ type: "Caption", who: "User", text: "Note", is_final: false }] },
     { at: 34_000, events: [{ type: "Caption", who: "User", text: "Note that", is_final: true }] },
-    { at: 36_000, events: [{ type: "Chip", kind: "Note", text: "x" }] },
-    { at: 36_100, events: [{ type: "Chip", kind: "Task", text: "y" }] },
+    { at: 36_000, events: [{ type: "Chip", kind: "Note", text: "x", source: null }] },
+    { at: 36_100, events: [{ type: "Chip", kind: "Task", text: "y", source: null }] },
     { at: 37_000, events: [{ type: "LayerPop", layer: 1 }] },
   ];
   assert.deepEqual(

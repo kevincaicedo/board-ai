@@ -7,12 +7,14 @@
 
 use std::collections::BTreeMap;
 
-use crate::board::metrics::{LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, text_width};
+use crate::board::metrics::{
+    INDEX_FONT_SIZE, LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, SMALL_LABEL_FONT_SIZE, text_width,
+};
 use crate::geometry::{Point, Rect};
 use crate::ids::ElementId;
 use crate::limits::LAYOUT_NUDGE_CELLS_MAX;
 use crate::narration::ops::Direction;
-use crate::protocol::{DrawOp, EdgePath, NodeShape};
+use crate::protocol::{CellBox, DrawOp, EdgePath, Lifeline, NodeShape};
 
 /// Grid pitch in world units. A cell holds one ordinary node plus the gap around it.
 pub const CELL_WIDTH: i32 = 200;
@@ -44,6 +46,36 @@ pub const ANNOTATION_MARGIN: i32 = 10;
 
 /// How far a blocked edge bows away from the straight line.
 const CURVE_LIFT: i32 = CELL_HEIGHT / 2;
+
+/// Smallest circle; a longer label stretches it into an ellipse of this height.
+const CIRCLE_DIAMETER: u32 = 56;
+
+/// Room around a circle's label, both sides together.
+const CIRCLE_PADDING: u32 = 28;
+
+/// A participant's head box: its height and its narrowest and widest.
+pub const HEAD_HEIGHT: u32 = 48;
+const HEAD_MIN_WIDTH: u32 = 96;
+const HEAD_MAX_WIDTH: u32 = 260;
+
+/// A cell's height, and its narrowest width; a wider value widens every cell of its row.
+pub const CELL_BOX_HEIGHT: u32 = 48;
+const CELL_BOX_MIN_WIDTH: u32 = 48;
+const CELL_VALUE_PADDING: u32 = 20;
+
+/// Where a row's label ends, left of its first cell, and where a column's label sits, above it
+/// (the canvas's `LABEL_ABOVE`).
+pub const STRIP_LABEL_GAP: i32 = 14;
+pub const LABEL_ABOVE: i32 = 21;
+
+/// Index labels: under a row's cells (their middle this far below), or left of a column's.
+pub const INDEX_BELOW: i32 = 16;
+pub const INDEX_LEFT_GAP: i32 = 10;
+
+/// How far above a message its label sits (the edge label gap), and where a message to itself
+/// writes its label, right of its loop.
+pub const MESSAGE_LABEL_ABOVE: i32 = 14;
+pub const SELF_LABEL_GAP: i32 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cell {
@@ -110,6 +142,54 @@ impl Grid {
         })
     }
 
+    /// The first free block of `cols` × `rows` cells at or beyond `start` along `direction`, or
+    /// a fresh row under everything past the nudge limit.
+    #[must_use]
+    pub fn find_block(&self, start: Cell, cols: i32, rows: i32, direction: Direction) -> Cell {
+        let (row_step, col_step) = step(direction);
+        for distance in 0..LAYOUT_NUDGE_CELLS_MAX {
+            let cell = Cell {
+                row: start.row + row_step * distance,
+                col: start.col + col_step * distance,
+            };
+            if (cell.row..cell.row + rows).all(|row| self.is_free(Cell { row, ..cell }, cols, None))
+            {
+                return cell;
+            }
+        }
+        Cell {
+            row: self.below_everything().max(start.row),
+            col: start.col,
+        }
+    }
+
+    /// The leftmost occupied column, or 0 on an empty grid.
+    #[must_use]
+    pub fn leftmost_col(&self) -> i32 {
+        self.occupied.keys().map(|cell| cell.col).min().unwrap_or(0)
+    }
+
+    /// The first row under every occupied cell.
+    #[must_use]
+    pub fn below_everything(&self) -> i32 {
+        self.occupied
+            .keys()
+            .map(|cell| cell.row)
+            .max()
+            .unwrap_or(-1)
+            + 1
+    }
+
+    /// Marks the cells `rect` overlaps as taken by `id`, keeping any earlier owner, so grid
+    /// placement steers clear of an element placed off the grid.
+    pub fn occupy_rect(&mut self, rect: Rect, id: &ElementId) {
+        for cell in cells_covering(rect) {
+            self.occupied
+                .entry(cell)
+                .or_insert_with(|| Occupant::Node(id.clone()));
+        }
+    }
+
     pub fn occupy(&mut self, span: CellSpan, id: &ElementId) {
         for col in span.cell.col..span.cell.col + span.cols {
             let cell = Cell {
@@ -133,6 +213,20 @@ impl Grid {
             Occupant::Node(owner) | Occupant::GroupReserve(owner) => owner != id,
         });
     }
+}
+
+/// Every grid cell `rect` overlaps.
+fn cells_covering(rect: Rect) -> impl Iterator<Item = Cell> {
+    let rows = rect.y.div_euclid(CELL_HEIGHT)..=(rect.bottom() - 1).div_euclid(CELL_HEIGHT);
+    let cols = rect.x.div_euclid(CELL_WIDTH)..=(rect.right() - 1).div_euclid(CELL_WIDTH);
+    rows.flat_map(move |row| cols.clone().map(move |col| Cell { row, col }))
+}
+
+/// How many rows a block this tall needs.
+#[must_use]
+pub fn rows_for(height: u32) -> i32 {
+    let cell = CELL_HEIGHT.unsigned_abs();
+    i32::try_from(height.div_ceil(cell).max(1)).unwrap_or(1)
 }
 
 fn step(direction: Direction) -> (i32, i32) {
@@ -180,7 +274,112 @@ pub fn node_size(shape: NodeShape, label: &str) -> (u32, u32) {
             (CELL_WIDTH - 2 * GROUP_INSET).unsigned_abs(),
             (CELL_HEIGHT - 2 * GROUP_INSET).unsigned_abs(),
         ),
+        NodeShape::Circle => (
+            (label_width + CIRCLE_PADDING).clamp(CIRCLE_DIAMETER, NODE_MAX_WIDTH),
+            CIRCLE_DIAMETER,
+        ),
     }
+}
+
+/// A participant's head box for this label.
+#[must_use]
+pub fn head_size(label: &str) -> (u32, u32) {
+    let width = text_width(label, LABEL_FONT_SIZE) + 2 * NODE_PADDING;
+    (width.clamp(HEAD_MIN_WIDTH, HEAD_MAX_WIDTH), HEAD_HEIGHT)
+}
+
+/// One cell's width for these values: every cell of a row or column is as wide as the widest.
+#[must_use]
+pub fn cell_width(values: &[String]) -> u32 {
+    values
+        .iter()
+        .map(|value| text_width(value, LABEL_FONT_SIZE) + CELL_VALUE_PADDING)
+        .max()
+        .unwrap_or(0)
+        .clamp(CELL_BOX_MIN_WIDTH, NODE_MAX_WIDTH)
+}
+
+/// A label's box when written centred on `center` at `font_size`.
+#[must_use]
+pub fn text_box(text: &str, center: Point, font_size: u32) -> Rect {
+    let width = text_width(text, font_size);
+    Rect {
+        x: center.x - i32::try_from(width / 2).unwrap_or(0),
+        y: center.y - i32::try_from(LABEL_LINE_HEIGHT / 2).unwrap_or(0),
+        w: width,
+        h: LABEL_LINE_HEIGHT,
+    }
+}
+
+/// What a row or column of cells covers, its label and index labels included, for the camera
+/// and for keeping other drawings clear of it. The UI writes them where this measures them.
+#[must_use]
+pub fn cells_extent(cells: &[CellBox], label: &str, vertical: bool) -> Rect {
+    let Some(strip) = cells.iter().map(|cell| cell.rect).reduce(Rect::union) else {
+        return Rect::default();
+    };
+    let mut extent = strip;
+    for cell in cells {
+        let Some(index) = &cell.index else {
+            continue;
+        };
+        let width = i32::try_from(text_width(index, INDEX_FONT_SIZE)).unwrap_or(0);
+        let center = if vertical {
+            Point {
+                x: cell.rect.x - INDEX_LEFT_GAP - width / 2,
+                y: cell.rect.center().y,
+            }
+        } else {
+            Point {
+                x: cell.rect.center().x,
+                y: cell.rect.bottom() + INDEX_BELOW,
+            }
+        };
+        extent = extent.union(text_box(index, center, INDEX_FONT_SIZE));
+    }
+    if !label.is_empty() {
+        let width = i32::try_from(text_width(label, SMALL_LABEL_FONT_SIZE)).unwrap_or(0);
+        let center = if vertical {
+            Point {
+                x: strip.center().x,
+                y: strip.y - LABEL_ABOVE,
+            }
+        } else {
+            Point {
+                x: strip.x - STRIP_LABEL_GAP - width / 2,
+                y: strip.center().y,
+            }
+        };
+        extent = extent.union(text_box(label, center, SMALL_LABEL_FONT_SIZE));
+    }
+    extent
+}
+
+/// Where a message's label is written: centred above a message between two lifelines, or right
+/// of the loop of a message to itself.
+#[must_use]
+pub fn message_label_box(points: &[Point], label: &str) -> Option<Rect> {
+    let (first, last) = (points.first()?, points.last()?);
+    let center = if points.len() > 2 {
+        let right = points.iter().map(|point| point.x).max().unwrap_or(first.x);
+        let width = i32::try_from(text_width(label, SMALL_LABEL_FONT_SIZE)).unwrap_or(0);
+        Point {
+            x: right + SELF_LABEL_GAP + width / 2,
+            y: (first.y + last.y) / 2,
+        }
+    } else {
+        Point {
+            x: (first.x + last.x) / 2,
+            y: first.y - MESSAGE_LABEL_ABOVE,
+        }
+    };
+    Some(text_box(label, center, SMALL_LABEL_FONT_SIZE))
+}
+
+/// The thin box of a stretch of lifeline.
+#[must_use]
+pub fn lifeline_box(x: i32, top: i32, bottom: i32) -> Rect {
+    segment_box(Point { x, y: top }, Point { x, y: bottom })
 }
 
 /// How many columns a node this wide needs, gap included.
@@ -199,6 +398,21 @@ pub fn rect_in(span: CellSpan, width: u32, height: u32) -> Rect {
     Rect {
         x: span.cell.col * CELL_WIDTH + (cells_width - width_i32) / 2,
         y: span.cell.row * CELL_HEIGHT + (CELL_HEIGHT - height_i32) / 2,
+        w: width,
+        h: height,
+    }
+}
+
+/// A box of `width` × `height` centred in a block of `cols` × `rows` cells.
+#[must_use]
+pub fn rect_in_block(cell: Cell, cols: i32, rows: i32, width: u32, height: u32) -> Rect {
+    let block_width = cols * CELL_WIDTH;
+    let block_height = rows * CELL_HEIGHT;
+    let width_i32 = i32::try_from(width).unwrap_or(block_width);
+    let height_i32 = i32::try_from(height).unwrap_or(block_height);
+    Rect {
+        x: cell.col * CELL_WIDTH + (block_width - width_i32) / 2,
+        y: cell.row * CELL_HEIGHT + (block_height - height_i32) / 2,
         w: width,
         h: height,
     }
@@ -281,16 +495,56 @@ fn segment_box(start: Point, end: Point) -> Rect {
 #[must_use]
 pub fn op_bounds(op: &DrawOp) -> Rect {
     match op {
-        DrawOp::Node { rect, .. } | DrawOp::Annotate { rect, .. } | DrawOp::Strike { rect, .. } => {
-            *rect
-        }
+        DrawOp::Node { rect, link, .. } => link.map_or(*rect, |link| rect.union(path_bounds(link))),
+        DrawOp::Annotate { rect, .. }
+        | DrawOp::Strike { rect, .. }
+        | DrawOp::Write { rect, .. } => *rect,
         DrawOp::Edge { path, .. } => path_bounds(*path),
-        DrawOp::Trace { points, .. } => points
-            .iter()
-            .map(|point| segment_box(*point, *point))
-            .reduce(Rect::union)
-            .unwrap_or_default(),
+        DrawOp::Trace { points, .. } => points_bounds(points),
+        DrawOp::Participant {
+            rect,
+            lifeline_bottom,
+            ..
+        } => rect.union(lifeline_box(
+            rect.center().x,
+            rect.bottom(),
+            *lifeline_bottom,
+        )),
+        DrawOp::Message {
+            points,
+            label,
+            extend,
+            ..
+        } => {
+            let mut bounds = points_bounds(points);
+            if let Some(label) = label
+                .as_deref()
+                .and_then(|label| message_label_box(points, label))
+            {
+                bounds = bounds.union(label);
+            }
+            extend
+                .iter()
+                .map(|Lifeline { x, top, bottom, .. }| lifeline_box(*x, *top, *bottom))
+                .fold(bounds, Rect::union)
+        }
+        DrawOp::Cells {
+            cells,
+            label,
+            vertical,
+            ..
+        } => cells_extent(cells, label, *vertical),
     }
+}
+
+/// The bounding box of a polyline.
+#[must_use]
+pub fn points_bounds(points: &[Point]) -> Rect {
+    points
+        .iter()
+        .map(|point| segment_box(*point, *point))
+        .reduce(Rect::union)
+        .unwrap_or_default()
 }
 
 /// The bounding box of an edge, for annotations and the camera.

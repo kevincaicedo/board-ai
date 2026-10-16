@@ -208,11 +208,17 @@ fn describe_past(text: &mut String, session: &SessionCard, recap: &str, layers: 
         .iter()
         .flat_map(|layer| layer.ops.iter())
         .filter_map(|op| match op {
-            DrawOp::Node { label: name, .. } => Some(label(name)),
-            DrawOp::Edge { .. }
+            DrawOp::Node { label: name, .. } | DrawOp::Participant { label: name, .. } => {
+                Some(label(name))
+            }
+            DrawOp::Cells { label: name, .. } if !name.is_empty() => Some(label(name)),
+            DrawOp::Cells { .. }
+            | DrawOp::Edge { .. }
             | DrawOp::Annotate { .. }
             | DrawOp::Strike { .. }
-            | DrawOp::Trace { .. } => None,
+            | DrawOp::Trace { .. }
+            | DrawOp::Message { .. }
+            | DrawOp::Write { .. } => None,
         })
         .take(VIEW_TALKER_ITEMS_MAX * 3)
         .collect();
@@ -337,6 +343,7 @@ mod tests {
             rect: Rect::default(),
             stack: 1,
             fill: None,
+            link: None,
         };
         let past = View::PastSession {
             session: session("Raft · log compaction"),

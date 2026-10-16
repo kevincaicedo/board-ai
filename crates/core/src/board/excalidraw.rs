@@ -1,13 +1,17 @@
 //! Export of the board as `.excalidraw` files (LLD §2.5, D-007): version 2 JSON with
 //! rectangles, ellipses, arrows, lines and text, hand-drawn (`roughness` 1) in Excalifont
-//! (`fontFamily` 5), with the board's hachure tones. One layer exports alone, or the whole
+//! (`fontFamily` 5), with the board's hachure tones. Sequence diagrams export as head boxes,
+//! dashed lifelines and arrows; rows of cells as one rectangle per cell with its value, index
+//! and label texts; a tree's links as plain lines. One layer exports alone, or the whole
 //! session exports as one document with a frame per layer, side by side. Seeds come from element
 //! ids, so the same board always exports the same file, and nothing here reads a clock or a
 //! random source.
 
 use serde_json::{Value, json};
 
-use crate::board::metrics::{LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, text_width};
+use crate::board::metrics::{
+    INDEX_FONT_SIZE, LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, SMALL_LABEL_FONT_SIZE, text_width,
+};
 use crate::board::{Board, Element, ElementKind, ElementState, Geometry, Layer, layout};
 use crate::geometry::{Point, Rect};
 use crate::protocol::{EdgePath, Fill, LineStyle, Mark, NodeShape};
@@ -28,6 +32,8 @@ const TRACE: &str = "#d6336c";
 const EXCALIFONT: u32 = 5;
 /// Offset between the copies of a stacked node.
 const STACK_OFFSET: i32 = 6;
+/// Lifelines, index labels and labels beside a drawing are the canvas's second ink.
+const INK2: &str = "#6e6e73";
 
 /// The sketch fills' colors (the canvas's `--sketch-*` tokens).
 fn fill_color(fill: Fill) -> &'static str {
@@ -123,47 +129,112 @@ fn layer_elements(layer: &Layer) -> Vec<Value> {
     let prefix = format!("l{}", layer.id().0);
     let mut elements = Vec::new();
     for element in layer.elements() {
-        if element.state == ElementState::Pending {
-            continue;
-        }
-        let id = format!("{prefix}:{}", element.id.as_str());
-        match (&element.kind, &element.geometry) {
-            (
-                ElementKind::Node {
-                    shape, stack, fill, ..
-                },
-                Geometry::Box(rect),
-            ) => {
-                let look = NodeLook {
-                    shape: *shape,
-                    stack: *stack,
-                    fill: *fill,
-                };
-                node(&mut elements, &id, element, look, *rect);
-            }
-            (ElementKind::Edge { from, to, style }, Geometry::Path(path)) => {
-                let ends = (
-                    format!("{prefix}:{}", from.as_str()),
-                    format!("{prefix}:{}", to.as_str()),
-                );
-                edge(&mut elements, &id, element, *path, *style, &ends);
-            }
-            (ElementKind::Annotation { mark, .. }, Geometry::Box(rect)) => {
-                annotation(&mut elements, &id, element, *mark, *rect);
-            }
-            (ElementKind::Trace, Geometry::Points(points)) => {
-                elements.push(line(&id, points, TRACE, LineStyle::Dashed));
-            }
-            (
-                ElementKind::Node { .. }
-                | ElementKind::Edge { .. }
-                | ElementKind::Annotation { .. }
-                | ElementKind::Trace,
-                _,
-            ) => debug_assert!(false, "kind and geometry always match"),
+        if element.state != ElementState::Pending {
+            export_element(&mut elements, layer, &prefix, element);
         }
     }
     elements
+}
+
+/// One board element as Excalidraw elements.
+fn export_element(elements: &mut Vec<Value>, layer: &Layer, prefix: &str, element: &Element) {
+    let id = format!("{prefix}:{}", element.id.as_str());
+    match (&element.kind, &element.geometry) {
+        (
+            ElementKind::Node {
+                shape, stack, fill, ..
+            },
+            Geometry::Box(rect),
+        ) => {
+            let look = NodeLook {
+                shape: *shape,
+                stack: *stack,
+                fill: *fill,
+            };
+            node(elements, &id, element, look, *rect);
+        }
+        (ElementKind::Edge { from, to, style }, Geometry::Path(path)) => {
+            // A tree's link is drawn with its child as a plain line.
+            let link = matches!(
+                layer.element(to).map(|child| &child.kind),
+                Some(ElementKind::Node { parent: Some(parent), .. }) if parent == from
+            );
+            let ends = (
+                format!("{prefix}:{}", from.as_str()),
+                format!("{prefix}:{}", to.as_str()),
+            );
+            let mut arrow = Vec::new();
+            edge(&mut arrow, &id, element, *path, *style, &ends);
+            if link && let Some(Value::Object(fields)) = arrow.first_mut() {
+                fields.insert("endArrowhead".into(), Value::Null);
+            }
+            elements.extend(arrow);
+        }
+        (ElementKind::Annotation { mark, fill, .. }, Geometry::Box(rect)) => {
+            annotation(elements, &id, element, (*mark, *fill), *rect);
+        }
+        (ElementKind::Trace, Geometry::Points(points)) => {
+            elements.push(line(&id, points, TRACE, LineStyle::Dashed));
+        }
+        (
+            ElementKind::Participant { .. }
+            | ElementKind::Message { .. }
+            | ElementKind::Cells { .. }
+            | ElementKind::Cell { .. },
+            _,
+        ) => export_diagram(elements, layer, &id, element),
+        (
+            ElementKind::Node { .. }
+            | ElementKind::Edge { .. }
+            | ElementKind::Annotation { .. }
+            | ElementKind::Trace,
+            _,
+        ) => debug_assert!(false, "kind and geometry always match"),
+    }
+}
+
+/// A sequence diagram's or a row of cells' element as Excalidraw elements.
+fn export_diagram(elements: &mut Vec<Value>, layer: &Layer, id: &str, element: &Element) {
+    match (&element.kind, &element.geometry) {
+        (
+            ElementKind::Participant {
+                lifeline_bottom, ..
+            },
+            Geometry::Box(head),
+        ) => participant(elements, id, element, *head, *lifeline_bottom),
+        (ElementKind::Message { style, .. }, Geometry::Points(points)) => {
+            message(elements, id, element, points, *style);
+        }
+        (ElementKind::Cells { vertical, .. }, Geometry::Box(strip)) => {
+            if !element.label.is_empty() {
+                elements.push(strip_label(id, &element.label, *strip, *vertical));
+            }
+        }
+        (
+            ElementKind::Cell {
+                index_label, strip, ..
+            },
+            Geometry::Box(rect),
+        ) => {
+            let vertical = matches!(
+                layer.element(strip).map(|strip| &strip.kind),
+                Some(ElementKind::Cells { vertical: true, .. })
+            );
+            let index = (index_label.as_deref(), vertical);
+            cell(elements, id, element, *rect, index);
+        }
+        (
+            ElementKind::Node { .. }
+            | ElementKind::Edge { .. }
+            | ElementKind::Annotation { .. }
+            | ElementKind::Trace
+            | ElementKind::Participant { .. }
+            | ElementKind::Message { .. }
+            | ElementKind::Cells { .. }
+            | ElementKind::Cell { .. },
+            _,
+        ) => debug_assert!(false, "kind and geometry always match"),
+    }
 }
 
 /// FNV-1a: a stable, dependency-free hash for seeds.
@@ -246,7 +317,7 @@ fn node(out: &mut Vec<Value>, id: &str, element: &Element, look: NodeLook, rect:
     let NodeLook { shape, stack, fill } = look;
     let label_id = format!("{id}#label");
     let kind = match shape {
-        NodeShape::Db | NodeShape::Actor => "ellipse",
+        NodeShape::Db | NodeShape::Actor | NodeShape::Circle => "ellipse",
         NodeShape::Service | NodeShape::Queue | NodeShape::Group | NodeShape::Note => "rectangle",
     };
     if shape == NodeShape::Note {
@@ -378,12 +449,25 @@ fn line(id: &str, points: &[Point], color: &str, style: LineStyle) -> Value {
     value
 }
 
-fn annotation(out: &mut Vec<Value>, id: &str, element: &Element, mark: Mark, rect: Rect) {
+fn annotation(
+    out: &mut Vec<Value>,
+    id: &str,
+    element: &Element,
+    (mark, fill): (Mark, Option<Fill>),
+    rect: Rect,
+) {
     let left_middle = Point {
         x: rect.x,
         y: rect.center().y,
     };
     match mark {
+        Mark::Highlight => {
+            let mut shade = base(id, "rectangle", rect, "transparent", LineStyle::Solid);
+            if let (Some(fill), Value::Object(fields)) = (fill, &mut shade) {
+                fields.insert("backgroundColor".into(), json!(fill_color(fill)));
+            }
+            out.push(shade);
+        }
         Mark::Circle => out.push(base(id, "ellipse", rect, PEN, LineStyle::Solid)),
         Mark::Underline => {
             let y = rect.bottom();
@@ -437,4 +521,128 @@ fn annotation(out: &mut Vec<Value>, id: &str, element: &Element, mark: Mark, rec
             PEN,
         ));
     }
+}
+
+/// A participant: its head box with the label in it, then its dashed lifeline.
+fn participant(out: &mut Vec<Value>, id: &str, element: &Element, head: Rect, bottom: i32) {
+    let label_id = format!("{id}#label");
+    let mut container = base(id, "rectangle", head, INK, LineStyle::Solid);
+    bind_text(&mut container, &label_id);
+    out.push(container);
+    out.push(text(
+        &label_id,
+        &element.label,
+        head.center(),
+        Some(id),
+        INK,
+    ));
+    let x = head.center().x;
+    let points = [
+        Point {
+            x,
+            y: head.bottom(),
+        },
+        Point { x, y: bottom },
+    ];
+    out.push(line(
+        &format!("{id}#lifeline"),
+        &points,
+        INK2,
+        LineStyle::Dashed,
+    ));
+}
+
+/// A message: an arrow along its points (dashed for a return), its label above it.
+fn message(out: &mut Vec<Value>, id: &str, element: &Element, points: &[Point], style: LineStyle) {
+    let mut arrow = line(id, points, INK, style);
+    if let Value::Object(fields) = &mut arrow {
+        fields.insert("type".into(), json!("arrow"));
+        fields.insert("endArrowhead".into(), json!("arrow"));
+    }
+    out.push(arrow);
+    if let Some(label) =
+        layout::message_label_box(points, &element.label).filter(|_| !element.label.is_empty())
+    {
+        out.push(small_text(
+            &format!("{id}#label"),
+            &element.label,
+            label.center(),
+            SMALL_LABEL_FONT_SIZE,
+        ));
+    }
+}
+
+/// A row's label, left of it, or a column's, above it.
+fn strip_label(id: &str, label: &str, strip: Rect, vertical: bool) -> Value {
+    let width = i32::try_from(text_width(label, SMALL_LABEL_FONT_SIZE)).unwrap_or(0);
+    let center = if vertical {
+        Point {
+            x: strip.center().x,
+            y: strip.y - layout::LABEL_ABOVE,
+        }
+    } else {
+        Point {
+            x: strip.x - layout::STRIP_LABEL_GAP - width / 2,
+            y: strip.center().y,
+        }
+    };
+    small_text(&format!("{id}#label"), label, center, SMALL_LABEL_FONT_SIZE)
+}
+
+/// One cell: its box with the value in it, and its index label under it (left of it in a
+/// column).
+fn cell(
+    out: &mut Vec<Value>,
+    id: &str,
+    element: &Element,
+    rect: Rect,
+    (index, vertical): (Option<&str>, bool),
+) {
+    let mut container = base(id, "rectangle", rect, INK, LineStyle::Solid);
+    if !element.label.is_empty() {
+        let label_id = format!("{id}#value");
+        bind_text(&mut container, &label_id);
+        out.push(container);
+        out.push(text(
+            &label_id,
+            &element.label,
+            rect.center(),
+            Some(id),
+            INK,
+        ));
+    } else {
+        out.push(container);
+    }
+    if let Some(index) = index {
+        let width = i32::try_from(text_width(index, INDEX_FONT_SIZE)).unwrap_or(0);
+        let center = if vertical {
+            Point {
+                x: rect.x - layout::INDEX_LEFT_GAP - width / 2,
+                y: rect.center().y,
+            }
+        } else {
+            Point {
+                x: rect.center().x,
+                y: rect.bottom() + layout::INDEX_BELOW,
+            }
+        };
+        out.push(small_text(
+            &format!("{id}#index"),
+            index,
+            center,
+            INDEX_FONT_SIZE,
+        ));
+    }
+}
+
+/// A free-standing label in the second ink at `font_size`.
+fn small_text(id: &str, content: &str, center: Point, font_size: u32) -> Value {
+    let mut value = text(id, content, center, None, INK2);
+    let rect = layout::text_box(content, center, font_size);
+    if let Value::Object(fields) = &mut value {
+        fields.insert("fontSize".into(), json!(font_size));
+        fields.insert("x".into(), json!(rect.x));
+        fields.insert("width".into(), json!(rect.w));
+    }
+    value
 }

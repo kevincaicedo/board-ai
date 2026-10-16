@@ -1,0 +1,153 @@
+{"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":200,"k":"ui","event":{"type":"Thread","steps":["Sequence","Array","Tree","Hash table"],"current":null,"detours":[]}}
+{"v":1,"t":700,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":60}}
+{"v":1,"t":800,"k":"ui","event":{"type":"Thread","steps":["Sequence","Array","Tree","Hash table"],"current":0,"detours":[]}}
+{"v":1,"t":900,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The","is_final":false}}
+{"v":1,"t":1000,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":-53,"y":-54,"w":509,"h":579},"focus":null}}
+{"v":1,"t":1000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Participant","id":"c","op":0,"label":"Client","rect":{"x":47,"y":46,"w":105,"h":48},"lifeline_bottom":242},"budget_ms":900}}
+{"v":1,"t":1099,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client","is_final":false}}
+{"v":1,"t":1397,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and","is_final":false}}
+{"v":1,"t":1596,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the","is_final":false}}
+{"v":1,"t":1795,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server","is_final":false}}
+{"v":1,"t":1900,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Participant","id":"s","op":1,"label":"Server","rect":{"x":244,"y":46,"w":112,"h":48},"lifeline_bottom":242},"budget_ms":1800}}
+{"v":1,"t":2093,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake","is_final":false}}
+{"v":1,"t":2358,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands.","is_final":false}}
+{"v":1,"t":2883,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands. The","is_final":false}}
+{"v":1,"t":3082,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands. The client","is_final":false}}
+{"v":1,"t":3380,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands. The client sends","is_final":false}}
+{"v":1,"t":3645,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands. The client sends a","is_final":false}}
+{"v":1,"t":3700,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:2","op":2,"from":"c","to":"s","points":[{"x":99,"y":138},{"x":300,"y":138}],"label":"SYN","style":"Solid","extend":[]},"budget_ms":1440}}
+{"v":1,"t":3778,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client and the server shake hands. The client sends a SYN,","is_final":false}}
+{"v":1,"t":4127,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"client and the server shake hands. The client sends a SYN, the","is_final":false}}
+{"v":1,"t":4326,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"and the server shake hands. The client sends a SYN, the server","is_final":false}}
+{"v":1,"t":4624,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"the server shake hands. The client sends a SYN, the server answers,","is_final":false}}
+{"v":1,"t":5105,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"server shake hands. The client sends a SYN, the server answers, and","is_final":false}}
+{"v":1,"t":5140,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:3","op":3,"from":"s","to":"c","points":[{"x":300,"y":190},{"x":99,"y":190}],"label":"SYN-ACK","style":"Dashed","extend":[]},"budget_ms":1380}}
+{"v":1,"t":5304,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"shake hands. The client sends a SYN, the server answers, and the","is_final":false}}
+{"v":1,"t":5503,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"hands. The client sends a SYN, the server answers, and the client","is_final":false}}
+{"v":1,"t":5801,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The client sends a SYN, the server answers, and the client acknowledges.","is_final":false}}
+{"v":1,"t":6520,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:4","op":4,"from":"c","to":"s","points":[{"x":99,"y":242},{"x":300,"y":242}],"label":"ACK","style":"Solid","extend":[{"participant":"c","x":99,"top":242,"bottom":346},{"participant":"s","x":300,"top":242,"bottom":346}]},"budget_ms":1380}}
+{"v":1,"t":6557,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"client sends a SYN, the server answers, and the client acknowledges. Then","is_final":false}}
+{"v":1,"t":6789,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"sends a SYN, the server answers, and the client acknowledges. Then data","is_final":false}}
+{"v":1,"t":7021,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"a SYN, the server answers, and the client acknowledges. Then data flows,","is_final":false}}
+{"v":1,"t":7436,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"SYN, the server answers, and the client acknowledges. Then data flows, the","is_final":false}}
+{"v":1,"t":7635,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"the server answers, and the client acknowledges. Then data flows, the server","is_final":false}}
+{"v":1,"t":7900,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:5","op":5,"from":"c","to":"s","points":[{"x":99,"y":294},{"x":300,"y":294}],"label":"GET /","style":"Solid","extend":[]},"budget_ms":1080}}
+{"v":1,"t":7933,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"server answers, and the client acknowledges. Then data flows, the server parses","is_final":false}}
+{"v":1,"t":8231,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"answers, and the client acknowledges. Then data flows, the server parses it,","is_final":false}}
+{"v":1,"t":8547,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"and the client acknowledges. Then data flows, the server parses it, and","is_final":false}}
+{"v":1,"t":8746,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"the client acknowledges. Then data flows, the server parses it, and replies.","is_final":false}}
+{"v":1,"t":8980,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:6","op":6,"from":"s","to":"s","points":[{"x":300,"y":346},{"x":344,"y":346},{"x":344,"y":372},{"x":300,"y":372}],"label":"parse","style":"Solid","extend":[{"participant":"c","x":99,"top":346,"bottom":476},{"participant":"s","x":300,"top":346,"bottom":476}]},"budget_ms":900}}
+{"v":1,"t":9880,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Message","id":"m:7","op":7,"from":"s","to":"c","points":[{"x":300,"y":424},{"x":99,"y":424}],"label":"200 OK","style":"Dashed","extend":[]},"budget_ms":480}}
+{"v":1,"t":12560,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":60}}
+{"v":1,"t":12660,"k":"ui","event":{"type":"Thread","steps":["Sequence","Array","Tree","Hash table"],"current":1,"detours":[]}}
+{"v":1,"t":12760,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An","is_final":false}}
+{"v":1,"t":12860,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":1386,"y":-69,"w":488,"h":248},"focus":null}}
+{"v":1,"t":12860,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Cells","id":"arr","op":100,"label":"nums","cells":[{"id":"arr.0","rect":{"x":1486,"y":31,"w":48,"h":48},"value":"","index":"0"},{"id":"arr.1","rect":{"x":1534,"y":31,"w":48,"h":48},"value":"","index":"1"},{"id":"arr.2","rect":{"x":1582,"y":31,"w":48,"h":48},"value":"","index":"2"},{"id":"arr.3","rect":{"x":1630,"y":31,"w":48,"h":48},"value":"","index":"3"},{"id":"arr.4","rect":{"x":1678,"y":31,"w":48,"h":48},"value":"","index":"4"},{"id":"arr.5","rect":{"x":1726,"y":31,"w":48,"h":48},"value":"","index":"5"}],"vertical":false},"budget_ms":1920}}
+{"v":1,"t":12926,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array","is_final":false}}
+{"v":1,"t":13191,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of","is_final":false}}
+{"v":1,"t":13357,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six","is_final":false}}
+{"v":1,"t":13556,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots","is_final":false}}
+{"v":1,"t":13821,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts","is_final":false}}
+{"v":1,"t":14119,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty.","is_final":false}}
+{"v":1,"t":14644,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty. We","is_final":false}}
+{"v":1,"t":14810,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty. We store","is_final":false}}
+{"v":1,"t":14960,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Write","op":101,"target":"arr.0","label":"3","rect":{"x":1486,"y":31,"w":48,"h":48}},"budget_ms":780}}
+{"v":1,"t":15075,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty. We store three,","is_final":false}}
+{"v":1,"t":15490,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty. We store three, one,","is_final":false}}
+{"v":1,"t":15740,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Write","op":102,"target":"arr.1","label":"1","rect":{"x":1534,"y":31,"w":48,"h":48}},"budget_ms":300}}
+{"v":1,"t":15839,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"An array of six slots starts empty. We store three, one, four","is_final":false}}
+{"v":1,"t":16040,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Write","op":103,"target":"arr.2","label":"4","rect":{"x":1582,"y":31,"w":48,"h":48}},"budget_ms":540}}
+{"v":1,"t":16071,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"array of six slots starts empty. We store three, one, four and","is_final":false}}
+{"v":1,"t":16270,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"of six slots starts empty. We store three, one, four and one.","is_final":false}}
+{"v":1,"t":16580,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Write","op":104,"target":"arr.3","label":"1","rect":{"x":1630,"y":31,"w":48,"h":48}},"budget_ms":900}}
+{"v":1,"t":16729,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"six slots starts empty. We store three, one, four and one. The","is_final":false}}
+{"v":1,"t":16928,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"slots starts empty. We store three, one, four and one. The cursor","is_final":false}}
+{"v":1,"t":17226,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"starts empty. We store three, one, four and one. The cursor sits","is_final":false}}
+{"v":1,"t":17458,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"empty. We store three, one, four and one. The cursor sits on","is_final":false}}
+{"v":1,"t":17480,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"a:5","op":105,"target":"arr.2","mark":"Highlight","rect":{"x":1582,"y":31,"w":48,"h":48},"text":"i","fill":"Mint"},"budget_ms":1500}}
+{"v":1,"t":17624,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"We store three, one, four and one. The cursor sits on slot","is_final":false}}
+{"v":1,"t":17856,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"store three, one, four and one. The cursor sits on slot two,","is_final":false}}
+{"v":1,"t":18205,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"three, one, four and one. The cursor sits on slot two, and","is_final":false}}
+{"v":1,"t":18404,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"one, four and one. The cursor sits on slot two, and we","is_final":false}}
+{"v":1,"t":18570,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"four and one. The cursor sits on slot two, and we overwrite","is_final":false}}
+{"v":1,"t":18967,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"and one. The cursor sits on slot two, and we overwrite one","is_final":false}}
+{"v":1,"t":18980,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Strike","op":106,"target":"arr.1","label":"5","rect":{"x":1534,"y":31,"w":48,"h":48}},"budget_ms":1440}}
+{"v":1,"t":19166,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"one. The cursor sits on slot two, and we overwrite one with","is_final":false}}
+{"v":1,"t":19398,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The cursor sits on slot two, and we overwrite one with five.","is_final":false}}
+{"v":1,"t":22620,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":60}}
+{"v":1,"t":22720,"k":"ui","event":{"type":"Thread","steps":["Sequence","Array","Tree","Hash table"],"current":2,"detours":[]}}
+{"v":1,"t":22820,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert","is_final":false}}
+{"v":1,"t":22920,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":2532,"y":-58,"w":736,"h":480},"focus":null}}
+{"v":1,"t":22920,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n5","op":200,"shape":"Circle","label":"5","rect":{"x":2872,"y":42,"w":56,"h":56},"stack":1,"fill":null,"link":null},"budget_ms":1080}}
+{"v":1,"t":23118,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five","is_final":false}}
+{"v":1,"t":23350,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as","is_final":false}}
+{"v":1,"t":23516,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the","is_final":false}}
+{"v":1,"t":23715,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root,","is_final":false}}
+{"v":1,"t":24000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n3","op":201,"shape":"Circle","label":"3","rect":{"x":2712,"y":154,"w":56,"h":56},"stack":1,"fill":null,"link":{"start":{"x":2900,"y":98},"control":null,"end":{"x":2740,"y":154}}},"budget_ms":1080}}
+{"v":1,"t":24097,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three","is_final":false}}
+{"v":1,"t":24362,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to","is_final":false}}
+{"v":1,"t":24528,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to its","is_final":false}}
+{"v":1,"t":24727,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to its left,","is_final":false}}
+{"v":1,"t":25080,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n8","op":202,"shape":"Circle","label":"8","rect":{"x":3032,"y":154,"w":56,"h":56},"stack":1,"fill":null,"link":{"start":{"x":2900,"y":98},"control":null,"end":{"x":3060,"y":154}}},"budget_ms":1200}}
+{"v":1,"t":25109,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to its left, eight","is_final":false}}
+{"v":1,"t":25374,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to its left, eight to","is_final":false}}
+{"v":1,"t":25540,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Insert five as the root, three to its left, eight to its","is_final":false}}
+{"v":1,"t":25739,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"five as the root, three to its left, eight to its right,","is_final":false}}
+{"v":1,"t":26154,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"as the root, three to its left, eight to its right, one","is_final":false}}
+{"v":1,"t":26280,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n1","op":203,"shape":"Circle","label":"1","rect":{"x":2632,"y":266,"w":56,"h":56},"stack":1,"fill":null,"link":{"start":{"x":2740,"y":210},"control":null,"end":{"x":2660,"y":266}}},"budget_ms":1020}}
+{"v":1,"t":26353,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"the root, three to its left, eight to its right, one under","is_final":false}}
+{"v":1,"t":26618,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"root, three to its left, eight to its right, one under three,","is_final":false}}
+{"v":1,"t":27033,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"three to its left, eight to its right, one under three, four","is_final":false}}
+{"v":1,"t":27265,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"to its left, eight to its right, one under three, four beside","is_final":false}}
+{"v":1,"t":27300,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n4","op":204,"shape":"Circle","label":"4","rect":{"x":2792,"y":266,"w":56,"h":56},"stack":1,"fill":null,"link":{"start":{"x":2740,"y":210},"control":null,"end":{"x":2820,"y":266}}},"budget_ms":1140}}
+{"v":1,"t":27563,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"its left, eight to its right, one under three, four beside it,","is_final":false}}
+{"v":1,"t":27879,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"left, eight to its right, one under three, four beside it, and","is_final":false}}
+{"v":1,"t":28078,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"eight to its right, one under three, four beside it, and nine","is_final":false}}
+{"v":1,"t":28310,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"to its right, one under three, four beside it, and nine under","is_final":false}}
+{"v":1,"t":28440,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"n9","op":205,"shape":"Circle","label":"9","rect":{"x":3112,"y":266,"w":56,"h":56},"stack":1,"fill":null,"link":{"start":{"x":3060,"y":210},"control":null,"end":{"x":3140,"y":266}}},"budget_ms":1980}}
+{"v":1,"t":28575,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"its right, one under three, four beside it, and nine under eight.","is_final":false}}
+{"v":1,"t":29100,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"right, one under three, four beside it, and nine under eight. Looking","is_final":false}}
+{"v":1,"t":29431,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"one under three, four beside it, and nine under eight. Looking up","is_final":false}}
+{"v":1,"t":29597,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"under three, four beside it, and nine under eight. Looking up four","is_final":false}}
+{"v":1,"t":29829,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"three, four beside it, and nine under eight. Looking up four goes","is_final":false}}
+{"v":1,"t":30061,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"four beside it, and nine under eight. Looking up four goes left,","is_final":false}}
+{"v":1,"t":30420,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"a:6","op":206,"target":"n4","mark":"Highlight","rect":{"x":2792,"y":266,"w":56,"h":56},"text":null,"fill":"Sky"},"budget_ms":1320}}
+{"v":1,"t":30443,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"beside it, and nine under eight. Looking up four goes left, then","is_final":false}}
+{"v":1,"t":30675,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"it, and nine under eight. Looking up four goes left, then right.","is_final":false}}
+{"v":1,"t":33940,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":60}}
+{"v":1,"t":34040,"k":"ui","event":{"type":"Thread","steps":["Sequence","Array","Tree","Hash table"],"current":3,"detours":[]}}
+{"v":1,"t":34140,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The","is_final":false}}
+{"v":1,"t":34240,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":4180,"y":-40,"w":629,"h":392},"focus":null}}
+{"v":1,"t":34240,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Cells","id":"ht","op":300,"label":"buckets","cells":[{"id":"ht.0","rect":{"x":4280,"y":60,"w":48,"h":48},"value":"","index":"0"},{"id":"ht.1","rect":{"x":4280,"y":108,"w":48,"h":48},"value":"","index":"1"},{"id":"ht.2","rect":{"x":4280,"y":156,"w":48,"h":48},"value":"","index":"2"},{"id":"ht.3","rect":{"x":4280,"y":204,"w":48,"h":48},"value":"","index":"3"}],"vertical":true},"budget_ms":1740}}
+{"v":1,"t":34339,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table","is_final":false}}
+{"v":1,"t":34604,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has","is_final":false}}
+{"v":1,"t":34803,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four","is_final":false}}
+{"v":1,"t":35035,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets.","is_final":false}}
+{"v":1,"t":35626,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple","is_final":false}}
+{"v":1,"t":35891,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes","is_final":false}}
+{"v":1,"t":35980,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"apple","op":301,"shape":"Service","label":"apple: 3","rect":{"x":4392,"y":156,"w":125,"h":48},"stack":1,"fill":"Sky","link":null},"budget_ms":150}}
+{"v":1,"t":36100,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"ht.2>apple","op":302,"from":"ht.2","to":"apple","path":{"start":{"x":4328,"y":180},"control":null,"end":{"x":4392,"y":180}},"label":null,"style":"Solid"},"budget_ms":2220}}
+{"v":1,"t":36189,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes to","is_final":false}}
+{"v":1,"t":36355,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes to bucket","is_final":false}}
+{"v":1,"t":36653,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes to bucket two,","is_final":false}}
+{"v":1,"t":37002,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes to bucket two, grape","is_final":false}}
+{"v":1,"t":37267,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The table has four buckets. Apple hashes to bucket two, grape collides","is_final":false}}
+{"v":1,"t":37631,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"table has four buckets. Apple hashes to bucket two, grape collides there,","is_final":false}}
+{"v":1,"t":38046,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"has four buckets. Apple hashes to bucket two, grape collides there, so","is_final":false}}
+{"v":1,"t":38212,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"four buckets. Apple hashes to bucket two, grape collides there, so it","is_final":false}}
+{"v":1,"t":38320,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"grape","op":303,"shape":"Service","label":"grape: 7","rect":{"x":4581,"y":156,"w":128,"h":48},"stack":1,"fill":"Lilac","link":null},"budget_ms":150}}
+{"v":1,"t":38378,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"buckets. Apple hashes to bucket two, grape collides there, so it chains","is_final":false}}
+{"v":1,"t":38440,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"apple>grape","op":304,"from":"apple","to":"grape","path":{"start":{"x":4517,"y":180},"control":null,"end":{"x":4581,"y":180}},"label":null,"style":"Solid"},"budget_ms":2160}}
+{"v":1,"t":38676,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Apple hashes to bucket two, grape collides there, so it chains behind","is_final":false}}
+{"v":1,"t":38974,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"hashes to bucket two, grape collides there, so it chains behind apple,","is_final":false}}
+{"v":1,"t":39389,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"to bucket two, grape collides there, so it chains behind apple, and","is_final":false}}
+{"v":1,"t":39588,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"bucket two, grape collides there, so it chains behind apple, and kiwi","is_final":false}}
+{"v":1,"t":39820,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"two, grape collides there, so it chains behind apple, and kiwi goes","is_final":false}}
+{"v":1,"t":40052,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"grape collides there, so it chains behind apple, and kiwi goes to","is_final":false}}
+{"v":1,"t":40218,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"collides there, so it chains behind apple, and kiwi goes to bucket","is_final":false}}
+{"v":1,"t":40516,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"there, so it chains behind apple, and kiwi goes to bucket zero.","is_final":false}}
+{"v":1,"t":40600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"kiwi","op":305,"shape":"Service","label":"kiwi: 1","rect":{"x":4392,"y":60,"w":120,"h":48},"stack":1,"fill":"Mint","link":null},"budget_ms":150}}
+{"v":1,"t":40720,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"ht.0>kiwi","op":306,"from":"ht.0","to":"kiwi","path":{"start":{"x":4328,"y":84},"control":null,"end":{"x":4392,"y":84}},"label":null,"style":"Solid"},"budget_ms":600}}
+{"v":1,"t":43240,"k":"ui","event":{"type":"Chip","kind":"Source","text":"internal/net/tcp.go:88","source":{"path":"internal/net/tcp.go","line":88}}}
+{"v":1,"t":45740,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}

@@ -6,6 +6,7 @@
 // The parser tables are typed by the generated unions, so a new protocol variant fails typecheck
 // until it is handled here.
 
+import type { CellBox } from "./generated/CellBox.ts";
 import type { CellMark } from "./generated/CellMark.ts";
 import type { ChipKind } from "./generated/ChipKind.ts";
 import type { ColumnRange } from "./generated/ColumnRange.ts";
@@ -14,6 +15,7 @@ import type { DigestCard } from "./generated/DigestCard.ts";
 import type { DrawOp } from "./generated/DrawOp.ts";
 import type { EdgePath } from "./generated/EdgePath.ts";
 import type { Fill } from "./generated/Fill.ts";
+import type { Lifeline } from "./generated/Lifeline.ts";
 import type { LineStyle } from "./generated/LineStyle.ts";
 import type { Mark } from "./generated/Mark.ts";
 import type { MemoryRow } from "./generated/MemoryRow.ts";
@@ -25,6 +27,7 @@ import type { Point } from "./generated/Point.ts";
 import type { Rect } from "./generated/Rect.ts";
 import type { SessionCard } from "./generated/SessionCard.ts";
 import type { SessionRef } from "./generated/SessionRef.ts";
+import type { SourceRef } from "./generated/SourceRef.ts";
 import type { Speaker } from "./generated/Speaker.ts";
 import type { Surface } from "./generated/Surface.ts";
 import type { SurfaceUpdate } from "./generated/SurfaceUpdate.ts";
@@ -179,13 +182,50 @@ const ORB_STATES: readonly OrbState[] = [
   "Muted",
 ];
 const SPEAKERS: readonly Speaker[] = ["User", "Assistant"];
-const NODE_SHAPES: readonly NodeShape[] = ["Service", "Db", "Queue", "Actor", "Group", "Note"];
+const NODE_SHAPES: readonly NodeShape[] = [
+  "Service",
+  "Db",
+  "Queue",
+  "Actor",
+  "Group",
+  "Note",
+  "Circle",
+];
 const LINE_STYLES: readonly LineStyle[] = ["Solid", "Dashed"];
-const MARKS: readonly Mark[] = ["Circle", "Underline", "Arrow", "Bracket"];
+const MARKS: readonly Mark[] = ["Circle", "Underline", "Arrow", "Bracket", "Highlight"];
 const CHIP_KINDS: readonly ChipKind[] = ["Note", "Task", "Memory", "Source"];
 const FILLS: readonly Fill[] = ["Lilac", "Sky", "Mint", "Blush"];
 
 const fill = (value: unknown): Fill | null => oneOf(value, FILLS);
+
+function lifeline(value: unknown): Lifeline | null {
+  const f = fields(value);
+  const participant = elementId(f?.participant);
+  const x = i32(f?.x);
+  const top = i32(f?.top);
+  const bottom = i32(f?.bottom);
+  return participant === null || x === null || top === null || bottom === null
+    ? null
+    : { participant, x, top, bottom };
+}
+
+function cellBox(value: unknown): CellBox | null {
+  const f = fields(value);
+  const id = elementId(f?.id);
+  const r = rect(f?.rect);
+  const content = text(f?.value);
+  const index = nullable(f?.index, text);
+  return id === null || r === null || content === null || index === undefined
+    ? null
+    : { id, rect: r, value: content, index };
+}
+
+function sourceRef(value: unknown): SourceRef | null {
+  const f = fields(value);
+  const path = filled(f?.path);
+  const line = integer(f?.line, 1, U32_MAX);
+  return path === null || line === null ? null : { path, line };
+}
 
 type Tagged<U, Tag extends string> = {
   [K in U extends Record<Tag, infer N extends string> ? N : never]: (
@@ -203,15 +243,17 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
     const r = rect(f.rect);
     const stack = u8(f.stack);
     const tone = optional(f.fill, fill);
+    const link = optional(f.link, edgePath);
     return id === null ||
       op === null ||
       shape === null ||
       label === null ||
       r === null ||
       stack === null ||
-      tone === undefined
+      tone === undefined ||
+      link === undefined
       ? null
-      : { kind: "Node", id, op, shape, label, rect: r, stack, fill: tone };
+      : { kind: "Node", id, op, shape, label, rect: r, stack, fill: tone, link };
   },
   Edge: (f) => {
     const id = elementId(f.id);
@@ -238,14 +280,16 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
     const mark = oneOf(f.mark, MARKS);
     const r = rect(f.rect);
     const label = nullable(f.text, text);
+    const tone = optional(f.fill, fill);
     return id === null ||
       op === null ||
       target === null ||
       mark === null ||
       r === null ||
-      label === undefined
+      label === undefined ||
+      tone === undefined
       ? null
-      : { kind: "Annotate", id, op, target, mark, rect: r, text: label };
+      : { kind: "Annotate", id, op, target, mark, rect: r, text: label, fill: tone };
   },
   Strike: (f) => {
     const op = u32(f.op);
@@ -261,6 +305,61 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
     const op = u32(f.op);
     const points = list(f.points, point);
     return id === null || op === null || points === null ? null : { kind: "Trace", id, op, points };
+  },
+  Participant: (f) => {
+    const id = elementId(f.id);
+    const op = u32(f.op);
+    const label = text(f.label);
+    const r = rect(f.rect);
+    const bottom = i32(f.lifeline_bottom);
+    return id === null || op === null || label === null || r === null || bottom === null
+      ? null
+      : { kind: "Participant", id, op, label, rect: r, lifeline_bottom: bottom };
+  },
+  Message: (f) => {
+    const id = elementId(f.id);
+    const op = u32(f.op);
+    const from = elementId(f.from);
+    const to = elementId(f.to);
+    const points = list(f.points, point);
+    const label = nullable(f.label, text);
+    const style = oneOf(f.style, LINE_STYLES);
+    const extend = list(f.extend, lifeline);
+    return id === null ||
+      op === null ||
+      from === null ||
+      to === null ||
+      points === null ||
+      points.length < 2 ||
+      label === undefined ||
+      style === null ||
+      extend === null
+      ? null
+      : { kind: "Message", id, op, from, to, points, label, style, extend };
+  },
+  Cells: (f) => {
+    const id = elementId(f.id);
+    const op = u32(f.op);
+    const label = text(f.label);
+    const cells = list(f.cells, cellBox);
+    const vertical = flag(f.vertical);
+    return id === null ||
+      op === null ||
+      label === null ||
+      cells === null ||
+      cells.length === 0 ||
+      vertical === null
+      ? null
+      : { kind: "Cells", id, op, label, cells, vertical };
+  },
+  Write: (f) => {
+    const op = u32(f.op);
+    const target = elementId(f.target);
+    const label = text(f.label);
+    const r = rect(f.rect);
+    return op === null || target === null || label === null || r === null
+      ? null
+      : { kind: "Write", op, target, label, rect: r };
   },
 };
 
@@ -568,7 +667,10 @@ const EVENTS: Tagged<UiEvent, "type"> = {
   Chip: (f) => {
     const kind = oneOf(f.kind, CHIP_KINDS);
     const value = text(f.text);
-    return kind === null || value === null ? null : { type: "Chip", kind, text: value };
+    const source = optional(f.source, sourceRef);
+    return kind === null || value === null || source === undefined
+      ? null
+      : { type: "Chip", kind, text: value, source };
   },
   Problem: (f) => {
     const spoken = text(f.spoken);

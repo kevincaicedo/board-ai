@@ -6,19 +6,38 @@
 
 use crate::ids::ElementId;
 use crate::limits::{
-    COMPARE_AXIS_MAX, LABEL_MAX_BYTES, NODE_STACK_MAX, PLAN_STEPS_MAX, RECAP_BULLETS_MAX,
-    TITLE_MAX_BYTES, TRACE_HOPS_MAX,
+    CELL_VALUE_MAX_BYTES, CELLS_PER_STRIP_MAX, COMPARE_AXIS_MAX, LABEL_MAX_BYTES, NODE_STACK_MAX,
+    PLAN_STEPS_MAX, RECAP_BULLETS_MAX, TITLE_MAX_BYTES, TRACE_HOPS_MAX,
 };
 use crate::narration::ops::{
-    AxisRef, CloseTarget, Direction, LineRange, NarrationOp, Placement, StepRef,
+    AxisRef, CellsSpec, CloseTarget, Direction, IndexLabels, LineRange, NarrationOp, Placement,
+    Side, StepRef,
 };
 use crate::narration::parser::RawTag;
 use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
 
 /// Every tag the grammar defines, in the order the system prompt documents them.
 pub const TAG_NAMES: &[&str] = &[
-    "plan", "step", "node", "edge", "annotate", "strike", "focus", "detour", "resume", "code",
-    "line", "trace", "compare", "cell", "close", "recap",
+    "plan",
+    "step",
+    "node",
+    "edge",
+    "annotate",
+    "strike",
+    "focus",
+    "detour",
+    "resume",
+    "code",
+    "line",
+    "trace",
+    "compare",
+    "cell",
+    "close",
+    "recap",
+    "participant",
+    "message",
+    "cells",
+    "write",
 ];
 
 /// Why a well-formed tag was dropped. For the log and golden files only.
@@ -55,6 +74,19 @@ const NODE_KINDS: &[(&str, NodeShape)] = &[
     ("cluster", NodeShape::Group),
     ("vpc", NodeShape::Group),
     ("text", NodeShape::Note),
+    ("circle", NodeShape::Circle),
+    ("round", NodeShape::Circle),
+    ("ellipse", NodeShape::Circle),
+    ("oval", NodeShape::Circle),
+    ("state", NodeShape::Circle),
+];
+
+/// A tree child's side, then synonyms. An unknown side lines children up instead.
+const SIDES: &[(&str, Side)] = &[
+    ("left", Side::Left),
+    ("right", Side::Right),
+    ("l", Side::Left),
+    ("r", Side::Right),
 ];
 
 /// Directions, then synonyms. An unknown direction is right.
@@ -74,6 +106,10 @@ const MARKS: &[(&str, Mark)] = &[
     ("underline", Mark::Underline),
     ("arrow", Mark::Arrow),
     ("bracket", Mark::Bracket),
+    ("highlight", Mark::Highlight),
+    ("fill", Mark::Highlight),
+    ("shade", Mark::Highlight),
+    ("hatch", Mark::Highlight),
 ];
 
 /// Line styles, then a synonym. An unknown style is solid.
@@ -82,6 +118,25 @@ const STYLES: &[(&str, LineStyle)] = &[
     ("dashed", LineStyle::Dashed),
     ("dotted", LineStyle::Dashed),
 ];
+
+/// Message styles: an edge's, then what a sequence diagram calls them. An unknown one is a call.
+const MESSAGE_STYLES: &[(&str, LineStyle)] = &[
+    ("solid", LineStyle::Solid),
+    ("dashed", LineStyle::Dashed),
+    ("dotted", LineStyle::Dashed),
+    ("call", LineStyle::Solid),
+    ("request", LineStyle::Solid),
+    ("sync", LineStyle::Solid),
+    ("return", LineStyle::Dashed),
+    ("reply", LineStyle::Dashed),
+    ("response", LineStyle::Dashed),
+];
+
+/// Values that turn a boolean attribute on (`vertical="true"`); anything else is off.
+const TRUE_VALUES: &[&str] = &["true", "yes", "1", "on", "column", "vertical", "down"];
+
+/// `index` values that hide the index labels.
+const NO_INDEX: &[&str] = &["none", "no", "off", "false", "hide", "hidden"];
 
 /// The sketch tones a node may name.
 const FILLS: &[(&str, Fill)] = &[
@@ -138,6 +193,35 @@ pub fn to_op(tag: &RawTag) -> Result<NarrationOp, BadTag> {
                 LABEL_MAX_BYTES,
             )?,
         }),
+        "participant" => {
+            let id = attributes.id("id")?;
+            Ok(NarrationOp::Participant {
+                label: bounded(
+                    attributes.get("label").unwrap_or(id.as_str()),
+                    LABEL_MAX_BYTES,
+                ),
+                id,
+            })
+        }
+        "message" => Ok(NarrationOp::Message {
+            from: attributes.id("from")?,
+            to: attributes.id("to")?,
+            label: attributes
+                .get("label")
+                .map(|label| bounded(label, LABEL_MAX_BYTES)),
+            style: lenient(MESSAGE_STYLES, attributes.get("style"), LineStyle::Solid),
+        }),
+        "cells" => cells(&attributes),
+        "write" => Ok(NarrationOp::Write {
+            target: attributes.id("target")?,
+            text: bounded(
+                attributes
+                    .get("text")
+                    .or_else(|| attributes.get("value"))
+                    .ok_or(bad("a required attribute is missing"))?,
+                LABEL_MAX_BYTES,
+            ),
+        }),
         _ => Err(bad("unknown tag")),
     }
 }
@@ -162,10 +246,10 @@ impl Attributes<'_> {
         ElementId::parse(self.required(key)?).ok_or(bad("invalid element id"))
     }
 
-    fn optional_id(&self, key: &'static str) -> Result<Option<ElementId>, BadTag> {
-        self.get(key)
-            .map(|value| ElementId::parse(value).ok_or(bad("invalid element id")))
-            .transpose()
+    /// A placement hint's id. A value that can't be an id (`near="crates/app"`) names nothing,
+    /// so like any hint naming nothing it continues the flow instead of losing the drawing.
+    fn hint(&self, key: &'static str) -> Option<ElementId> {
+        self.get(key).and_then(ElementId::parse)
     }
 
     fn number(&self, key: &'static str) -> Result<u32, BadTag> {
@@ -252,15 +336,17 @@ fn node(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         attributes.get("label").unwrap_or(id.as_str()),
         LABEL_MAX_BYTES,
     );
-    let shape = lenient(NODE_KINDS, attributes.get("kind"), NodeShape::Service);
-    let direction = lenient(DIRECTIONS, attributes.get("dir"), Direction::Right);
-    let near = attributes
-        .optional_id("near")?
-        .map(|target| (target, direction));
-    let placement = match (attributes.optional_id("in")?, near) {
-        (Some(group), near) => Placement::Inside { group, near },
-        (None, Some((target, direction))) => Placement::Near { target, direction },
-        (None, None) => Placement::Auto,
+    let shape = attributes
+        .get("kind")
+        .map(|kind| lenient(NODE_KINDS, Some(kind), NodeShape::Service));
+    let placement = match attributes.hint("parent") {
+        Some(parent) => Placement::Child {
+            parent,
+            side: attributes
+                .get("side")
+                .and_then(|side| lookup(SIDES, side, "unknown side").ok()),
+        },
+        None => placement(attributes)?,
     };
     let stack = match attributes.get("stack") {
         None => 1,
@@ -281,6 +367,70 @@ fn node(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         stack,
         fill,
     })
+}
+
+/// `in`, `near` and `dir`, as a node or a row of cells take them.
+fn placement(attributes: &Attributes<'_>) -> Result<Placement, BadTag> {
+    let direction = lenient(DIRECTIONS, attributes.get("dir"), Direction::Right);
+    let near = attributes.hint("near").map(|target| (target, direction));
+    Ok(match (attributes.hint("in"), near) {
+        (Some(group), near) => Placement::Inside { group, near },
+        (None, Some((target, direction))) => Placement::Near { target, direction },
+        (None, None) => Placement::Auto,
+    })
+}
+
+/// `values="3|1||4"` keeps empty cells; `count` adds empty ones; one of them is required.
+fn cells(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
+    let id = attributes.id("id")?;
+    let values: Vec<String> = attributes
+        .get("values")
+        .map(|values| {
+            values
+                .split('|')
+                .take(CELLS_PER_STRIP_MAX)
+                .map(|value| bounded(value, CELL_VALUE_MAX_BYTES))
+                .collect()
+        })
+        .unwrap_or_default();
+    let count = match attributes.get("count") {
+        Some(count) => {
+            let count: usize = count.parse().map_err(|_| bad("count is not a number"))?;
+            count.clamp(1, CELLS_PER_STRIP_MAX)
+        }
+        None if values.is_empty() => return Err(bad("cells need values or a count")),
+        None => values.len(),
+    };
+    let count = u8::try_from(count.max(values.len())).map_err(|_| bad("too many cells"))?;
+    let index = match attributes.get("index") {
+        None => IndexLabels::From(0),
+        Some(value) if NO_INDEX.iter().any(|no| no.eq_ignore_ascii_case(value)) => {
+            IndexLabels::None
+        }
+        Some(value) => match value.parse::<u32>() {
+            Ok(first) => IndexLabels::From(first),
+            Err(_) => IndexLabels::Named(
+                value
+                    .split('|')
+                    .take(CELLS_PER_STRIP_MAX)
+                    .map(|label| bounded(label, CELL_VALUE_MAX_BYTES))
+                    .collect(),
+            ),
+        },
+    };
+    let vertical = ["vertical", "layout", "orient"]
+        .iter()
+        .filter_map(|key| attributes.get(key))
+        .any(|value| TRUE_VALUES.iter().any(|on| on.eq_ignore_ascii_case(value)));
+    Ok(NarrationOp::Cells(CellsSpec {
+        label: bounded(attributes.get("label").unwrap_or_default(), LABEL_MAX_BYTES),
+        id,
+        values,
+        count,
+        index,
+        vertical,
+        placement: placement(attributes)?,
+    }))
 }
 
 fn edge(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
@@ -306,7 +456,7 @@ fn annotate(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         let mark = match lenient(MARKS, attributes.get("mark"), Mark::Underline) {
             Mark::Circle => Mark::Circle,
             // Only a ring or an underline suit a line of code; anything else underlines.
-            Mark::Underline | Mark::Arrow | Mark::Bracket => Mark::Underline,
+            Mark::Underline | Mark::Arrow | Mark::Bracket | Mark::Highlight => Mark::Underline,
         };
         return Ok(NarrationOp::MarkCode {
             line: attributes.number("line")?,
@@ -317,12 +467,21 @@ fn annotate(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
             mark,
         });
     }
+    let mark = lenient(MARKS, attributes.get("mark"), Mark::Circle);
+    // Only a highlight has a tone; a pen mark is always the annotation orange.
+    let fill = match mark {
+        Mark::Highlight => attributes
+            .get("fill")
+            .and_then(|fill| lookup(FILLS, fill, "unknown fill").ok()),
+        Mark::Circle | Mark::Underline | Mark::Arrow | Mark::Bracket => None,
+    };
     Ok(NarrationOp::Annotate {
         target: attributes.id("target")?,
-        mark: lenient(MARKS, attributes.get("mark"), Mark::Circle),
+        mark,
         text: attributes
             .get("text")
             .map(|text| bounded(text, LABEL_MAX_BYTES)),
+        fill,
     })
 }
 
@@ -421,233 +580,4 @@ fn cell(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{TAG_NAMES, bounded, to_op};
-    use crate::narration::ops::{AxisRef, Direction, NarrationOp, Placement};
-    use crate::narration::parser::RawTag;
-    use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
-
-    fn tag(name: &str, attributes: &[(&str, &str)]) -> RawTag {
-        RawTag {
-            name: name.to_owned(),
-            attributes: attributes
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-                .collect(),
-            written: String::new(),
-        }
-    }
-
-    #[test]
-    fn a_minimal_valid_form_of_every_tag_parses() {
-        let minimal: &[(&str, &[(&str, &str)])] = &[
-            ("plan", &[("steps", "Client|Edge|LB")]),
-            ("step", &[("n", "2")]),
-            ("node", &[("id", "lb")]),
-            ("edge", &[("from", "cdn"), ("to", "lb")]),
-            ("annotate", &[("target", "lb")]),
-            ("strike", &[("target", "sqs"), ("text", "Kafka")]),
-            ("focus", &[("target", "lb")]),
-            ("detour", &[("title", "cache-aside")]),
-            ("resume", &[]),
-            ("code", &[("path", "src/lb.rs"), ("lines", "4-9")]),
-            ("line", &[("n", "42")]),
-            ("trace", &[("path", "api>redis>db")]),
-            (
-                "compare",
-                &[("options", "Redis|Memcached"), ("criteria", "Speed")],
-            ),
-            (
-                "cell",
-                &[("option", "0"), ("criterion", "Speed"), ("mark", "yes")],
-            ),
-            ("close", &[("surface", "code")]),
-            (
-                "recap",
-                &[("bullets", "Reads try Redis first|A miss reads Postgres")],
-            ),
-        ];
-        assert_eq!(minimal.len(), TAG_NAMES.len());
-        for ((name, attributes), expected) in minimal.iter().zip(TAG_NAMES) {
-            assert_eq!(name, expected, "the table follows TAG_NAMES");
-            assert!(to_op(&tag(name, attributes)).is_ok(), "{name}");
-        }
-    }
-
-    #[test]
-    fn bad_values_and_missing_attributes_drop_the_tag() {
-        let bad: &[(&str, &[(&str, &str)])] = &[
-            ("node", &[("id", "has space")]),
-            ("edge", &[("from", "a")]),
-            ("edge", &[("from", "a"), ("to", "a")]),
-            ("step", &[("n", "0")]),
-            ("line", &[("n", "x")]),
-            ("code", &[("path", "a.go"), ("lines", "9-4")]),
-            ("trace", &[("path", "only")]),
-            ("cell", &[("row", "0"), ("col", "0")]),
-            ("cell", &[("option", "Redis"), ("mark", "yes")]),
-            ("close", &[("surface", "window")]),
-            ("plan", &[("steps", " | ")]),
-            ("annotate", &[("line", "0"), ("code", "x")]),
-            ("recap", &[("bullets", "|")]),
-        ];
-        for (name, attributes) in bad {
-            assert!(
-                to_op(&tag(name, attributes)).is_err(),
-                "{name} {attributes:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn node_placement_and_defaults() {
-        let op = to_op(&tag(
-            "node",
-            &[
-                ("id", "api"),
-                ("near", "lb"),
-                ("stack", "3"),
-                ("color", "red"),
-            ],
-        ));
-        assert_eq!(
-            op,
-            Ok(NarrationOp::Node {
-                id: crate::ids::ElementId::parse("api").expect("valid"),
-                label: "api".to_owned(),
-                shape: NodeShape::Service,
-                placement: Placement::Near {
-                    target: crate::ids::ElementId::parse("lb").expect("valid"),
-                    direction: Direction::Right,
-                },
-                stack: 3,
-                fill: None,
-            })
-        );
-    }
-
-    /// A near miss in an optional value keeps the drawing: synonyms map, unknown values default.
-    #[test]
-    fn unknown_optional_values_fall_back_to_their_defaults() {
-        let shape = |kind: &str| match to_op(&tag("node", &[("id", "a"), ("kind", kind)])) {
-            Ok(NarrationOp::Node { shape, .. }) => Some(shape),
-            Ok(_) | Err(_) => None,
-        };
-        assert_eq!(shape("Database"), Some(NodeShape::Db));
-        assert_eq!(shape("cache"), Some(NodeShape::Db));
-        assert_eq!(shape("topic"), Some(NodeShape::Queue));
-        assert_eq!(shape("browser"), Some(NodeShape::Actor));
-        assert_eq!(shape("cluster"), Some(NodeShape::Group));
-        assert_eq!(shape("spaceship"), Some(NodeShape::Service));
-        let placed = to_op(&tag(
-            "node",
-            &[("id", "a"), ("near", "b"), ("dir", "diagonal")],
-        ));
-        assert!(matches!(
-            placed,
-            Ok(NarrationOp::Node {
-                placement: Placement::Near {
-                    direction: Direction::Right,
-                    ..
-                },
-                ..
-            })
-        ));
-        let edge = to_op(&tag(
-            "edge",
-            &[("from", "a"), ("to", "b"), ("style", "dull")],
-        ));
-        assert!(matches!(
-            edge,
-            Ok(NarrationOp::Edge {
-                style: LineStyle::Solid,
-                ..
-            })
-        ));
-        let annotate = to_op(&tag("annotate", &[("target", "a"), ("mark", "zigzag")]));
-        assert!(matches!(
-            annotate,
-            Ok(NarrationOp::Annotate {
-                mark: Mark::Circle,
-                ..
-            })
-        ));
-        let code = to_op(&tag("annotate", &[("line", "4"), ("mark", "zigzag")]));
-        assert!(matches!(
-            code,
-            Ok(NarrationOp::MarkCode {
-                mark: Mark::Underline,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn node_tones_compare_titles_cells_and_code_marks() {
-        let node = to_op(&tag(
-            "node",
-            &[("id", "q"), ("kind", "queue"), ("fill", "Blush")],
-        ));
-        assert!(matches!(
-            node,
-            Ok(NarrationOp::Node {
-                fill: Some(Fill::Blush),
-                ..
-            })
-        ));
-        let unknown = to_op(&tag("node", &[("id", "q"), ("fill", "plaid")]));
-        assert!(matches!(unknown, Ok(NarrationOp::Node { fill: None, .. })));
-        let compare = to_op(&tag(
-            "compare",
-            &[
-                ("title", "Raft vs Paxos"),
-                ("options", "Raft|Paxos"),
-                ("criteria", "Easy"),
-            ],
-        ));
-        assert!(matches!(
-            compare,
-            Ok(NarrationOp::Compare { title: Some(ref title), .. }) if title == "Raft vs Paxos"
-        ));
-        let by_row = to_op(&tag(
-            "cell",
-            &[("row", "Easy"), ("col", "Raft"), ("mark", "no")],
-        ));
-        assert_eq!(
-            by_row,
-            Ok(NarrationOp::Cell {
-                criterion: AxisRef::Name("Easy".into()),
-                option: AxisRef::Name("Raft".into()),
-                mark: CellMark::No,
-            })
-        );
-        let underline = to_op(&tag(
-            "annotate",
-            &[("line", "43"), ("code", "s.cache.Get(")],
-        ));
-        assert_eq!(
-            underline,
-            Ok(NarrationOp::MarkCode {
-                line: 43,
-                code: Some("s.cache.Get(".into()),
-                mark: Mark::Underline,
-            })
-        );
-        let circle = to_op(&tag("annotate", &[("line", "44"), ("mark", "circle")]));
-        assert_eq!(
-            circle,
-            Ok(NarrationOp::MarkCode {
-                line: 44,
-                code: None,
-                mark: Mark::Circle,
-            })
-        );
-    }
-
-    #[test]
-    fn long_text_is_cut_with_an_ellipsis() {
-        let cut = bounded(&"é".repeat(50), 11);
-        assert!(cut.len() <= 11, "{cut}");
-        assert!(cut.ends_with('…'));
-    }
-}
+mod tests;

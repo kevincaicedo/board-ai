@@ -4,6 +4,7 @@
 // attribute is written only when its value changes.
 
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
+import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import { type BoardModel, type Layer, type Run, runActive, traceRunning } from "./board.ts";
 import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
@@ -304,16 +305,12 @@ export class BoardView {
       svg("circle", dot, "trace-core").setAttribute("r", "5");
       dot.style.display = "none";
       trace = { dot, at: [0, 0] };
-    } else if (run.op.kind !== "Strike") {
-      const bounds = run.plan.bounds;
-      const hit = svg("rect", group, "hit");
-      hit.setAttribute("x", String(round1(bounds.x - 6)));
-      hit.setAttribute("y", String(round1(bounds.y - 6)));
-      hit.setAttribute("width", String(round1(bounds.w + 12)));
-      hit.setAttribute("height", String(round1(bounds.h + 12)));
-      const id = run.op.id;
-      hit.addEventListener("pointerenter", () => this.#hover(layer, run, id));
-      hit.addEventListener("pointerleave", () => this.#unhover(layer, run.key));
+    } else if (run.op.kind !== "Strike" && run.op.kind !== "Write") {
+      this.#hit(group, layer, run.plan.bounds, run.op.id, 6);
+      // A row's cells sit over the row, so pointing at a cell names the cell (`arr.3`).
+      for (const target of run.plan.targets) {
+        this.#hit(group, layer, target.rect, target.id, 0);
+      }
     }
     return {
       run,
@@ -372,7 +369,10 @@ export class BoardView {
     text.setAttribute("x", String(round1(item.x)));
     text.setAttribute("y", String(round1(item.y)));
     text.setAttribute("font-size", String(item.size));
-    text.setAttribute("text-anchor", item.align === "left" ? "start" : "middle");
+    text.setAttribute(
+      "text-anchor",
+      item.align === "left" ? "start" : item.align === "right" ? "end" : "middle",
+    );
     // The design centers a line box 55% above the baseline point; central sits 0.05em lower.
     // Set as attributes: WebKit honors dominant-baseline on SVG text more reliably than in CSS.
     text.setAttribute("dominant-baseline", "central");
@@ -384,9 +384,19 @@ export class BoardView {
     return { item, text, written, unwritten };
   }
 
-  #hover(layer: LayerView, run: Run, id: string): void {
-    this.#hovered = { layer: layer.id, key: run.key };
-    const bounds = run.plan.bounds;
+  /** A pointer target for element `id`; the hover is keyed by the element it names. */
+  #hit(group: SVGGElement, layer: LayerView, bounds: Rect, id: string, pad: number): void {
+    const hit = svg("rect", group, "hit");
+    hit.setAttribute("x", String(round1(bounds.x - pad)));
+    hit.setAttribute("y", String(round1(bounds.y - pad)));
+    hit.setAttribute("width", String(round1(bounds.w + pad * 2)));
+    hit.setAttribute("height", String(round1(bounds.h + pad * 2)));
+    hit.addEventListener("pointerenter", () => this.#hover(layer, id, bounds));
+    hit.addEventListener("pointerleave", () => this.#unhover(layer, id));
+  }
+
+  #hover(layer: LayerView, id: string, bounds: Rect): void {
+    this.#hovered = { layer: layer.id, key: id };
     layer.hover.setAttribute("x", String(round1(bounds.x - HOVER_PAD)));
     layer.hover.setAttribute("y", String(round1(bounds.y - HOVER_PAD)));
     layer.hover.setAttribute("width", String(round1(bounds.w + HOVER_PAD * 2)));

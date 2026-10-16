@@ -108,7 +108,7 @@ function node(
   fill: Fill | null,
 ): DrawOp {
   opNumber += 1;
-  return { kind: "Node", id, op: opNumber, shape, label, rect: at, stack: 1, fill };
+  return { kind: "Node", id, op: opNumber, shape, label, rect: at, stack: 1, fill, link: null };
 }
 
 function edge(
@@ -329,9 +329,17 @@ function timeline(): Timed[] {
     },
     {
       at: AT.note,
-      event: { type: "Chip", kind: "Note", text: "Cache-aside: Redis first, Postgres on miss" },
+      event: {
+        type: "Chip",
+        kind: "Note",
+        text: "Cache-aside: Redis first, Postgres on miss",
+        source: null,
+      },
     },
-    { at: AT.task, event: { type: "Chip", kind: "Task", text: "Check our Redis TTLs" } },
+    {
+      at: AT.task,
+      event: { type: "Chip", kind: "Task", text: "Check our Redis TTLs", source: null },
+    },
     { at: AT.resume, event: { type: "LayerPop", layer: 1 } },
     { at: AT.resume, event: { type: "SurfaceDismiss", id: 1 } },
     thread(AT.resume, 3, []),

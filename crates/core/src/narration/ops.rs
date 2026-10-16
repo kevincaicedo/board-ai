@@ -15,7 +15,9 @@ pub enum NarrationOp {
     Node {
         id: ElementId,
         label: String,
-        shape: NodeShape,
+        /// The talker's kind; without one a tree child takes its parent's, anything else is a
+        /// service.
+        shape: Option<NodeShape>,
         placement: Placement,
         stack: u8,
         /// The talker's tone; the board picks one when absent.
@@ -31,6 +33,8 @@ pub enum NarrationOp {
         target: ElementId,
         mark: Mark,
         text: Option<String>,
+        /// A highlight's tone; the board picks one when absent. Pen marks have none.
+        fill: Option<Fill>,
     },
     Strike {
         target: ElementId,
@@ -78,6 +82,56 @@ pub enum NarrationOp {
     Recap {
         bullets: Vec<String>,
     },
+    /// A sequence diagram participant: a head box and its lifeline, right of the last one.
+    Participant {
+        id: ElementId,
+        label: String,
+    },
+    /// A message between two participants' lifelines in the next row (`from == to` is a
+    /// message to itself); a `Dashed` style is a return.
+    Message {
+        from: ElementId,
+        to: ElementId,
+        label: Option<String>,
+        style: LineStyle,
+    },
+    /// A row (or column) of cells; cell `i` is the element `{id}.{i}`.
+    Cells(CellsSpec),
+    /// Writes `text` into the target: an empty cell gets it written in, anything with a label
+    /// is struck and rewritten.
+    Write {
+        target: ElementId,
+        text: String,
+    },
+    /// The talker cited `path:line` in its speech: a source chip, if that line was read.
+    Cite {
+        path: String,
+        line: u32,
+    },
+}
+
+/// What a `cells` tag asks for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CellsSpec {
+    pub id: ElementId,
+    pub label: String,
+    /// One value per cell from the first; cells past the values are empty.
+    pub values: Vec<String>,
+    /// How many cells, at least one and at least as many as the values.
+    pub count: u8,
+    pub index: IndexLabels,
+    pub vertical: bool,
+    pub placement: Placement,
+}
+
+/// The labels beside each cell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IndexLabels {
+    /// Positions counted from this number ("0", "1", …).
+    From(u32),
+    /// The talker's labels, one per cell from the first (addresses, keys).
+    Named(Vec<String>),
+    None,
 }
 
 impl NarrationOp {
@@ -89,8 +143,13 @@ impl NarrationOp {
             | Self::Edge { .. }
             | Self::Annotate { .. }
             | Self::Strike { .. }
-            | Self::Trace { .. } => true,
-            Self::Plan { .. }
+            | Self::Trace { .. }
+            | Self::Participant { .. }
+            | Self::Message { .. }
+            | Self::Cells(_)
+            | Self::Write { .. } => true,
+            Self::Cite { .. }
+            | Self::Plan { .. }
             | Self::Step { .. }
             | Self::Focus { .. }
             | Self::Detour { .. }
@@ -133,6 +192,18 @@ pub enum Placement {
         group: ElementId,
         near: Option<(ElementId, Direction)>,
     },
+    /// A tree node under its parent, joined to it by a line; `side` places a binary tree's
+    /// left or right child, and without it children line up left to right.
+    Child {
+        parent: ElementId,
+        side: Option<Side>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

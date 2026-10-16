@@ -232,7 +232,12 @@ impl Printer {
                 line(at, "surface", &format!("#{} {update:?}", id.0));
             }
             UiEvent::SurfaceDismiss { id } => line(at, "surface", &format!("close #{}", id.0)),
-            UiEvent::Chip { kind, text } => line(at, "chip", &format!("{kind:?} {text}")),
+            UiEvent::Chip { kind, text, source } => {
+                let opens = source.as_ref().map_or_else(String::new, |source| {
+                    format!(" (opens {}:{})", source.path, source.line)
+                });
+                line(at, "chip", &format!("{kind:?} {text}{opens}"));
+            }
             UiEvent::Problem { spoken, detail } => {
                 line(at, "problem", &format!("\"{spoken}\" ({detail})"));
             }
@@ -512,6 +517,76 @@ fn describe(op: &DrawOp) -> String {
         DrawOp::Trace { op, id, points } => {
             format!("#{} trace {} ({} points)", op.0, id.as_str(), points.len())
         }
+        DrawOp::Participant { .. }
+        | DrawOp::Message { .. }
+        | DrawOp::Cells { .. }
+        | DrawOp::Write { .. } => describe_diagram(op),
+    }
+}
+
+/// A sequence diagram's or a row of cells' op, in one line.
+fn describe_diagram(op: &DrawOp) -> String {
+    match op {
+        DrawOp::Participant { op, id, label, .. } => {
+            format!("#{} participant {} \"{label}\"", op.0, id.as_str())
+        }
+        DrawOp::Message {
+            op,
+            from,
+            to,
+            label,
+            style,
+            extend,
+            ..
+        } => {
+            let label = label
+                .as_ref()
+                .map_or_else(String::new, |label| format!(" \"{label}\""));
+            let grows = if extend.is_empty() {
+                String::new()
+            } else {
+                format!(" (lifelines +{})", extend.len())
+            };
+            format!(
+                "#{} message {}>{} {style:?}{label}{grows}",
+                op.0,
+                from.as_str(),
+                to.as_str()
+            )
+        }
+        DrawOp::Cells {
+            op,
+            id,
+            cells,
+            vertical,
+            ..
+        } => {
+            let values: Vec<&str> = cells
+                .iter()
+                .map(|cell| {
+                    if cell.value.is_empty() {
+                        "_"
+                    } else {
+                        cell.value.as_str()
+                    }
+                })
+                .collect();
+            let column = if *vertical { " column" } else { "" };
+            format!(
+                "#{} cells {}[{}]{column}",
+                op.0,
+                id.as_str(),
+                values.join("|")
+            )
+        }
+        DrawOp::Write {
+            op, target, label, ..
+        } => format!("#{} write {} \"{label}\"", op.0, target.as_str()),
+        DrawOp::Node { .. }
+        | DrawOp::Edge { .. }
+        | DrawOp::Annotate { .. }
+        | DrawOp::Strike { .. }
+        | DrawOp::Trace { .. } => String::new(),
     }
 }
 

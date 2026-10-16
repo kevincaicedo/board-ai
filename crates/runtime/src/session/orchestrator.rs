@@ -589,7 +589,12 @@ fn opens_a_session(input: &Input, muted: bool) -> bool {
             MicAction::Unmute => muted,
             MicAction::Mute | MicAction::TalkUp => false,
         },
-        Input::Command(UiCommand::Pointer { .. } | UiCommand::CloseView | UiCommand::Stop)
+        Input::Command(
+            UiCommand::Pointer { .. }
+            | UiCommand::CloseView
+            | UiCommand::Stop
+            | UiCommand::OpenSource { .. },
+        )
         | Input::VoiceEnd { .. }
         | Input::TalkerDelta { .. }
         | Input::TalkerToolCall { .. }

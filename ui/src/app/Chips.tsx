@@ -6,6 +6,7 @@ import { bump, easeOut, ramp, round1, round2 } from "../canvas/math.ts";
 import type { ChipKind } from "../protocol/generated/ChipKind.ts";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
 import { chipFlight } from "./layout.ts";
+import { chipCommand } from "./session.ts";
 
 function ChipGlyph({ kind }: { kind: ChipKind }) {
   switch (kind) {
@@ -38,7 +39,7 @@ export function Chips() {
   const runtime = useRuntime();
   const tokens = runtime.tokens;
   const chips = runtime.scene.store.chips.value;
-  const refs = useRef(new Map<number, HTMLDivElement>());
+  const refs = useRef(new Map<number, HTMLElement>());
   const edgeRef = useRef<HTMLDivElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
   const write = useMemo(styleWriter, []);
@@ -93,25 +94,42 @@ export function Chips() {
     <>
       <div class="brain-edge" ref={edgeRef} aria-hidden="true" />
       <div class="brain-edge-glow" ref={glowRef} aria-hidden="true" />
-      {chips.map((chip) => (
-        <div
-          key={chip.serial}
-          class="chip"
-          ref={(element) => {
-            if (element === null) {
-              refs.current.delete(chip.serial);
-            } else {
-              refs.current.set(chip.serial, element);
-            }
-          }}
-        >
-          <ChipGlyph kind={chip.kind} />
-          <span class="chip-kind">{chip.kind}</span>
-          <span class={chip.kind === "Source" ? "chip-text chip-source" : "chip-text"}>
-            {chip.text}
-          </span>
-        </div>
-      ))}
+      {chips.map((chip) => {
+        const keep = (element: HTMLElement | null): void => {
+          if (element === null) {
+            refs.current.delete(chip.serial);
+          } else {
+            refs.current.set(chip.serial, element);
+          }
+        };
+        const body = (
+          <>
+            <ChipGlyph kind={chip.kind} />
+            <span class="chip-kind">{chip.kind}</span>
+            <span class={chip.kind === "Source" ? "chip-text chip-source" : "chip-text"}>
+              {chip.text}
+            </span>
+          </>
+        );
+        const command = chipCommand(chip);
+        // A source chip with a location opens it: the code card on that line (PRODUCT §7.3).
+        return command === null ? (
+          <div key={chip.serial} class="chip" ref={keep}>
+            {body}
+          </div>
+        ) : (
+          <button
+            key={chip.serial}
+            type="button"
+            class="chip chip-opens"
+            aria-label={`Open ${chip.text}`}
+            ref={keep}
+            onClick={() => runtime.send(command)}
+          >
+            {body}
+          </button>
+        );
+      })}
     </>
   );
 }

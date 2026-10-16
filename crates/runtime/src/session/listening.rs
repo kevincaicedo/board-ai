@@ -71,15 +71,21 @@ impl ListeningPublisher {
     }
 }
 
-/// A label the board just drew: a node's, or an edge's when it has one.
+/// A label the board just drew: a node's, a participant's or a row's, or an edge's or a
+/// message's when it has one.
 fn drawn_term(event: &UiEvent) -> Option<&str> {
     let UiEvent::OpStart { op, .. } = event else {
         return None;
     };
     match op {
-        DrawOp::Node { label, .. } => Some(label),
-        DrawOp::Edge { label, .. } => label.as_deref(),
-        DrawOp::Annotate { .. } | DrawOp::Strike { .. } | DrawOp::Trace { .. } => None,
+        DrawOp::Node { label, .. }
+        | DrawOp::Participant { label, .. }
+        | DrawOp::Cells { label, .. } => Some(label),
+        DrawOp::Edge { label, .. } | DrawOp::Message { label, .. } => label.as_deref(),
+        DrawOp::Annotate { .. }
+        | DrawOp::Strike { .. }
+        | DrawOp::Trace { .. }
+        | DrawOp::Write { .. } => None,
     }
 }
 
@@ -170,6 +176,7 @@ mod tests {
                 },
                 stack: 1,
                 fill: None,
+                link: None,
             },
             budget_ms: 300,
         }

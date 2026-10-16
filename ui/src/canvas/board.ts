@@ -6,7 +6,15 @@ import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Vec } from "./geometry.ts";
-import { labelOf, type OpPlan, type PlanTokens, planOp, traceStroke } from "./plan.ts";
+import {
+  labelOf,
+  labelOfTarget,
+  type OpPlan,
+  type PlanTokens,
+  planOp,
+  type StruckLabel,
+  traceStroke,
+} from "./plan.ts";
 import { itemEnd, itemStart, type Stroke, travelMs } from "./stroke.ts";
 import {
   freezeClock,
@@ -106,8 +114,22 @@ const NO_CAMERA: Camera = {
   focusAt: 0,
 };
 
+/** The element a run draws: its own id, or for a strike and a written value its target's. */
 function keyOf(op: DrawOp): string {
-  return op.kind === "Strike" ? `${op.target}#strike` : op.id;
+  switch (op.kind) {
+    case "Strike":
+      return `${op.target}#strike`;
+    case "Write":
+      return `${op.target}#write`;
+    case "Node":
+    case "Edge":
+    case "Annotate":
+    case "Trace":
+    case "Participant":
+    case "Message":
+    case "Cells":
+      return op.id;
+  }
 }
 
 /** What the presence (orb and nib) tells the board when a main-layer op starts. */
@@ -225,7 +247,6 @@ export class BoardModel {
     // An element re-sent (a group grown for a new child) carries its current label, so a strike
     // written over its old one goes with the old drawing.
     const struck = `${key}#strike`;
-    let target: Run | null = null;
     let replaces = false;
     let sameKind = 0;
     for (const run of layer.runs) {
@@ -236,10 +257,18 @@ export class BoardModel {
       if ((run.op.kind === "Strike") === (op.kind === "Strike")) {
         sameKind += 1;
       }
-      if (op.kind === "Strike" && run.key === op.target) {
-        target = run;
-      }
     }
+    const target = op.kind === "Strike" ? struckLabel(layer.runs, op.target) : null;
+    const round =
+      op.kind === "Annotate" &&
+      op.mark === "Highlight" &&
+      layer.runs.some(
+        (run) =>
+          run.replacedAt === null &&
+          run.key === op.target &&
+          run.op.kind === "Node" &&
+          run.op.shape === "Circle",
+      );
     if (!replaces && sameKind >= LAYER_ELEMENTS_MAX) {
       this.counters.droppedOps += 1;
       return;
@@ -252,7 +281,7 @@ export class BoardModel {
     if (layer.runs.length >= 2 * LAYER_ELEMENTS_MAX) {
       dropReplaced(layer.runs);
     }
-    const plan = planOp(op, this.#tokens, target === null ? null : labelOf(target.plan));
+    const plan = planOp(op, this.#tokens, target, round);
     let lead: Lead = { kind: "none" };
     let leadMs = 0;
     const first = plan.items[0];
@@ -397,6 +426,29 @@ export class BoardModel {
       }
     }
   }
+}
+
+/**
+ * The label a strike on `target` crosses: a value written into it, else the element's own label,
+ * else its label inside another drawing (a cell of a row).
+ */
+function struckLabel(runs: readonly Run[], target: string): StruckLabel | null {
+  let own: Run | null = null;
+  let inside: StruckLabel | null = null;
+  for (const run of runs) {
+    if (run.replacedAt !== null) {
+      continue;
+    }
+    if (run.key === `${target}#write`) {
+      return labelOf(run.plan);
+    }
+    if (run.key === target) {
+      own = run;
+    } else if (inside === null && run.plan.targets.length > 0) {
+      inside = labelOfTarget(run.plan, target);
+    }
+  }
+  return own === null ? inside : labelOf(own.plan);
 }
 
 /** Lets go of drawings a newer run replaced; the renderer has already removed them. */

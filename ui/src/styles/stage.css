@@ -351,6 +351,15 @@
   display: none;
 }
 
+/* A source chip opens its code line: it takes the pointer, unlike the captured chips. */
+.chip-opens {
+  border: none;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 .chip-glyph {
   fill: none;
   stroke: var(--ink-2);

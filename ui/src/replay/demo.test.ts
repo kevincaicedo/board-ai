@@ -11,6 +11,7 @@ import {
   DESIGN_FRAMES_MS,
   demoJsonl,
 } from "./demo.ts";
+import { diagramsJsonl, sceneStartsMs } from "./diagrams.ts";
 import { primitivesJsonl } from "./primitives.ts";
 import { say } from "./speech.ts";
 
@@ -35,6 +36,40 @@ test("the committed primitives fixture is current and fully valid", () => {
     overLimit: 0,
     rows: 0,
   });
+});
+
+test("the committed diagrams fixture is current, fully valid, and draws every diagram op", () => {
+  const diagrams = readFileSync(
+    new URL("../../public/fixtures/diagrams.events.jsonl", import.meta.url),
+    "utf8",
+  );
+  assert.equal(diagrams, diagramsJsonl());
+  const log = parseReplayLog(diagrams);
+  assert.deepEqual(log.skipped, { malformed: 0, otherKind: 0, overLimit: 0, rows: 0 });
+  const kinds = new Set(
+    diagrams
+      .trim()
+      .split("\n")
+      .map(
+        (line) =>
+          JSON.parse(line) as { event: { type: string; op?: { kind: string; mark?: string } } },
+      )
+      .filter((line) => line.event.type === "OpStart")
+      .map((line) => line.event.op?.mark ?? line.event.op?.kind),
+  );
+  for (const kind of [
+    "Participant",
+    "Message",
+    "Cells",
+    "Write",
+    "Highlight",
+    "Strike",
+    "Node",
+    "Edge",
+  ]) {
+    assert.ok(kinds.has(kind), kind);
+  }
+  assert.equal(sceneStartsMs().length, 4, "a sequence, an array, a tree and a hash table");
 });
 
 test("every fixture line is a valid UI event, in time order", () => {

@@ -227,6 +227,7 @@ mod tests {
                 rect: Rect::default(),
                 stack: 1,
                 fill: None,
+                link: None,
             },
             budget_ms: 400,
         }

@@ -223,6 +223,10 @@ fn op_id(op: &DrawOp) -> OpId {
         | DrawOp::Edge { op, .. }
         | DrawOp::Annotate { op, .. }
         | DrawOp::Strike { op, .. }
-        | DrawOp::Trace { op, .. } => *op,
+        | DrawOp::Trace { op, .. }
+        | DrawOp::Participant { op, .. }
+        | DrawOp::Message { op, .. }
+        | DrawOp::Cells { op, .. }
+        | DrawOp::Write { op, .. } => *op,
     }
 }

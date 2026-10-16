@@ -108,6 +108,27 @@ pub const TRACE_HOPS_MAX: usize = 16;
 /// Bullets on a recap card (PRODUCT §7.2 asks for 3 to 5); extra ones are dropped.
 pub const RECAP_BULLETS_MAX: usize = 5;
 
+/// Cells in one `cells` row or column; values and a count past it are dropped.
+pub const CELLS_PER_STRIP_MAX: usize = 32;
+
+/// Longest cell value or index label; a longer one is cut and ends with "…".
+pub const CELL_VALUE_MAX_BYTES: usize = 24;
+
+/// Longest spoken token read as a `path:line` citation; a longer token is just speech.
+pub const CITATION_TOKEN_MAX_BYTES: usize = 200;
+
+/// The system prompt and the tool schemas (as JSON), together. Local models load with a small
+/// context (gemma4 on Ollama: 4,096 tokens), and a request whose prompt doesn't fit loses the
+/// system prompt from the front, so the model answers without drawing. At 9,150 + 5,188 bytes
+/// they measured 2,466 + 1,122 gemma4 tokens, leaving about 500 for the conversation and the
+/// answer; the prompt's tests fail past this, and growing it needs the runtime to ask for a
+/// larger context first.
+pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 14_400;
+
+/// Source chips one reply shows; later citations in the reply show none (the talker still
+/// says them).
+pub const SOURCE_CHIPS_PER_REPLY_MAX: usize = 8;
+
 // ---- Board, surfaces and talker context (LLD §2.5, §2.6) ----
 
 /// Elements on one layer; an op past it is dropped and counted.
@@ -119,6 +140,10 @@ pub const LAYERS_PER_SESSION_MAX: usize = 256;
 
 /// Cells layout tries along one direction before falling back to a new row under everything.
 pub const LAYOUT_NUDGE_CELLS_MAX: i32 = 64;
+
+/// Nudges a drawing placed off the grid (a tree node, a node beside a cell) takes past what is
+/// in its way before it goes under everything instead.
+pub const FREE_NUDGE_STEPS_MAX: i32 = 64;
 
 /// Surfaces beside the canvas (PRODUCT §7.2); opening another dismisses the oldest.
 pub const SURFACES_BESIDE_CANVAS_MAX: usize = 2;

@@ -5,4 +5,4 @@ import type { PointerTarget } from "./PointerTarget.ts";
 /**
  * Commands from the UI. Pointing, the mic and closing a view go to the core.
  */
-export type UiCommand = { "type": "Pointer", target: PointerTarget | null, } | { "type": "Mic", action: MicAction, } | { "type": "Stop" } | { "type": "CloseView" };
+export type UiCommand = { "type": "Pointer", target: PointerTarget | null, } | { "type": "Mic", action: MicAction, } | { "type": "Stop" } | { "type": "CloseView" } | { "type": "OpenSource", path: string, line: number, };

@@ -177,6 +177,7 @@ const RAFT: DrawOp[] = [
     rect: rect(120, 250, 150, 64),
     stack: 1,
     fill: null,
+    link: null,
   },
   {
     kind: "Node",
@@ -187,6 +188,7 @@ const RAFT: DrawOp[] = [
     rect: rect(600, 560, 150, 58),
     stack: 1,
     fill: null,
+    link: null,
   },
 ];
 

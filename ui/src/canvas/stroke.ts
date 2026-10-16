@@ -47,7 +47,7 @@ export interface TextMark {
   readonly text: string;
   readonly size: number;
   readonly tone: Tone;
-  readonly align: "center" | "left";
+  readonly align: TextAlign;
   readonly durationMs: number;
   /** Characters, counted as code points so a letter is never split. */
   readonly count: number;
@@ -60,6 +60,9 @@ export interface TextMark {
 }
 
 export type Item = Stroke | TextMark;
+
+/** Where `x` sits on a line of handwriting: its start, its middle, or its end. */
+export type TextAlign = "center" | "left" | "right";
 
 export interface StrokeOptions {
   readonly kind?: StrokeKind;
@@ -242,7 +245,7 @@ export function makeText(
   text: string,
   size: number,
   tone: Tone,
-  align: "center" | "left" = "center",
+  align: TextAlign = "center",
 ): TextMark {
   const letters = Array.from(text);
   const count = letters.length;
@@ -253,7 +256,8 @@ export function makeText(
     letterEnds[index] = offset;
   }
   const letterWidth = size * 0.5;
-  const left = align === "left";
+  const width = count * letterWidth;
+  const startX = align === "left" ? x : align === "right" ? x - width : x - width / 2;
   return {
     type: "text",
     x,
@@ -266,8 +270,8 @@ export function makeText(
     count,
     letterEnds,
     letterWidth,
-    start: [left ? x : x - (count * letterWidth) / 2, y],
-    end: [left ? x + count * letterWidth : x + (count * letterWidth) / 2, y],
+    start: [startX, y],
+    end: [startX + width, y],
   };
 }
 

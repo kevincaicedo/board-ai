@@ -110,9 +110,13 @@ pub enum UiEvent {
         id: SurfaceId,
     },
     /// A captured item (note, task, memory) flying to the brain edge, or a source chip.
+    /// `source` is the code location a source chip opens when clicked (a `file:line` the talker
+    /// cited from a file read this session); `None` for other chips and for a file a coding
+    /// harness touched.
     Chip {
         kind: ChipKind,
         text: String,
+        source: Option<SourceRef>,
     },
     /// A failure the user hears about: the spoken line and the detail for the caption.
     Problem {
@@ -173,7 +177,9 @@ pub enum Speaker {
 pub enum DrawOp {
     /// Outline, then the label written letter by letter, then the hachure fill in `fill`'s tone
     /// (no fill when `None`). `stack` above 1 draws that many offset copies behind it ("three
-    /// API pods"). A group is re-sent with the same id and op when it grows (D-035).
+    /// API pods"). A group is re-sent with the same id and op when it grows (D-035). `link` is
+    /// the line from a tree node's parent (its bottom centre to this node's top centre), drawn
+    /// before the node.
     Node {
         id: ElementId,
         op: OpId,
@@ -182,6 +188,7 @@ pub enum DrawOp {
         rect: Rect,
         stack: u8,
         fill: Option<Fill>,
+        link: Option<EdgePath>,
     },
     /// A connector from source to target, then its arrowhead, then its label.
     Edge {
@@ -193,7 +200,8 @@ pub enum DrawOp {
         label: Option<String>,
         style: LineStyle,
     },
-    /// An orange pen mark around or under the target.
+    /// An orange pen mark around or under the target; a `Highlight` hachures `rect` in `fill`
+    /// instead (the core always names the tone of a highlight, and none for a pen mark).
     Annotate {
         id: ElementId,
         op: OpId,
@@ -201,6 +209,7 @@ pub enum DrawOp {
         mark: Mark,
         rect: Rect,
         text: Option<String>,
+        fill: Option<Fill>,
     },
     /// Strike through the target's label and write the new one above it (D-032).
     Strike {
@@ -215,6 +224,70 @@ pub enum DrawOp {
         op: OpId,
         points: Vec<Point>,
     },
+    /// A sequence diagram participant: its head box, the label in it, then its dashed lifeline
+    /// down from the box's bottom centre to `lifeline_bottom`. Lifelines grow with the messages
+    /// (`Message.extend`); the head never moves.
+    Participant {
+        id: ElementId,
+        op: OpId,
+        label: String,
+        rect: Rect,
+        lifeline_bottom: i32,
+    },
+    /// A message between two lifelines, in its own row below the previous one: first the
+    /// lifeline stretches it needs (`extend`, quick dashed strokes), then the arrow along
+    /// `points` (two points, or four for a message to itself), its head, then the label above
+    /// it. A `Dashed` style is a return.
+    Message {
+        id: ElementId,
+        op: OpId,
+        from: ElementId,
+        to: ElementId,
+        points: Vec<Point>,
+        label: Option<String>,
+        style: LineStyle,
+        extend: Vec<Lifeline>,
+    },
+    /// A row (or a column, `vertical`) of cells: an array, a memory page, hash buckets. Its
+    /// label (left of a row, above a column), the outline and dividers, each value, then the
+    /// index labels (under a row, left of a column). Each cell is its own element (`arr.3`), so
+    /// it can be pointed at, marked, written and struck.
+    Cells {
+        id: ElementId,
+        op: OpId,
+        label: String,
+        cells: Vec<CellBox>,
+        vertical: bool,
+    },
+    /// Write a label into an element that has none (an empty cell), inside `rect`. A target
+    /// that already has a label gets a `Strike` instead.
+    Write {
+        op: OpId,
+        target: ElementId,
+        label: String,
+        rect: Rect,
+    },
+}
+
+/// A stretch of one participant's lifeline, from `top` down to `bottom` at `x`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Lifeline {
+    pub participant: ElementId,
+    pub x: i32,
+    pub top: i32,
+    pub bottom: i32,
+}
+
+/// One cell of a `Cells` op: its own element id, its box, its value (empty for an empty cell)
+/// and its index label, if shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CellBox {
+    pub id: ElementId,
+    pub rect: Rect,
+    pub value: String,
+    pub index: Option<String>,
 }
 
 /// Straight when `control` is `None`, otherwise one quadratic curve.
@@ -241,6 +314,8 @@ pub enum NodeShape {
     Group,
     /// Handwritten text with no outline.
     Note,
+    /// A circle (an ellipse for a long label): tree nodes and states.
+    Circle,
 }
 
 /// The hachure tones under a node's ink (the canvas's sketch fills). The core picks one per
@@ -268,6 +343,8 @@ pub enum Mark {
     Underline,
     Arrow,
     Bracket,
+    /// A hachure over the target in a tone (`Annotate.fill`), under the ink.
+    Highlight,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -340,6 +417,15 @@ pub enum ChipKind {
     Source,
 }
 
+/// A line of a file read this session (law 6): what a source chip opens. `path` is the path the
+/// file was read with; `line` is 1-based.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SourceRef {
+    pub path: String,
+    pub line: u32,
+}
+
 /// Commands from the UI. Pointing, the mic and closing a view go to the core.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type")]
@@ -357,6 +443,12 @@ pub enum UiCommand {
     Stop,
     /// Esc: close the open view.
     CloseView,
+    /// A source chip was clicked: open the code card on that line. The core shows it only for a
+    /// file read this session, and ignores anything else.
+    OpenSource {
+        path: String,
+        line: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -405,6 +497,7 @@ mod tests {
                     },
                     stack: 1,
                     fill: Some(super::Fill::Sky),
+                    link: None,
                 },
                 budget_ms: 900,
             }],

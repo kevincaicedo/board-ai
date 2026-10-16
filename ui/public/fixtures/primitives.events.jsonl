@@ -1,22 +1,22 @@
 {"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":null}}
 {"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":60}}
 {"v":1,"t":300,"k":"ui","event":{"type":"Thread","steps":["Shapes","Edges","Marks","Surfaces"],"current":0,"detours":[]}}
-{"v":1,"t":900,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"auth","op":1,"shape":"Service","label":"auth","rect":{"x":40,"y":150,"w":140,"h":76},"stack":1,"fill":"Sky"},"budget_ms":1100}}
-{"v":1,"t":2000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"users","op":2,"shape":"Db","label":"users","rect":{"x":230,"y":136,"w":128,"h":102},"stack":1,"fill":"Lilac"},"budget_ms":1400}}
-{"v":1,"t":3400,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"jobs","op":3,"shape":"Queue","label":"jobs","rect":{"x":420,"y":170,"w":180,"h":50},"stack":1,"fill":"Mint"},"budget_ms":1100}}
-{"v":1,"t":4500,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"client","op":4,"shape":"Actor","label":"Client","rect":{"x":100,"y":320,"w":42,"h":86},"stack":1,"fill":null},"budget_ms":1100}}
-{"v":1,"t":5600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"pod","op":5,"shape":"Service","label":"API pod","rect":{"x":200,"y":340,"w":140,"h":70},"stack":3,"fill":"Blush"},"budget_ms":1400}}
-{"v":1,"t":7000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"bus","op":6,"shape":"Note","label":"SQS","rect":{"x":500,"y":355,"w":80,"h":30},"stack":1,"fill":null},"budget_ms":800}}
+{"v":1,"t":900,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"auth","op":1,"shape":"Service","label":"auth","rect":{"x":40,"y":150,"w":140,"h":76},"stack":1,"fill":"Sky","link":null},"budget_ms":1100}}
+{"v":1,"t":2000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"users","op":2,"shape":"Db","label":"users","rect":{"x":230,"y":136,"w":128,"h":102},"stack":1,"fill":"Lilac","link":null},"budget_ms":1400}}
+{"v":1,"t":3400,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"jobs","op":3,"shape":"Queue","label":"jobs","rect":{"x":420,"y":170,"w":180,"h":50},"stack":1,"fill":"Mint","link":null},"budget_ms":1100}}
+{"v":1,"t":4500,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"client","op":4,"shape":"Actor","label":"Client","rect":{"x":100,"y":320,"w":42,"h":86},"stack":1,"fill":null,"link":null},"budget_ms":1100}}
+{"v":1,"t":5600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"pod","op":5,"shape":"Service","label":"API pod","rect":{"x":200,"y":340,"w":140,"h":70},"stack":3,"fill":"Blush","link":null},"budget_ms":1400}}
+{"v":1,"t":7000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"bus","op":6,"shape":"Note","label":"SQS","rect":{"x":500,"y":355,"w":80,"h":30},"stack":1,"fill":null,"link":null},"budget_ms":800}}
 {"v":1,"t":7800,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Strike","op":7,"target":"bus","label":"Kafka","rect":{"x":510,"y":355,"w":60,"h":30}},"budget_ms":800}}
 {"v":1,"t":8600,"k":"ui","event":{"type":"Thread","steps":["Shapes","Edges","Marks","Surfaces"],"current":1,"detours":[]}}
 {"v":1,"t":8600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"client>pod","op":8,"from":"client","to":"pod","path":{"start":{"x":60,"y":510},"control":null,"end":{"x":250,"y":510}},"label":"hit","style":"Solid"},"budget_ms":800}}
 {"v":1,"t":9000,"k":"ui","event":{"type":"Acknowledge"}}
 {"v":1,"t":9400,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"pod>jobs","op":9,"from":"pod","to":"jobs","path":{"start":{"x":300,"y":510},"control":{"x":400,"y":570},"end":{"x":500,"y":510}},"label":"async","style":"Dashed"},"budget_ms":900}}
 {"v":1,"t":10300,"k":"ui","event":{"type":"Thread","steps":["Shapes","Edges","Marks","Surfaces"],"current":2,"detours":[]}}
-{"v":1,"t":10300,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"circle","op":10,"target":"auth","mark":"Circle","rect":{"x":88,"y":176,"w":44,"h":24},"text":null},"budget_ms":700}}
-{"v":1,"t":11000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"underline","op":11,"target":"jobs","mark":"Underline","rect":{"x":488,"y":141,"w":54,"h":16},"text":null},"budget_ms":600}}
-{"v":1,"t":11600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"arrow","op":12,"target":"pod","mark":"Arrow","rect":{"x":200,"y":340,"w":140,"h":70},"text":"×3"},"budget_ms":800}}
-{"v":1,"t":12400,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"bracket","op":13,"target":"jobs","mark":"Bracket","rect":{"x":420,"y":170,"w":180,"h":50},"text":"3 left"},"budget_ms":1500}}
+{"v":1,"t":10300,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"circle","op":10,"target":"auth","mark":"Circle","rect":{"x":88,"y":176,"w":44,"h":24},"text":null,"fill":null},"budget_ms":700}}
+{"v":1,"t":11000,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"underline","op":11,"target":"jobs","mark":"Underline","rect":{"x":488,"y":141,"w":54,"h":16},"text":null,"fill":null},"budget_ms":600}}
+{"v":1,"t":11600,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"arrow","op":12,"target":"pod","mark":"Arrow","rect":{"x":200,"y":340,"w":140,"h":70},"text":"×3","fill":null},"budget_ms":800}}
+{"v":1,"t":12400,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"bracket","op":13,"target":"jobs","mark":"Bracket","rect":{"x":420,"y":170,"w":180,"h":50},"text":"3 left","fill":null},"budget_ms":1500}}
 {"v":1,"t":13000,"k":"ui","event":{"type":"Thread","steps":["Shapes","Edges","Marks","Surfaces"],"current":3,"detours":[]}}
 {"v":1,"t":13000,"k":"ui","event":{"type":"SurfaceShow","surface":{"kind":"Compare","id":1,"options":["cache-aside","write-through"],"criteria":["Easy to add","Writes stay fast","Reads always fresh"],"title":"Cache-aside vs write-through"}}}
 {"v":1,"t":13700,"k":"ui","event":{"type":"SurfaceUpdate","id":1,"update":{"kind":"Cell","row":0,"col":0,"mark":{"kind":"Yes"}}}}
@@ -26,8 +26,8 @@
 {"v":1,"t":14580,"k":"ui","event":{"type":"SurfaceUpdate","id":1,"update":{"kind":"Cell","row":2,"col":0,"mark":{"kind":"No"}}}}
 {"v":1,"t":14800,"k":"ui","event":{"type":"SurfaceUpdate","id":1,"update":{"kind":"Cell","row":2,"col":1,"mark":{"kind":"Text","text":"always"}}}}
 {"v":1,"t":15600,"k":"ui","event":{"type":"SurfaceShow","surface":{"kind":"Recap","id":2,"bullets":["Reads try Redis first","A miss reads Postgres and writes back","TTLs bound staleness"]}}}
-{"v":1,"t":16400,"k":"ui","event":{"type":"Chip","kind":"Memory","text":"We cache users for ten minutes"}}
-{"v":1,"t":16700,"k":"ui","event":{"type":"Chip","kind":"Source","text":"internal/user/service.go"}}
+{"v":1,"t":16400,"k":"ui","event":{"type":"Chip","kind":"Memory","text":"We cache users for ten minutes","source":null}}
+{"v":1,"t":16700,"k":"ui","event":{"type":"Chip","kind":"Source","text":"internal/user/service.go","source":null}}
 {"v":1,"t":17200,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got","is_final":false}}
 {"v":1,"t":17399,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got it.","is_final":false}}
 {"v":1,"t":17500,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":"users"}}

@@ -126,6 +126,7 @@ mod tests {
                     rect,
                     stack: 1,
                     fill: None,
+                    link: None,
                 },
                 budget_ms: 500,
             },

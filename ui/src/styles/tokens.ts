@@ -43,6 +43,7 @@ const TOKEN_SPEC = {
   handGroup: ["--hand-group", "px"],
   handEdge: ["--hand-edge", "px"],
   handAnnotation: ["--hand-annotation", "px"],
+  handIndex: ["--hand-index", "px"],
   handDash: ["--hand-dash", "px"],
   handDashGap: ["--hand-dash-gap", "px"],
   orbSize: ["--orb-size", "px"],

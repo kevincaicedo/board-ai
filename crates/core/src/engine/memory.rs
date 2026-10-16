@@ -203,6 +203,7 @@ impl Core {
         effects.push(Effect::Ui(UiEvent::Chip {
             kind: chip,
             text: bounded(text, LABEL_MAX_BYTES),
+            source: None,
         }));
         Ok((capture, action))
     }

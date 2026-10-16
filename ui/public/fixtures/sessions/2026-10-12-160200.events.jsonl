@@ -16,7 +16,7 @@
 {"v":1,"t":4200,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":0}}
 {"v":1,"t":4200,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The","is_final":false}}
 {"v":1,"t":4399,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The leader","is_final":false}}
-{"v":1,"t":4500,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"leader","op":1,"shape":"Service","label":"leader","rect":{"x":120,"y":250,"w":150,"h":64},"stack":1,"fill":null},"budget_ms":700}}
+{"v":1,"t":4500,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"leader","op":1,"shape":"Service","label":"leader","rect":{"x":120,"y":250,"w":150,"h":64},"stack":1,"fill":null,"link":null},"budget_ms":700}}
 {"v":1,"t":4697,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The leader takes","is_final":false}}
 {"v":1,"t":4962,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The leader takes a","is_final":false}}
 {"v":1,"t":5095,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The leader takes a snapshot","is_final":false}}
@@ -26,19 +26,19 @@
 {"v":1,"t":6239,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"The leader takes a snapshot of its state,","is_final":true}}
 {"v":1,"t":6389,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which","is_final":false}}
 {"v":1,"t":6654,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces","is_final":false}}
-{"v":1,"t":6654,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"log","op":2,"shape":"Queue","label":"log","rect":{"x":120,"y":400,"w":480,"h":56},"stack":1,"fill":null},"budget_ms":1100}}
+{"v":1,"t":6654,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"log","op":2,"shape":"Queue","label":"log","rect":{"x":120,"y":400,"w":480,"h":56},"stack":1,"fill":null,"link":null},"budget_ms":1100}}
 {"v":1,"t":7018,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the","is_final":false}}
 {"v":1,"t":7217,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the log","is_final":false}}
-{"v":1,"t":7217,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"snapshot-mark","op":3,"target":"log","mark":"Underline","rect":{"x":120,"y":400,"w":296,"h":56},"text":"snapshot"},"budget_ms":700}}
+{"v":1,"t":7217,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"snapshot-mark","op":3,"target":"log","mark":"Underline","rect":{"x":120,"y":400,"w":296,"h":56},"text":"snapshot","fill":null},"budget_ms":700}}
 {"v":1,"t":7416,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the log up","is_final":false}}
 {"v":1,"t":7416,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"log>snap","op":4,"from":"log","to":"snap","path":{"start":{"x":268,"y":498},"control":null,"end":{"x":268,"y":552}},"label":null,"style":"Solid"},"budget_ms":300}}
 {"v":1,"t":7582,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the log up to","is_final":false}}
-{"v":1,"t":7582,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"snap","op":5,"shape":"Service","label":"lastIncludedIndex 5","rect":{"x":140,"y":560,"w":260,"h":58},"stack":1,"fill":null},"budget_ms":1000}}
+{"v":1,"t":7582,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"snap","op":5,"shape":"Service","label":"lastIncludedIndex 5","rect":{"x":140,"y":560,"w":260,"h":58},"stack":1,"fill":null,"link":null},"budget_ms":1000}}
 {"v":1,"t":7748,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the log up to lastIncludedIndex.","is_final":false}}
 {"v":1,"t":8669,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"which replaces the log up to lastIncludedIndex.","is_final":true}}
 {"v":1,"t":8819,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A","is_final":false}}
 {"v":1,"t":8952,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A follower","is_final":false}}
-{"v":1,"t":8952,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"follower","op":6,"shape":"Service","label":"follower","rect":{"x":600,"y":560,"w":150,"h":58},"stack":1,"fill":null},"budget_ms":800}}
+{"v":1,"t":8952,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"follower","op":6,"shape":"Service","label":"follower","rect":{"x":600,"y":560,"w":150,"h":58},"stack":1,"fill":null,"link":null},"budget_ms":800}}
 {"v":1,"t":9316,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A follower that","is_final":false}}
 {"v":1,"t":9548,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A follower that falls","is_final":false}}
 {"v":1,"t":9813,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A follower that falls behind","is_final":false}}

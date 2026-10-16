@@ -1,6 +1,7 @@
 clause 0 [talker@0]
   caption: "It calls getUserByID() in internal/user/service.go:42,"
   speech:  "It calls get user by ID in internal slash user slash service dot go line 42,"
+op 0 at clause 0 byte 26: Cite { path: "internal/user/service.go", line: 42 }
 clause 1 [talker@55]
   caption: "see L42-58."
   speech:  "see lines 42 to 58."

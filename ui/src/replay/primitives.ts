@@ -31,6 +31,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(40, 150, 140, 76),
       stack: 1,
       fill: "Sky",
+      link: null,
     })),
   ],
   [
@@ -44,6 +45,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(230, 136, 128, 102),
       stack: 1,
       fill: "Lilac",
+      link: null,
     })),
   ],
   [
@@ -57,6 +59,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(420, 170, 180, 50),
       stack: 1,
       fill: "Mint",
+      link: null,
     })),
   ],
   [
@@ -70,6 +73,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(100, 320, 42, 86),
       stack: 1,
       fill: null,
+      link: null,
     })),
   ],
   [
@@ -83,6 +87,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(200, 340, 140, 70),
       stack: 3,
       fill: "Blush",
+      link: null,
     })),
   ],
   [
@@ -96,6 +101,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       rect: rect(500, 355, 80, 30),
       stack: 1,
       fill: null,
+      link: null,
     })),
   ],
   [
@@ -144,6 +150,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       mark: "Circle",
       rect: rect(88, 176, 44, 24),
       text: null,
+      fill: null,
     })),
   ],
   [
@@ -156,6 +163,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       mark: "Underline",
       rect: rect(488, 141, 54, 16),
       text: null,
+      fill: null,
     })),
   ],
   [
@@ -168,6 +176,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       mark: "Arrow",
       rect: rect(200, 340, 140, 70),
       text: "×3",
+      fill: null,
     })),
   ],
   [
@@ -180,6 +189,7 @@ const SHAPES: readonly [number, DrawOp][] = [
       mark: "Bracket",
       rect: rect(420, 170, 180, 50),
       text: "3 left",
+      fill: null,
     })),
   ],
 ];
@@ -301,8 +311,14 @@ function timed(): { at: number; event: UiEvent }[] {
         },
       },
     },
-    { at: 16_400, event: { type: "Chip", kind: "Memory", text: "We cache users for ten minutes" } },
-    { at: 16_700, event: { type: "Chip", kind: "Source", text: "internal/user/service.go" } },
+    {
+      at: 16_400,
+      event: { type: "Chip", kind: "Memory", text: "We cache users for ten minutes", source: null },
+    },
+    {
+      at: 16_700,
+      event: { type: "Chip", kind: "Source", text: "internal/user/service.go", source: null },
+    },
     {
       at: 17_500,
       event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: "users" },

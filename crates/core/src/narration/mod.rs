@@ -6,6 +6,7 @@
 //! at every split point). It also keeps what was written, so an interruption can commit exactly
 //! the heard prefix with the tags of the ops that were drawn (LLD §2.7).
 
+pub mod citation;
 pub mod clauses;
 pub mod ops;
 pub mod parser;
@@ -14,7 +15,7 @@ pub mod speakable;
 pub mod tags;
 
 use crate::effect::Dropped;
-use crate::limits::{DETOUR_DEPTH_MAX, OPS_PER_RESPONSE_MAX};
+use crate::limits::{CITATION_TOKEN_MAX_BYTES, DETOUR_DEPTH_MAX, OPS_PER_RESPONSE_MAX};
 use clauses::ClauseCutter;
 use ops::NarrationOp;
 use parser::{Piece, TagParser};
@@ -89,6 +90,17 @@ pub struct NarrationStream {
     refused_detours: usize,
     segments: Vec<Segment>,
     written: String,
+    /// The spoken word being read, held back from the clause cutter until it ends, so a
+    /// `path:line` citation anchors its source chip on its own first character.
+    word: Word,
+}
+
+/// The word being read: held while it could still be a citation, passed through once it is too
+/// long to be one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Word {
+    Held(String),
+    Overflowed,
 }
 
 impl NarrationStream {
@@ -105,6 +117,7 @@ impl NarrationStream {
             refused_detours: 0,
             segments: Vec::new(),
             written: String::new(),
+            word: Word::Held(String::new()),
         }
     }
 
@@ -121,6 +134,7 @@ impl NarrationStream {
         self.parser.finish(&mut pieces);
         self.consume(&mut pieces, out);
         self.pieces = pieces;
+        self.end_word(out);
         self.cutter.finish(out);
     }
 
@@ -130,10 +144,14 @@ impl NarrationStream {
         &self.written
     }
 
-    /// Bytes of speech so far (the caption text, tags removed).
+    /// Bytes of speech so far (the caption text, tags removed), the word being read included.
     #[must_use]
     pub fn caption_len(&self) -> usize {
-        self.cutter.caption_len()
+        let held = match &self.word {
+            Word::Held(word) => word.len(),
+            Word::Overflowed => 0,
+        };
+        self.cutter.caption_len() + held
     }
 
     /// The written text up to `caption_offset` bytes of speech, keeping only the tags whose op
@@ -173,11 +191,12 @@ impl NarrationStream {
             match piece {
                 Piece::Text(text) => {
                     for ch in text.chars() {
-                        self.cutter.push_char(ch, out);
+                        self.speak_char(ch, out);
                     }
                     self.push_segment_text(&text);
                 }
                 Piece::Tag(tag) => {
+                    self.end_word(out);
                     let op = match tags::to_op(&tag) {
                         Ok(op) => self.keep_op(op, out),
                         Err(_) => {
@@ -191,10 +210,50 @@ impl NarrationStream {
                     });
                 }
                 Piece::Dropped(written) => {
+                    self.end_word(out);
                     out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
                     self.segments.push(Segment::Tag { written, op: None });
                 }
             }
+        }
+    }
+
+    /// Whitespace ends the word being read; anything else joins it, or goes straight through
+    /// once the word is too long to be a citation.
+    fn speak_char(&mut self, ch: char, out: &mut Vec<NarrationOutput>) {
+        if ch.is_whitespace() {
+            self.end_word(out);
+            self.cutter.push_char(ch, out);
+            return;
+        }
+        match &mut self.word {
+            Word::Held(word) if word.len() + ch.len_utf8() <= CITATION_TOKEN_MAX_BYTES => {
+                word.push(ch);
+            }
+            Word::Held(word) => {
+                let word = std::mem::take(word);
+                self.word = Word::Overflowed;
+                for held in word.chars() {
+                    self.cutter.push_char(held, out);
+                }
+                self.cutter.push_char(ch, out);
+            }
+            Word::Overflowed => self.cutter.push_char(ch, out),
+        }
+    }
+
+    /// The word ended (whitespace, a tag, the end of the stream): a citation becomes an op
+    /// anchored on the word's first character, then the word goes to the clause cutter.
+    fn end_word(&mut self, out: &mut Vec<NarrationOutput>) {
+        let word = match std::mem::replace(&mut self.word, Word::Held(String::new())) {
+            Word::Held(word) => word,
+            Word::Overflowed => return,
+        };
+        if let Some((path, line)) = citation::parse(&word) {
+            self.keep_op(NarrationOp::Cite { path, line }, out);
+        }
+        for ch in word.chars() {
+            self.cutter.push_char(ch, out);
         }
     }
 
@@ -240,7 +299,12 @@ impl NarrationStream {
             | NarrationOp::Cell { .. }
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
-            | NarrationOp::Recap { .. } => {}
+            | NarrationOp::Recap { .. }
+            | NarrationOp::Participant { .. }
+            | NarrationOp::Message { .. }
+            | NarrationOp::Cells(_)
+            | NarrationOp::Write { .. }
+            | NarrationOp::Cite { .. } => {}
         }
         let index = self.ops_kept;
         self.ops_kept += 1;

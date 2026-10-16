@@ -16,7 +16,7 @@ use boardai_core::harness::HarnessKind;
 use boardai_core::ids::{ClauseId, ElementId, LayerId};
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
 use boardai_core::limits::VOICE_ONSET_DUCK_HOLD_MS;
-use boardai_core::protocol::{MicAction, PointerTarget, Speaker, UiCommand, UiEvent};
+use boardai_core::protocol::{DrawOp, MicAction, PointerTarget, Speaker, UiCommand, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
 use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD, USER_ONSET_LEAD_MS};
 use boardai_core::{CoreConfig, MicMode};
@@ -68,6 +68,13 @@ const FRAGMENTS: &[&str] = &[
     r#"<annotate line="42" code="40"/>Look at line 42. "#,
     r#"<recap bullets="Cache first|Postgres on a miss"/>To recap, the cache comes first. "#,
     "The client->CDN hop is **cached**.\n- Then the API. ",
+    r#"The <participant id="c" label="Client"/>client <participant id="s" label="Server"/><message from="c" to="s" label="SYN"/>calls the server. "#,
+    r#"The server <message from="s" to="c" label="ACK" style="return"/>answers and <message from="s" to="s" label="log"/>logs it. "#,
+    r#"An array <cells id="arr" count="4" label="nums"/>has four slots, <write target="arr.1" text="7"/>seven in one. "#,
+    r#"Slot one <annotate target="arr.1" mark="highlight" fill="mint"/>is next, <strike target="arr.1" text="8"/>now eight. "#,
+    r#"The root <node id="n5" label="5" kind="circle"/>five, <node id="n3" label="3" parent="n5" side="left"/>three on its left. "#,
+    r#"Buckets <cells id="ht" count="3" vertical="true"/>stand in a column, <node id="k1" label="k1" near="ht.1"/><edge from="ht.1" to="k1"/>one key in bucket one. "#,
+    "See internal/user/service.go:42 for the lookup. ",
 ];
 
 const QUESTIONS: &[&str] = &[
@@ -336,6 +343,24 @@ const PATHS: &[(&str, Reached)] = &[
     ("view closed", |effect| {
         matches!(effect, Effect::Ui(UiEvent::ViewDismiss))
     }),
+    ("diagram", |effect| {
+        matches!(
+            effect,
+            Effect::Ui(UiEvent::OpStart {
+                op: DrawOp::Participant { .. }
+                    | DrawOp::Message { .. }
+                    | DrawOp::Cells { .. }
+                    | DrawOp::Write { .. },
+                ..
+            })
+        )
+    }),
+    ("lifeline growth", |effect| {
+        matches!(
+            effect,
+            Effect::Ui(UiEvent::OpStart { op: DrawOp::Message { extend, .. }, .. }) if !extend.is_empty()
+        )
+    }),
 ];
 
 /// Clauses whose synthesis fails, about one in [`FAILED_CLAUSE_ONE_IN`], from their own generator
@@ -458,6 +483,8 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         run_seed(seed, MicMode::OpenMic, &mut coverage);
     }
     coverage.assert_exercised(&[
+        "diagram",
+        "lifeline growth",
         "stop voice",
         "onset duck",
         "backchannel",

@@ -11,7 +11,17 @@
 use crate::narration::parser::{Piece, TagParser};
 
 /// Tags that put strokes on the canvas (the ones that take a drawing slot).
-const DRAWING_TAGS: &[&str] = &["node", "edge", "annotate", "strike", "trace"];
+const DRAWING_TAGS: &[&str] = &[
+    "node",
+    "edge",
+    "annotate",
+    "strike",
+    "trace",
+    "participant",
+    "message",
+    "cells",
+    "write",
+];
 
 /// Words after which a noun must come: a tag right after one of these, followed by a word that
 /// can't start a noun phrase, stood in for the noun.

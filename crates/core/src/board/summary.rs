@@ -2,7 +2,9 @@
 //! `main: client(actor) "Browser" → cdn "CDN" → lb "Load balancer" → api×3`.
 //!
 //! Each visible layer (main and every open detour) is one line. Nodes follow their edges as
-//! chains in the order they were drawn; edges that don't continue a chain are listed after.
+//! chains in the order they were drawn; edges that don't continue a chain are listed after. A row
+//! of cells shows its values (`arr[3|1|_|4]`, cell `arr.2` empty), and a sequence diagram its
+//! participants and messages in order.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -44,7 +46,13 @@ fn layer_summary(layer: &Layer) -> String {
     let nodes: Vec<&Element> = layer
         .elements()
         .iter()
-        .filter(|element| visible(element) && matches!(element.kind, ElementKind::Node { .. }))
+        .filter(|element| {
+            visible(element)
+                && matches!(
+                    element.kind,
+                    ElementKind::Node { .. } | ElementKind::Cells { .. }
+                )
+        })
         .collect();
     let edges: Vec<EdgeRef<'_>> = layer
         .elements()
@@ -57,10 +65,17 @@ fn layer_summary(layer: &Layer) -> String {
                 label: &element.label,
                 style: *style,
             }),
-            ElementKind::Node { .. } | ElementKind::Annotation { .. } | ElementKind::Trace => None,
+            ElementKind::Node { .. }
+            | ElementKind::Annotation { .. }
+            | ElementKind::Trace
+            | ElementKind::Participant { .. }
+            | ElementKind::Message { .. }
+            | ElementKind::Cells { .. }
+            | ElementKind::Cell { .. } => None,
         })
         .collect();
-    if nodes.is_empty() && edges.is_empty() {
+    let sequence = sequence(layer);
+    if nodes.is_empty() && edges.is_empty() && sequence.is_none() {
         return "empty".to_owned();
     }
     let mut used = vec![false; edges.len()];
@@ -79,11 +94,76 @@ fn layer_summary(layer: &Layer) -> String {
             edge.to.as_str()
         ));
     }
+    parts.extend(sequence);
     let marks = marks(layer);
     if !marks.is_empty() {
         parts.push(format!("marks: {}", marks.join(", ")));
     }
     parts.join("; ")
+}
+
+/// `sequence client, server: client → server "SYN", server ⇢ client "SYN-ACK"`.
+fn sequence(layer: &Layer) -> Option<String> {
+    let mut participants = Vec::new();
+    let mut messages = Vec::new();
+    for element in layer.elements().iter().filter(|element| visible(element)) {
+        match &element.kind {
+            ElementKind::Participant { .. } => participants.push(node_token(element)),
+            ElementKind::Message {
+                from, to, style, ..
+            } => messages.push(format!(
+                "{} {} {}",
+                from.as_str(),
+                arrow(&EdgeRef {
+                    from,
+                    to,
+                    label: &element.label,
+                    style: *style,
+                }),
+                to.as_str()
+            )),
+            ElementKind::Node { .. }
+            | ElementKind::Edge { .. }
+            | ElementKind::Annotation { .. }
+            | ElementKind::Trace
+            | ElementKind::Cells { .. }
+            | ElementKind::Cell { .. } => {}
+        }
+    }
+    if participants.is_empty() {
+        return None;
+    }
+    let mut text = format!("sequence {}", participants.join(", "));
+    if !messages.is_empty() {
+        let _ = write!(text, ": {}", messages.join(", "));
+    }
+    Some(text)
+}
+
+/// A row of cells as its values, `_` for an empty cell.
+fn cells_token(layer: &Layer, element: &Element, vertical: bool) -> String {
+    let values: Vec<&str> = layer
+        .elements()
+        .iter()
+        .filter(
+            |cell| matches!(&cell.kind, ElementKind::Cell { strip, .. } if *strip == element.id),
+        )
+        .map(|cell| {
+            if cell.label.is_empty() {
+                "_"
+            } else {
+                cell.label.as_str()
+            }
+        })
+        .collect();
+    let mut token = format!("{}[{}]", element.id.as_str(), values.join("|"));
+    if vertical {
+        token.push_str("(column)");
+    }
+    if !element.label.is_empty() {
+        let _ = write!(token, " \"{}\"", element.label);
+    }
+    token
 }
 
 /// Follows the first unused edge out of each node until the chain reaches a visited node.
@@ -94,7 +174,16 @@ fn chain_from<'a>(
     used: &mut [bool],
     visited: &mut BTreeSet<&'a ElementId>,
 ) -> String {
-    let mut chain = node_token(start);
+    let mut chain = match start.kind {
+        ElementKind::Cells { vertical, .. } => cells_token(layer, start, vertical),
+        ElementKind::Node { .. }
+        | ElementKind::Edge { .. }
+        | ElementKind::Annotation { .. }
+        | ElementKind::Trace
+        | ElementKind::Participant { .. }
+        | ElementKind::Message { .. }
+        | ElementKind::Cell { .. } => node_token(start),
+    };
     let mut current = &start.id;
     // Each step marks an edge used, so the walk is bounded by the edge count.
     for _ in 0..edges.len() {
@@ -150,6 +239,11 @@ fn node_token(element: &Element) -> String {
             let _ = write!(token, " in {}", group.as_str());
         }
     }
+    if matches!(element.kind, ElementKind::Participant { .. })
+        && !element.label.eq_ignore_ascii_case(element.id.as_str())
+    {
+        let _ = write!(token, " \"{}\"", element.label);
+    }
     match element.state {
         ElementState::Frozen {
             progress_percent, ..
@@ -168,14 +262,20 @@ fn marks(layer: &Layer) -> Vec<String> {
         .iter()
         .filter(|element| visible(element))
         .filter_map(|element| match &element.kind {
-            ElementKind::Annotation { target, mark } => {
+            ElementKind::Annotation { target, mark, .. } => {
                 let mut text = format!("{} on {}", mark_name(*mark), target.as_str());
                 if !element.label.is_empty() {
                     let _ = write!(text, " \"{}\"", element.label);
                 }
                 Some(text)
             }
-            ElementKind::Node { .. } | ElementKind::Edge { .. } | ElementKind::Trace => None,
+            ElementKind::Node { .. }
+            | ElementKind::Edge { .. }
+            | ElementKind::Trace
+            | ElementKind::Participant { .. }
+            | ElementKind::Message { .. }
+            | ElementKind::Cells { .. }
+            | ElementKind::Cell { .. } => None,
         })
         .collect()
 }
@@ -189,6 +289,7 @@ pub fn shape_name(shape: NodeShape) -> &'static str {
         NodeShape::Actor => "actor",
         NodeShape::Group => "group",
         NodeShape::Note => "note",
+        NodeShape::Circle => "circle",
     }
 }
 
@@ -198,5 +299,6 @@ fn mark_name(mark: Mark) -> &'static str {
         Mark::Underline => "underline",
         Mark::Arrow => "arrow",
         Mark::Bracket => "bracket",
+        Mark::Highlight => "highlight",
     }
 }

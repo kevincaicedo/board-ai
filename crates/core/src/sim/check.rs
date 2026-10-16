@@ -7,6 +7,7 @@ use crate::conversation::{ConversationState, cues};
 use crate::effect::{Effect, ForgetScope, Gain};
 use crate::engine::Core;
 use crate::engine::text::change_question;
+use crate::geometry::Point;
 use crate::geometry::Rect;
 use crate::harness::HarnessKind;
 use crate::history::{AssistantPart, Message, UserPart};
@@ -26,6 +27,11 @@ pub struct Checker {
     history: Vec<Message>,
     boxes: BTreeMap<(LayerId, ElementId), (Rect, NodeShape)>,
     paths: BTreeMap<(LayerId, ElementId), EdgePath>,
+    /// Each participant's head and where its lifeline ends, as drawn so far.
+    lifelines: BTreeMap<(LayerId, ElementId), (Rect, i32)>,
+    /// Each message's arrow, and each cell's box.
+    arrows: BTreeMap<(LayerId, ElementId), Vec<Point>>,
+    cells: BTreeMap<(LayerId, ElementId), Rect>,
     started_ops: BTreeSet<OpId>,
     layer_pushes: usize,
     layer_pops: usize,
@@ -384,7 +390,80 @@ impl Checker {
                 }
                 self.paths.insert(key, *path);
             }
-            DrawOp::Annotate { .. } | DrawOp::Strike { .. } | DrawOp::Trace { .. } => {}
+            DrawOp::Annotate { .. }
+            | DrawOp::Strike { .. }
+            | DrawOp::Trace { .. }
+            | DrawOp::Write { .. } => {}
+            DrawOp::Participant { .. } | DrawOp::Message { .. } | DrawOp::Cells { .. } => {
+                self.check_stable_diagram(now, layer, op);
+            }
+        }
+    }
+
+    /// I6 for sequence diagrams and cells: a head, an arrow and a cell never move, and a
+    /// lifeline only grows, each stretch starting exactly where the drawn line ends, straight
+    /// under its head.
+    fn check_stable_diagram(&mut self, now: SessionTime, layer: LayerId, op: &DrawOp) {
+        match op {
+            DrawOp::Participant {
+                id,
+                rect,
+                lifeline_bottom,
+                ..
+            } => {
+                let key = (layer, id.clone());
+                if let Some((head, bottom)) = self.lifelines.get(&key).copied()
+                    && (head != *rect || *lifeline_bottom < bottom)
+                {
+                    self.violate(now, format!("I6: participant {} moved", id.as_str()));
+                }
+                self.lifelines.insert(key, (*rect, *lifeline_bottom));
+            }
+            DrawOp::Message {
+                id, points, extend, ..
+            } => {
+                let key = (layer, id.clone());
+                if self.arrows.get(&key).is_some_and(|old| old != points) {
+                    self.violate(now, format!("I6: message {} moved", id.as_str()));
+                }
+                self.arrows.insert(key, points.clone());
+                for stretch in extend {
+                    let key = (layer, stretch.participant.clone());
+                    let continues = self.lifelines.get(&key).is_some_and(|(head, bottom)| {
+                        stretch.x == head.center().x
+                            && stretch.top == *bottom
+                            && stretch.bottom > stretch.top
+                    });
+                    if !continues {
+                        self.violate(
+                            now,
+                            format!(
+                                "I6: the lifeline of {} grew from {}, not from where it ended",
+                                stretch.participant.as_str(),
+                                stretch.top
+                            ),
+                        );
+                    }
+                    if let Some(line) = self.lifelines.get_mut(&key) {
+                        line.1 = line.1.max(stretch.bottom);
+                    }
+                }
+            }
+            DrawOp::Cells { cells, .. } => {
+                for cell in cells {
+                    let key = (layer, cell.id.clone());
+                    if self.cells.get(&key).is_some_and(|old| *old != cell.rect) {
+                        self.violate(now, format!("I6: cell {} moved", cell.id.as_str()));
+                    }
+                    self.cells.insert(key, cell.rect);
+                }
+            }
+            DrawOp::Node { .. }
+            | DrawOp::Edge { .. }
+            | DrawOp::Annotate { .. }
+            | DrawOp::Strike { .. }
+            | DrawOp::Trace { .. }
+            | DrawOp::Write { .. } => {}
         }
     }
 
@@ -509,7 +588,11 @@ fn op_id(op: &DrawOp) -> OpId {
         | DrawOp::Edge { op, .. }
         | DrawOp::Annotate { op, .. }
         | DrawOp::Strike { op, .. }
-        | DrawOp::Trace { op, .. } => *op,
+        | DrawOp::Trace { op, .. }
+        | DrawOp::Participant { op, .. }
+        | DrawOp::Message { op, .. }
+        | DrawOp::Cells { op, .. }
+        | DrawOp::Write { op, .. } => *op,
     }
 }
 

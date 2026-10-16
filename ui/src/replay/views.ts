@@ -52,6 +52,7 @@ export const RAFT_BOARD: readonly DrawOp[] = [
     rect: rect(120, 250, 150, 64),
     stack: 1,
     fill: null,
+    link: null,
   },
   {
     kind: "Node",
@@ -62,6 +63,7 @@ export const RAFT_BOARD: readonly DrawOp[] = [
     rect: rect(120, 400, 480, 56),
     stack: 1,
     fill: null,
+    link: null,
   },
   {
     kind: "Annotate",
@@ -71,6 +73,7 @@ export const RAFT_BOARD: readonly DrawOp[] = [
     mark: "Underline",
     rect: rect(120, 400, 296, 56),
     text: "snapshot",
+    fill: null,
   },
   {
     kind: "Edge",
@@ -91,6 +94,7 @@ export const RAFT_BOARD: readonly DrawOp[] = [
     rect: rect(140, 560, 260, 58),
     stack: 1,
     fill: null,
+    link: null,
   },
   {
     kind: "Node",
@@ -101,6 +105,7 @@ export const RAFT_BOARD: readonly DrawOp[] = [
     rect: rect(600, 560, 150, 58),
     stack: 1,
     fill: null,
+    link: null,
   },
   {
     kind: "Edge",

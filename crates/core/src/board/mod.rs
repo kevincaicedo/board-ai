@@ -4,15 +4,24 @@
 //! drawing at its slot (`Drawing`), and it is `Drawn` once its budget has passed. An interruption
 //! freezes the stroke in flight (`Frozen`) and removes anything still `Pending`, which the user
 //! never saw. A repeated id updates the element (a strike, or finishing a frozen stroke) and
-//! never duplicates it. Layout places only new ids, so nothing on the board moves (I6); the one
-//! exception is a group, whose box only grows to keep its children inside.
+//! never duplicates it. Layout places only new ids, so nothing on the board moves (I6); the
+//! exceptions only grow: a group's box, to keep its children inside, and a lifeline, as messages
+//! go down a sequence diagram.
+//!
+//! One op can make several elements (a row of cells and each cell, a tree node and the line from
+//! its parent). They share the op, and move through the states together.
 
+mod cells;
 pub mod excalidraw;
+mod free;
 pub mod layout;
+mod lifecycle;
 pub mod metrics;
 mod place;
+mod sequence;
 pub mod summary;
 mod tone;
+mod tree;
 
 use std::collections::BTreeMap;
 
@@ -23,8 +32,12 @@ use crate::narration::ops::Placement;
 use crate::protocol::{DrawOp, EdgePath, Fill, LineStyle, Mark, NodeShape};
 use crate::time::SessionTime;
 use layout::{CellSpan, Grid};
-use place::{edge_between, node_cell, repeated, strike};
+use place::{Spot, edge_between, repeated, spot, strike};
+use sequence::{RowCommit, Sequence};
 use tone::Tones;
+
+/// A highlight's tone when the talker names none.
+const HIGHLIGHT_FILL: Fill = Fill::Blush;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Element {
@@ -43,8 +56,12 @@ pub enum ElementKind {
         shape: NodeShape,
         stack: u8,
         group: Option<ElementId>,
-        span: CellSpan,
+        /// Its grid cells; `None` for a node placed off the grid (a tree node, a node beside a
+        /// cell), whose neighbours are placed off the grid too.
+        span: Option<CellSpan>,
         fill: Option<Fill>,
+        /// Its parent, for a tree node.
+        parent: Option<ElementId>,
     },
     Edge {
         from: ElementId,
@@ -54,8 +71,36 @@ pub enum ElementKind {
     Annotation {
         target: ElementId,
         mark: Mark,
+        /// A highlight's tone.
+        fill: Option<Fill>,
     },
     Trace,
+    /// A sequence diagram participant: the box is its head; its lifeline runs from the head's
+    /// bottom centre down to `lifeline_bottom`, which only grows.
+    Participant {
+        span: CellSpan,
+        lifeline_bottom: i32,
+    },
+    /// A message between lifelines; `commit` is what starting it does to the sequence.
+    Message {
+        from: ElementId,
+        to: ElementId,
+        style: LineStyle,
+        commit: RowCommit,
+    },
+    /// A row or column of cells; `extent` adds its label and index labels to the box.
+    Cells {
+        vertical: bool,
+        span: Option<CellSpan>,
+        extent: Rect,
+    },
+    /// One cell of a row, at `index` from 0; its label is its value, `index_label` what is
+    /// written beside it.
+    Cell {
+        strip: ElementId,
+        index: u8,
+        index_label: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,6 +130,37 @@ impl Geometry {
     }
 }
 
+impl Element {
+    /// Everything the element covers on the board: its geometry, plus a participant's lifeline
+    /// and a row of cells' labels.
+    #[must_use]
+    pub fn area(&self) -> Rect {
+        match (&self.kind, &self.geometry) {
+            (
+                ElementKind::Participant {
+                    lifeline_bottom, ..
+                },
+                Geometry::Box(head),
+            ) => head.union(layout::lifeline_box(
+                head.center().x,
+                head.bottom(),
+                *lifeline_bottom,
+            )),
+            (ElementKind::Cells { extent, .. }, _) => *extent,
+            (
+                ElementKind::Node { .. }
+                | ElementKind::Edge { .. }
+                | ElementKind::Annotation { .. }
+                | ElementKind::Trace
+                | ElementKind::Participant { .. }
+                | ElementKind::Message { .. }
+                | ElementKind::Cell { .. },
+                _,
+            ) => self.geometry.bounds(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElementState {
     /// Laid out; its op waits for its drawing slot.
@@ -110,6 +186,12 @@ pub enum Placed {
     New { id: ElementId, draw: DrawOp },
     /// A repeated id with a new label: strike the old one ([`Board::apply_strike`] at start).
     Strike { target: ElementId, draw: DrawOp },
+    /// A label for an element that has none (an empty cell): write it in
+    /// ([`Board::apply_write`] at start).
+    Write { target: ElementId, draw: DrawOp },
+    /// Something the op needs drawn first (a participant a message names that nobody drew):
+    /// start it like a new element, then lay the op out again at its next slot.
+    Before { id: ElementId, draw: DrawOp },
     /// A repeated id of a frozen element: finish the frozen stroke instead of redrawing it.
     ResumeFrozen,
     /// A repeated id with nothing new.
@@ -122,7 +204,14 @@ pub enum Rejected {
     LayerMissing,
     LayerFull,
     UnknownElement(ElementId),
-    NoEdge { from: ElementId, to: ElementId },
+    NoEdge {
+        from: ElementId,
+        to: ElementId,
+    },
+    /// An id a new element needs (a cell's `arr.3`) already names something else.
+    IdTaken(ElementId),
+    /// A message needs two participants, or one for a message to itself.
+    NotParticipant(ElementId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,6 +222,7 @@ pub struct Layer {
     elements: Vec<Element>,
     index: BTreeMap<ElementId, usize>,
     grid: Grid,
+    sequence: Sequence,
 }
 
 impl Layer {
@@ -144,6 +234,7 @@ impl Layer {
             elements: Vec::new(),
             index: BTreeMap::new(),
             grid: Grid::default(),
+            sequence: Sequence::default(),
         }
     }
 
@@ -184,31 +275,55 @@ impl Layer {
         if self.elements.len() >= ELEMENTS_PER_LAYER_MAX {
             return Err(Rejected::LayerFull);
         }
+        if self.index.contains_key(&element.id) {
+            return Err(Rejected::IdTaken(element.id));
+        }
         self.index.insert(element.id.clone(), self.elements.len());
         self.elements.push(element);
         Ok(())
     }
 
-    fn node_rect(&self, id: &ElementId) -> Result<(Rect, CellSpan), Rejected> {
+    /// The box of something drawn that others can be placed beside or joined to, and its grid
+    /// cells when it sits on the grid (`None` places its neighbours off the grid).
+    fn node_rect(&self, id: &ElementId) -> Result<(Rect, Option<CellSpan>), Rejected> {
         let element = self
             .element(id)
             .filter(|element| element.state != ElementState::Pending)
             .ok_or_else(|| Rejected::UnknownElement(id.clone()))?;
         match (&element.kind, &element.geometry) {
-            (ElementKind::Node { span, .. }, Geometry::Box(rect)) => Ok((*rect, *span)),
-            (ElementKind::Node { .. }, Geometry::Path(_) | Geometry::Points(_))
-            | (ElementKind::Edge { .. } | ElementKind::Annotation { .. } | ElementKind::Trace, _) => {
-                Err(Rejected::UnknownElement(id.clone()))
+            (
+                ElementKind::Node { span, .. } | ElementKind::Cells { span, .. },
+                Geometry::Box(rect),
+            ) => Ok((*rect, *span)),
+            (ElementKind::Cell { .. } | ElementKind::Participant { .. }, Geometry::Box(rect)) => {
+                Ok((*rect, None))
             }
+            (
+                ElementKind::Node { .. }
+                | ElementKind::Cells { .. }
+                | ElementKind::Cell { .. }
+                | ElementKind::Participant { .. },
+                Geometry::Path(_) | Geometry::Points(_),
+            )
+            | (
+                ElementKind::Edge { .. }
+                | ElementKind::Annotation { .. }
+                | ElementKind::Trace
+                | ElementKind::Message { .. },
+                _,
+            ) => Err(Rejected::UnknownElement(id.clone())),
         }
     }
 
-    /// The last node laid out, where the flow continues for a node with no placement.
+    /// The last node or row of cells laid out, where the flow continues for one with no
+    /// placement.
     fn last_node(&self) -> Option<&Element> {
-        self.elements
-            .iter()
-            .rev()
-            .find(|element| matches!(element.kind, ElementKind::Node { group: None, .. }))
+        self.elements.iter().rev().find(|element| {
+            matches!(
+                element.kind,
+                ElementKind::Node { group: None, .. } | ElementKind::Cells { .. }
+            )
+        })
     }
 
     /// Bounds of everything the user can see on this layer.
@@ -217,8 +332,13 @@ impl Layer {
         self.elements
             .iter()
             .filter(|element| element.state != ElementState::Pending)
-            .map(|element| element.geometry.bounds())
+            .map(Element::area)
             .reduce(Rect::union)
+    }
+
+    /// The elements one op made, in the order it made them.
+    fn made_by(&self, op: OpId) -> impl Iterator<Item = &Element> {
+        self.elements.iter().filter(move |element| element.op == op)
     }
 
     /// The frozen element, if a stroke on this layer was stopped mid-way.
@@ -302,33 +422,58 @@ impl Board {
         if let Some(existing) = self.layer_mut(layer_id)?.element(node.id) {
             return Ok(repeated(existing, op, node.label));
         }
-        let fill = self.tones.pick(layer_id, node.shape, node.label, node.fill);
-        let layer = self.layer_mut(layer_id)?;
-        let (width, height) = layout::node_size(node.shape, node.label);
-        let cols = layout::columns_for(width);
-        let (cell, group) = node_cell(layer, node.placement, cols)?;
-        let span = CellSpan { cell, cols };
-        let rect = layout::rect_in(span, width, height);
-        if node.shape == NodeShape::Group {
-            layer.grid.reserve(cell, node.id);
-        } else {
-            layer.grid.occupy(span, node.id);
+        if let Placement::Child { parent, side } = node.placement
+            && let Some(placed) = self.place_child(layer_id, op, node, parent, *side)?
+        {
+            return Ok(placed);
         }
+        let shape = node.shape.unwrap_or(NodeShape::Service);
+        let fill = self.tones.pick(layer_id, shape, node.label, node.fill);
+        let layer = self.layer_mut(layer_id)?;
+        let (width, mut height) = layout::node_size(shape, node.label);
+        // A box beside a cell (a hash chain's entry, a list's next node) is no taller than what it
+        // hangs from, so entries for neighbouring buckets line up row by row.
+        if let Placement::Near { target, .. } = node.placement
+            && let Ok((beside, None)) = layer.node_rect(target)
+            && matches!(shape, NodeShape::Service | NodeShape::Queue)
+        {
+            height = height.min(beside.h);
+        }
+        let (rect, span, group) = match spot(layer, node.placement, width, height) {
+            Spot::Grid { cell, cols, group } => {
+                let span = CellSpan { cell, cols };
+                if shape == NodeShape::Group {
+                    // Every cell its frame covers waits for its members, so nothing else is
+                    // placed on the frame.
+                    for col in cell.col..cell.col + cols {
+                        layer.grid.reserve(layout::Cell { col, ..cell }, node.id);
+                    }
+                } else {
+                    layer.grid.occupy(span, node.id);
+                }
+                (layout::rect_in(span, width, height), Some(span), group)
+            }
+            Spot::Free { rect } => {
+                layer.grid.occupy_rect(rect, node.id);
+                (rect, None, None)
+            }
+        };
         let element = Element {
             id: node.id.clone(),
             op,
             kind: ElementKind::Node {
-                shape: node.shape,
+                shape,
                 stack: node.stack,
                 group,
                 span,
                 fill,
+                parent: None,
             },
             label: node.label.to_owned(),
             geometry: Geometry::Box(rect),
             state: ElementState::Pending,
         };
-        let draw = node_draw(&element, rect);
+        let draw = node_draw(&element, rect, None);
         layer.insert(element)?;
         Ok(Placed::New {
             id: node.id.clone(),
@@ -342,7 +487,11 @@ impl Board {
         op: OpId,
         edge: EdgeRequest<'_>,
     ) -> Result<Placed, Rejected> {
+        // Between two lifelines an edge is a message: models draw them with `edge` too.
         let layer = self.layer_mut(layer_id)?;
+        if layer.is_participant(edge.from) && layer.is_participant(edge.to) {
+            return self.place_message(layer_id, op, edge);
+        }
         let id = ElementId::parse(&format!("{}>{}", edge.from.as_str(), edge.to.as_str()))
             .or_else(|| ElementId::parse(&format!("e:{}", op.0)))
             .ok_or_else(|| Rejected::UnknownElement(edge.from.clone()))?;
@@ -368,7 +517,11 @@ impl Board {
                     ElementKind::Node { .. }
                     | ElementKind::Edge { .. }
                     | ElementKind::Annotation { .. }
-                    | ElementKind::Trace,
+                    | ElementKind::Trace
+                    | ElementKind::Participant { .. }
+                    | ElementKind::Message { .. }
+                    | ElementKind::Cells { .. }
+                    | ElementKind::Cell { .. },
                     _,
                 ) => None,
             })
@@ -398,21 +551,33 @@ impl Board {
         Ok(Placed::New { id, draw })
     }
 
+    /// A pen mark around or under the target; a highlight hachures the target itself, in
+    /// `fill` or the highlight tone.
     pub fn place_annotation(
         &mut self,
         layer_id: LayerId,
         op: OpId,
-        target: &ElementId,
-        mark: Mark,
-        text: Option<&str>,
+        mark: AnnotationRequest<'_>,
     ) -> Result<Placed, Rejected> {
+        let AnnotationRequest {
+            target,
+            mark,
+            text,
+            fill,
+        } = mark;
         let layer = self.layer_mut(layer_id)?;
         let target_bounds = layer
             .element(target)
             .filter(|element| element.state != ElementState::Pending)
             .map(|element| element.geometry.bounds())
             .ok_or_else(|| Rejected::UnknownElement(target.clone()))?;
-        let rect = layout::inflate(target_bounds, layout::ANNOTATION_MARGIN, 0);
+        let (rect, fill) = match mark {
+            Mark::Highlight => (target_bounds, Some(fill.unwrap_or(HIGHLIGHT_FILL))),
+            Mark::Circle | Mark::Underline | Mark::Arrow | Mark::Bracket => (
+                layout::inflate(target_bounds, layout::ANNOTATION_MARGIN, 0),
+                None,
+            ),
+        };
         let id = generated_id("a", op);
         let draw = DrawOp::Annotate {
             id: id.clone(),
@@ -421,6 +586,7 @@ impl Board {
             mark,
             rect,
             text: text.map(str::to_owned),
+            fill,
         };
         layer.insert(Element {
             id: id.clone(),
@@ -428,6 +594,7 @@ impl Board {
             kind: ElementKind::Annotation {
                 target: target.clone(),
                 mark,
+                fill,
             },
             label: text.unwrap_or_default().to_owned(),
             geometry: Geometry::Box(rect),
@@ -491,160 +658,6 @@ impl Board {
         })?;
         Ok(Placed::New { id, draw })
     }
-
-    /// The element's op starts now. Returns the redraw of its group when the group had to grow.
-    pub fn start(
-        &mut self,
-        layer_id: LayerId,
-        id: &ElementId,
-        now: SessionTime,
-        budget_ms: u32,
-    ) -> Option<DrawOp> {
-        let layer = self.layer_mut(layer_id).ok()?;
-        let element = layer.element_mut(id)?;
-        element.state = ElementState::Drawing {
-            started_at: now,
-            budget_ms,
-        };
-        let (
-            ElementKind::Node {
-                group: Some(group), ..
-            },
-            Geometry::Box(child),
-        ) = (&element.kind, &element.geometry)
-        else {
-            return None;
-        };
-        let (group, child) = (group.clone(), *child);
-        let group_element = layer.element_mut(&group)?;
-        let Geometry::Box(old) = group_element.geometry else {
-            return None;
-        };
-        let needed = layout::inflate(child, layout::GROUP_PADDING, layout::GROUP_LABEL_SPACE);
-        let grown = old.union(needed);
-        if grown == old {
-            return None;
-        }
-        group_element.geometry = Geometry::Box(grown);
-        Some(node_draw(group_element, grown))
-    }
-
-    pub fn apply_strike(&mut self, layer_id: LayerId, target: &ElementId, label: &str) {
-        if let Some(element) = self
-            .layer_mut(layer_id)
-            .ok()
-            .and_then(|layer| layer.element_mut(target))
-        {
-            label.clone_into(&mut element.label);
-            element.state = ElementState::Struck;
-        }
-    }
-
-    /// Removes an element that was laid out but never started; the user never saw it.
-    pub fn remove_pending(&mut self, layer_id: LayerId, id: &ElementId) {
-        let Ok(layer) = self.layer_mut(layer_id) else {
-            return;
-        };
-        if layer.element(id).map(|element| element.state) != Some(ElementState::Pending) {
-            return;
-        }
-        layer.elements.retain(|element| element.id != *id);
-        layer.grid.release(id);
-        layer.index = layer
-            .elements
-            .iter()
-            .enumerate()
-            .map(|(index, element)| (element.id.clone(), index))
-            .collect();
-    }
-
-    /// Marks strokes whose budget has passed as drawn.
-    pub fn settle(&mut self, now: SessionTime) {
-        for element in self
-            .layers
-            .iter_mut()
-            .flat_map(|layer| layer.elements.iter_mut())
-        {
-            if let ElementState::Drawing {
-                started_at,
-                budget_ms,
-            } = element.state
-                && now >= started_at.plus_ms(u64::from(budget_ms))
-            {
-                element.state = ElementState::Drawn;
-            }
-        }
-    }
-
-    /// Freezes the stroke in flight on `layer_id`: the most recently started one still within
-    /// its budget. Any older stroke still drawing is treated as finished.
-    pub fn freeze(&mut self, layer_id: LayerId, now: SessionTime) -> Option<FrozenOp> {
-        self.settle(now);
-        let layer = self.layer_mut(layer_id).ok()?;
-        let latest = layer
-            .elements
-            .iter()
-            .enumerate()
-            .filter_map(|(index, element)| match element.state {
-                ElementState::Drawing { started_at, .. } => Some((started_at, element.op, index)),
-                ElementState::Pending
-                | ElementState::Drawn
-                | ElementState::Frozen { .. }
-                | ElementState::Struck => None,
-            })
-            .max()
-            .map(|(_, _, index)| index)?;
-        for (index, element) in layer.elements.iter_mut().enumerate() {
-            let ElementState::Drawing {
-                started_at,
-                budget_ms,
-            } = element.state
-            else {
-                continue;
-            };
-            if index != latest {
-                element.state = ElementState::Drawn;
-                continue;
-            }
-            let elapsed_ms = u32::try_from(now.ms_since(started_at)).unwrap_or(u32::MAX);
-            let progress = elapsed_ms.saturating_mul(100) / budget_ms.max(1);
-            let progress_percent = u8::try_from(progress.min(99)).unwrap_or(99);
-            element.state = ElementState::Frozen {
-                progress_percent,
-                remaining_ms: budget_ms.saturating_sub(elapsed_ms),
-            };
-        }
-        let element = layer.elements.get(latest)?;
-        let ElementState::Frozen {
-            progress_percent, ..
-        } = element.state
-        else {
-            return None;
-        };
-        Some(FrozenOp {
-            layer: layer_id,
-            id: element.id.clone(),
-            label: element.label.clone(),
-            progress_percent,
-        })
-    }
-
-    /// Restarts the frozen stroke on `layer_id`; returns the budget it has left.
-    pub fn resume_frozen(&mut self, layer_id: LayerId, now: SessionTime) -> Option<u32> {
-        let layer = self.layer_mut(layer_id).ok()?;
-        let element = layer
-            .elements
-            .iter_mut()
-            .find(|element| matches!(element.state, ElementState::Frozen { .. }))?;
-        let ElementState::Frozen { remaining_ms, .. } = element.state else {
-            return None;
-        };
-        element.state = ElementState::Drawing {
-            started_at: now,
-            budget_ms: remaining_ms,
-        };
-        Some(remaining_ms)
-    }
 }
 
 /// A node to lay out.
@@ -652,7 +665,9 @@ impl Board {
 pub struct NodeRequest<'a> {
     pub id: &'a ElementId,
     pub label: &'a str,
-    pub shape: NodeShape,
+    /// The talker's kind: a tree child without one takes its parent's, anything else is a
+    /// service.
+    pub shape: Option<NodeShape>,
     pub placement: &'a Placement,
     pub stack: u8,
     /// The talker's tone; the board picks one when it is `None` (and for shapes with no fill
@@ -660,13 +675,23 @@ pub struct NodeRequest<'a> {
     pub fill: Option<Fill>,
 }
 
-/// An edge to lay out.
+/// An edge to lay out (or a message, between two participants).
 #[derive(Clone, Copy, Debug)]
 pub struct EdgeRequest<'a> {
     pub from: &'a ElementId,
     pub to: &'a ElementId,
     pub label: Option<&'a str>,
     pub style: LineStyle,
+}
+
+/// A mark to make on an element.
+#[derive(Clone, Copy, Debug)]
+pub struct AnnotationRequest<'a> {
+    pub target: &'a ElementId,
+    pub mark: Mark,
+    pub text: Option<&'a str>,
+    /// A highlight's tone; ignored for a pen mark.
+    pub fill: Option<Fill>,
 }
 
 #[allow(
@@ -677,14 +702,18 @@ fn generated_id(prefix: &str, op: OpId) -> ElementId {
     ElementId::parse(&format!("{prefix}:{}", op.0)).expect("generated ids are valid")
 }
 
-fn node_draw(element: &Element, rect: Rect) -> DrawOp {
+fn node_draw(element: &Element, rect: Rect, link: Option<EdgePath>) -> DrawOp {
     let (shape, stack, fill) = match element.kind {
         ElementKind::Node {
             shape, stack, fill, ..
         } => (shape, stack, fill),
-        ElementKind::Edge { .. } | ElementKind::Annotation { .. } | ElementKind::Trace => {
-            (NodeShape::Note, 1, None)
-        }
+        ElementKind::Edge { .. }
+        | ElementKind::Annotation { .. }
+        | ElementKind::Trace
+        | ElementKind::Participant { .. }
+        | ElementKind::Message { .. }
+        | ElementKind::Cells { .. }
+        | ElementKind::Cell { .. } => (NodeShape::Note, 1, None),
     };
     DrawOp::Node {
         id: element.id.clone(),
@@ -694,5 +723,6 @@ fn node_draw(element: &Element, rect: Rect) -> DrawOp {
         rect,
         stack,
         fill,
+        link,
     }
 }

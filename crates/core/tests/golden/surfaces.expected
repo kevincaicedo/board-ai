@@ -5,8 +5,8 @@ op 0 at clause 0 byte 0: Detour { title: "cache-aside" }
 clause 1 [talker@32]
   caption: "Reads go to Redis first."
   speech:  "Reads go to Redis first."
-op 1 at clause 1 byte 0: Node { id: ElementId("api"), label: "API", shape: Service, placement: Auto, stack: 1, fill: None }
-op 2 at clause 1 byte 0: Node { id: ElementId("redis"), label: "Redis", shape: Db, placement: Near { target: ElementId("api"), direction: Right }, stack: 1, fill: None }
+op 1 at clause 1 byte 0: Node { id: ElementId("api"), label: "API", shape: None, placement: Auto, stack: 1, fill: None }
+op 2 at clause 1 byte 0: Node { id: ElementId("redis"), label: "Redis", shape: Some(Db), placement: Near { target: ElementId("api"), direction: Right }, stack: 1, fill: None }
 op 3 at clause 1 byte 0: Edge { from: ElementId("api"), to: ElementId("redis"), label: Some("hit"), style: Dashed }
 clause 2 [talker@57]
   caption: "Here is the code."
@@ -20,7 +20,7 @@ op 6 at clause 3 byte 10: Trace { hops: [ElementId("api"), ElementId("redis")] }
 clause 4 [talker@97]
   caption: "Watch the TTL."
   speech:  "Watch the TTL."
-op 7 at clause 4 byte 0: Annotate { target: ElementId("redis"), mark: Underline, text: Some("TTL") }
+op 7 at clause 4 byte 0: Annotate { target: ElementId("redis"), mark: Underline, text: Some("TTL"), fill: None }
 clause 5 [talker@112]
   caption: "Well, Valkey now."
   speech:  "Well, Valkey now."
@@ -42,5 +42,5 @@ op 13 at clause 8 byte 0: Resume
 clause 9 [talker@182]
   caption: "The database lives in the VPC."
   speech:  "The database lives in the VPC."
-op 14 at clause 9 byte 0: Node { id: ElementId("vpc"), label: "VPC", shape: Group, placement: Auto, stack: 1, fill: None }
-op 15 at clause 9 byte 0: Node { id: ElementId("db"), label: "Postgres", shape: Db, placement: Inside { group: ElementId("vpc"), near: None }, stack: 1, fill: None }
+op 14 at clause 9 byte 0: Node { id: ElementId("vpc"), label: "VPC", shape: Some(Group), placement: Auto, stack: 1, fill: None }
+op 15 at clause 9 byte 0: Node { id: ElementId("db"), label: "Postgres", shape: Some(Db), placement: Inside { group: ElementId("vpc"), near: None }, stack: 1, fill: None }

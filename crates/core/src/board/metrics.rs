@@ -38,6 +38,13 @@ pub const LABEL_FONT_SIZE: u32 = 20;
 /// Line height of a label, in world units.
 pub const LABEL_LINE_HEIGHT: u32 = 25;
 
+/// Font size of the labels beside a drawing (a row's name, a message), the canvas's
+/// `--hand-edge`.
+pub const SMALL_LABEL_FONT_SIZE: u32 = 18;
+
+/// Font size of the index labels beside cells, the canvas's `--hand-index`.
+pub const INDEX_FONT_SIZE: u32 = 15;
+
 fn advance(ch: char) -> u16 {
     let code = u32::from(ch);
     if (0x20..=0x7E).contains(&code) {

@@ -54,7 +54,8 @@ export function codeMarkStroke(mark: Mark, box: TextBox, seed: string): Stroke {
       );
     case "Underline":
     case "Arrow":
-    case "Bracket": {
+    case "Bracket":
+    case "Highlight": {
       const y = box.y + box.h + UNDERLINE_DROP;
       return makeStroke(
         roughLine(random, box.x, y, box.x + box.w, y + 1, { overshoot: 3, bow: 1.5 }),
