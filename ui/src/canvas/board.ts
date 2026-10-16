@@ -6,7 +6,7 @@ import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Vec } from "./geometry.ts";
-import { type OpPlan, type PlanTokens, planOp, traceStroke } from "./plan.ts";
+import { labelOf, type OpPlan, type PlanTokens, planOp, traceStroke } from "./plan.ts";
 import { itemEnd, itemStart, type Stroke, travelMs } from "./stroke.ts";
 import {
   freezeClock,
@@ -17,8 +17,13 @@ import {
   startClock,
 } from "./timeline.ts";
 
-/** Elements kept per layer; an op past this is dropped and counted (the core caps ops at 200). */
-export const LAYER_ELEMENTS_MAX = 400;
+/**
+ * Elements drawn per layer: the core's `ELEMENTS_PER_LAYER_MAX`. Strikes are kept to the same
+ * number apart (one per element); a re-sent element or a second strike replaces its drawing and
+ * adds nothing. An op for a new element past this is dropped and counted (the core never sends
+ * one). Replaced drawings are let go once the layer holds twice this many runs.
+ */
+export const LAYER_ELEMENTS_MAX = 500;
 /** Layers that can be open at once: the main board plus the core's detour depth limit (3). */
 export const LAYERS_MAX = 4;
 /** Detour spans remembered for the board's push-back animation; older ones are dropped. */
@@ -55,6 +60,11 @@ export interface Run {
   /** For a trace: the path its dot follows and the time of one lap. */
   readonly trace: { readonly stroke: Stroke; readonly periodMs: number } | null;
   replacedAt: number | null;
+  /**
+   * A trace's dot laps until the topic moves on; a stop (`Freeze` on its layer) ends it, since
+   * the voice it followed stopped and `Resume` only finishes strokes.
+   */
+  stoppedAt: number | null;
   /** Incremented when a newer run replaced this one, so the renderer can drop it. */
   readonly serial: number;
 }
@@ -207,17 +217,42 @@ export class BoardModel {
 
   #start(layerId: number, op: DrawOp, budgetMs: number, at: number, decision: LeadDecision): void {
     const layer = this.#layer(layerId, at);
-    if (layer === null || layer.runs.length >= LAYER_ELEMENTS_MAX) {
+    if (layer === null) {
       this.counters.droppedOps += 1;
       return;
     }
     const key = keyOf(op);
+    // An element re-sent (a group grown for a new child) carries its current label, so a strike
+    // written over its old one goes with the old drawing.
+    const struck = `${key}#strike`;
+    let target: Run | null = null;
+    let replaces = false;
+    let sameKind = 0;
     for (const run of layer.runs) {
-      if (run.key === key && run.replacedAt === null) {
+      if (run.replacedAt !== null) {
+        continue;
+      }
+      replaces ||= run.key === key;
+      if ((run.op.kind === "Strike") === (op.kind === "Strike")) {
+        sameKind += 1;
+      }
+      if (op.kind === "Strike" && run.key === op.target) {
+        target = run;
+      }
+    }
+    if (!replaces && sameKind >= LAYER_ELEMENTS_MAX) {
+      this.counters.droppedOps += 1;
+      return;
+    }
+    for (const run of layer.runs) {
+      if (run.replacedAt === null && (run.key === key || run.key === struck)) {
         run.replacedAt = at;
       }
     }
-    const plan = planOp(op, this.#tokens);
+    if (layer.runs.length >= 2 * LAYER_ELEMENTS_MAX) {
+      dropReplaced(layer.runs);
+    }
+    const plan = planOp(op, this.#tokens, target === null ? null : labelOf(target.plan));
     let lead: Lead = { kind: "none" };
     let leadMs = 0;
     const first = plan.items[0];
@@ -262,6 +297,7 @@ export class BoardModel {
       leadMs,
       trace,
       replacedAt: null,
+      stoppedAt: null,
       serial: this.#serial,
     });
     this.version += 1;
@@ -274,8 +310,13 @@ export class BoardModel {
       return;
     }
     for (const run of layer.runs) {
-      if (run.trace === null && run.replacedAt === null) {
+      if (run.replacedAt !== null) {
+        continue;
+      }
+      if (run.trace === null) {
         freezeClock(run.clock, at);
+      } else if (run.stoppedAt === null) {
+        run.stoppedAt = at;
       }
     }
   }
@@ -356,6 +397,29 @@ export class BoardModel {
       }
     }
   }
+}
+
+/** Lets go of drawings a newer run replaced; the renderer has already removed them. */
+function dropReplaced(runs: Run[]): void {
+  let kept = 0;
+  for (const run of runs) {
+    if (run.replacedAt === null) {
+      runs[kept] = run;
+      kept += 1;
+    }
+  }
+  runs.length = kept;
+}
+
+/** Whether a trace's dot is lapping at `at`. */
+export function traceRunning(run: Run, layer: Layer, at: number): boolean {
+  return (
+    run.trace !== null &&
+    at >= run.clock.startAt &&
+    run.replacedAt === null &&
+    (run.stoppedAt === null || at < run.stoppedAt) &&
+    (layer.poppedAt === null || at < layer.poppedAt)
+  );
 }
 
 /** Whether a run is still drawing (or frozen) at `at`. */

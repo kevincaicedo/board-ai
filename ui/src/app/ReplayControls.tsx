@@ -1,6 +1,7 @@
 // Replay controls at bottom left (the live demo's): play, pause or replay, a scrubber with a dot
 // per chapter, the time and the current chapter. Click or drag the track to seek.
 
+import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { round1 } from "../canvas/math.ts";
 import type { ChapterKind } from "../transport/log.ts";
@@ -27,10 +28,13 @@ const CHAPTER_NAMES: { readonly [K in ChapterKind]: string } = {
 export function ReplayControls({
   replay,
   keyboard = true,
+  trailing = null,
 }: {
   replay: ReplayTransport;
   /** A replay inside the live app leaves Space to push-to-talk. */
   keyboard?: boolean;
+  /** Ends the row: a session's replay closes from here (7b). */
+  trailing?: ComponentChildren;
 }) {
   const runtime = useRuntime();
   const [state, setState] = useState(replay.state);
@@ -153,7 +157,9 @@ export function ReplayControls({
         <div class="replay-progress" ref={progressRef} />
         {chapters.map((chapter, index) => (
           <button
-            key={`${chapter.at}-${chapter.kind}`}
+            // Chapters never reorder, and two can share a time and kind (a detour opened,
+            // closed and opened again in one batch): the position is the key.
+            key={`chapter-${index}`}
             type="button"
             class="replay-chapter"
             ref={(element) => {
@@ -170,6 +176,7 @@ export function ReplayControls({
       </div>
       <span class="replay-time" ref={timeRef} />
       <span class="replay-chapter-name" ref={chapterRef} />
+      {trailing}
     </div>
   );
 }

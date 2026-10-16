@@ -29,6 +29,11 @@ export function codeMarkSeed(surface: number, mark: CodeMark): string {
   return `code:${surface}:${mark.line}:${mark.columns.begin}-${mark.columns.end}`;
 }
 
+/** A mark's Preact key: the same characters can be marked twice, so arrival is the identity. */
+export function codeMarkKey(mark: CodeMark): string {
+  return `mark-${mark.serial}`;
+}
+
 /** Circles go around the text; every other mark reads as an underline on a line of code. */
 export function codeMarkStroke(mark: Mark, box: TextBox, seed: string): Stroke {
   const random = randomFor(seed);

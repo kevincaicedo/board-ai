@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { View } from "./generated/View.ts";
-import { parseLogLine, parseUiBatch, parseUiEvent, parseView } from "./parse.ts";
+import { parseLogLine, parseUiBatch, parseUiEvent, parseView, type RowSkips } from "./parse.ts";
 
 const CARD = {
   id: "2026-10-12-160200",
@@ -372,7 +372,11 @@ test("protocol v1 logs still replay: v2's optional fields read a missing key as 
 
 test("a batch keeps its good events and counts the rest", () => {
   const parsed = parseUiBatch({ at: 1200, events: [{ type: "Acknowledge" }, { type: "Nope" }, 7] });
-  assert.deepEqual(parsed, { batch: { at: 1200, events: [{ type: "Acknowledge" }] }, skipped: 2 });
+  assert.deepEqual(parsed, {
+    batch: { at: 1200, events: [{ type: "Acknowledge" }] },
+    skipped: 2,
+    skippedRows: 0,
+  });
   assert.equal(parseUiBatch({ at: -1, events: [] }), null);
   assert.equal(parseUiBatch({ at: 5 }), null);
   assert.equal(parseUiBatch("batch"), null);
@@ -408,6 +412,7 @@ test("every view round-trips through the parser unchanged", () => {
   }
 });
 
+// A bad row is skipped (the tests above); a view whose own fields don't parse is rejected.
 test("malformed views and session events are rejected, never thrown", () => {
   const show = (view: unknown, today: unknown = "2026-10-15"): unknown => ({
     type: "ViewShow",
@@ -419,57 +424,23 @@ test("malformed views and session events are rejected, never thrown", () => {
     { type: "SessionStart" },
     { type: "SessionStart", session: "" },
     { type: "SessionStart", session: 7 },
-    show({ kind: "Library", sessions: [], more_sessions: 0 }, ""),
     show({ kind: "Library", sessions: [], more_sessions: 0 }, "15/10/2026"),
     { type: "ViewShow", view: { kind: "Library", sessions: [], more_sessions: 0 } },
     show({ kind: "Gallery" }),
-    show({ kind: "Library", sessions: [{ ...card, id: "" }], more_sessions: 0 }),
-    show({ kind: "Library", sessions: [{ ...card, date: "Oct 12" }], more_sessions: 0 }),
-    show({ kind: "Library", sessions: [{ ...card, duration_ms: -1 }], more_sessions: 0 }),
-    show({
-      kind: "Library",
-      sessions: [{ ...card, cover: [{ rect: { x: 0, y: 0, w: 1, h: 1 }, shape: "Blob" }] }],
-      more_sessions: 0,
-    }),
+    show({ kind: "Library", sessions: "none", more_sessions: 0 }),
     show({ kind: "Library", sessions: [card] }),
     show({ kind: "Tasks", project: 3, tasks: [], more_tasks: 0, notes: [] }),
-    show({
-      kind: "Tasks",
-      project: null,
-      tasks: [{ id: "t1", title: "x", project: "p" }],
-      more_tasks: 0,
-      notes: [],
-    }),
-    show({
-      kind: "Tasks",
-      project: null,
-      tasks: [],
-      more_tasks: 0,
-      notes: [{ id: "n1", text: "x", date: "", from: null, links: [1] }],
-    }),
-    show({
-      kind: "Memory",
-      about_you: [{ id: "", text: "x" }],
-      systems: [],
-      notes: [],
-      latest: null,
-    }),
+    show({ kind: "Tasks", project: null, tasks: [], more_tasks: -1, notes: [] }),
     show({ kind: "Memory", about_you: [], systems: [], notes: [] }),
-    show({
-      kind: "Memory",
-      about_you: [],
-      systems: [],
-      notes: [],
-      latest: { session: card, notes: 1, tasks: 1 },
-    }),
-    show({ kind: "PastSession", session: card, recap: "", layers: [{ ops: [] }], ops_left_out: 0 }),
+    show({ kind: "Memory", about_you: null, systems: [], notes: [], latest: null }),
     show({
       kind: "PastSession",
-      session: card,
+      session: { ...card, id: "" },
       recap: "",
-      layers: [{ title: null, ops: [{ kind: "Node", id: "a b" }] }],
+      layers: [],
       ops_left_out: 0,
     }),
+    show({ kind: "PastSession", session: card, recap: "", layers: {}, ops_left_out: 0 }),
     show({ kind: "Replay" }),
     show({ kind: "Replay", session: { ...card, title: 9 } }),
   ];
@@ -478,4 +449,122 @@ test("malformed views and session events are rejected, never thrown", () => {
   }
   assert.equal(parseView(null), null);
   assert.equal(parseView({ kind: "__proto__" }), null);
+});
+
+// Review finding 22 (UI side): the views list what the vault holds, hand-written files included,
+// so one row the parser can't read (a note dated 15/10/2026) must not drop the whole view.
+test("one hand-made note does not drop the whole Tasks view", () => {
+  const skips: RowSkips = { rows: 0 };
+  const event = parseUiEvent(
+    {
+      type: "ViewShow",
+      view: {
+        kind: "Tasks",
+        project: null,
+        tasks: [{ id: "t1", title: "Check Redis TTLs", project: "Harness", from: null }],
+        more_tasks: 0,
+        notes: [
+          { id: "notes/handmade.md", text: "Kafka", date: "15/10/2026", from: null, links: [] },
+          { id: "n2", text: "Cache-aside", date: "2026-10-15", from: null, links: ["a.go:4", 7] },
+        ],
+      },
+      today: "2026-10-15",
+    },
+    skips,
+  );
+  assert.deepEqual(event, {
+    type: "ViewShow",
+    view: {
+      kind: "Tasks",
+      project: null,
+      tasks: [{ id: "t1", title: "Check Redis TTLs", project: "Harness", from: null }],
+      more_tasks: 0,
+      notes: [{ id: "n2", text: "Cache-aside", date: "2026-10-15", from: null, links: ["a.go:4"] }],
+    },
+    today: "2026-10-15",
+  });
+  assert.equal(skips.rows, 2, "the bad note and the bad link are counted");
+});
+
+test("a view with an unknown day is shown; its dates read in full", () => {
+  const event = {
+    type: "ViewShow",
+    view: {
+      kind: "Memory",
+      about_you: [{ id: "c0", text: "I prefer Go" }],
+      systems: [],
+      notes: [],
+      latest: null,
+    },
+    today: "",
+  };
+  assert.notEqual(parseUiEvent(event), null, "the whole ViewShow was dropped");
+});
+
+test("every view keeps its good rows and counts the bad ones", () => {
+  const card = { ...CARD, cover: [] };
+  const count = (view: unknown): { rows: number; kept: View | null } => {
+    const skips: RowSkips = { rows: 0 };
+    return { kept: parseView(view, skips), rows: skips.rows };
+  };
+  const library = count({
+    kind: "Library",
+    sessions: [
+      card,
+      { ...card, id: "" },
+      { ...card, date: "Oct 12" },
+      { ...card, cover: [{ rect: { x: 0, y: 0, w: 1, h: 1 }, shape: "Blob" }] },
+    ],
+    more_sessions: 0,
+  });
+  assert.equal(library.rows, 3);
+  assert.deepEqual(library.kept, {
+    kind: "Library",
+    sessions: [card, card],
+    more_sessions: 0,
+  });
+  const memory = count({
+    kind: "Memory",
+    about_you: [
+      { id: "", text: "x" },
+      { id: "m1", text: "Go" },
+    ],
+    systems: [7],
+    notes: [],
+    latest: { session: card, notes: 1, tasks: 1 },
+  });
+  assert.equal(memory.rows, 3, "a row, a system and the unreadable digest");
+  assert.deepEqual(memory.kept, {
+    kind: "Memory",
+    about_you: [{ id: "m1", text: "Go" }],
+    systems: [],
+    notes: [],
+    latest: null,
+  });
+  const past = count({
+    kind: "PastSession",
+    session: card,
+    recap: "",
+    layers: [{ title: null, ops: [{ kind: "Node", id: "a b" }] }, { ops: [] }],
+    ops_left_out: 0,
+  });
+  assert.equal(past.rows, 2, "an op and a layer");
+  assert.deepEqual(past.kept, {
+    kind: "PastSession",
+    session: card,
+    recap: "",
+    layers: [{ title: null, ops: [] }],
+    ops_left_out: 0,
+  });
+});
+
+test("batches and log lines report the rows they skipped", () => {
+  const note = { id: "n", text: "x", date: "15/10/2026", from: null, links: [] };
+  const view = { kind: "Tasks", project: null, tasks: [], more_tasks: 0, notes: [note] };
+  const show = { type: "ViewShow", view, today: "2026-10-15" };
+  const batch = parseUiBatch({ at: 5, events: [show] });
+  assert.equal(batch?.batch.events.length, 1);
+  assert.equal(batch?.skippedRows, 1);
+  const line = parseLogLine(JSON.stringify({ v: 1, t: 5, k: "ui", event: show }));
+  assert.equal(line.kind === "ui" ? line.skippedRows : -1, 1);
 });

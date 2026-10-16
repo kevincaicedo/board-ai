@@ -154,6 +154,7 @@ export const PRESETS = [
   "mic-denied",
   "ollama",
   "settings",
+  "download-error",
 ] as const;
 export type Preset = (typeof PRESETS)[number];
 
@@ -164,7 +165,8 @@ export function isPreset(name: string): name is Preset {
 /**
  * The visual check's states: the canvas artboard (Claude picked, Kokoro at 201 of 312 MB,
  * Whisper ready, the microphone not asked), then everything ready, a saved key, a denied
- * microphone, and a local talker.
+ * microphone, a local talker, settings over a session, and 11b's stopped Whisper download
+ * (61 of 142 MB, no connection) with Start waiting for it and the microphone.
  */
 export function presetTransport(preset: Preset): FakeSetupTransport {
   const base = ready(firstLaunch());
@@ -218,6 +220,23 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
         microphone: "Denied",
         mic_mode: "PushToTalk",
         blockers: [{ kind: "MicrophoneDenied" }],
+      };
+      break;
+    case "download-error":
+      transport.initialEvents.clear();
+      transport.initialEvents.set("whisper-base.en", {
+        kind: "Failed",
+        problem: { kind: "Network" },
+      });
+      transport.current = {
+        ...keySaved,
+        voice_files: base.voice_files.map((entry) => file(entry.id, entry.size_bytes, "Ready")),
+        hearing_files: [
+          { ...file("whisper-base.en", 140 * MIB, "Partial"), have_bytes: 59 * MIB },
+          file("silero-vad", 2 * MIB, "Ready"),
+        ],
+        microphone: "Undetermined",
+        blockers: [{ kind: "HearingNotReady" }, { kind: "MicrophoneNotAllowed" }],
       };
       break;
     case "ollama":

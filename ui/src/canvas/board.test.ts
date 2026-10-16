@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
-import { type BoardEvent, BoardModel, LAYER_ELEMENTS_MAX, runActive } from "./board.ts";
+import {
+  type BoardEvent,
+  BoardModel,
+  LAYER_ELEMENTS_MAX,
+  runActive,
+  traceRunning,
+} from "./board.ts";
 import { cameraAt, cardArea, depthOfField, emptyArea, fitFrame, stageArea } from "./camera.ts";
 import { planOp, toneOf } from "./plan.ts";
 import {
@@ -161,6 +167,22 @@ test("freeze stops the stroke in progress and resume continues from there", () =
   assert.equal(runActive(run, 60_000), false);
 });
 
+test("a trace dot laps until a stop freezes its layer, then it is gone", () => {
+  const { board, apply } = scene();
+  const points = [
+    { x: 0, y: 0 },
+    { x: 200, y: 0 },
+  ];
+  apply(start({ kind: "Trace", id: "t1", op: 1, points }, 1300), 0);
+  const run = board.main.runs[0];
+  assert.ok(run !== undefined);
+  assert.equal(traceRunning(run, board.main, 5000), true, "it keeps lapping while the topic holds");
+  apply({ type: "Freeze", layer: 0 }, 6000);
+  assert.equal(traceRunning(run, board.main, 5999), true);
+  assert.equal(traceRunning(run, board.main, 6000), false);
+  assert.equal(traceRunning(run, board.main, 60_000), false, "it never comes back on its own");
+});
+
 test("the first op on the board flies the nib out of the orb; later ones travel", () => {
   const { board, presence, apply } = scene();
   presence.orb("Drawing", 70, 0);
@@ -195,6 +217,35 @@ test("detour layers push, pop, and stop accepting more than the board can hold",
   }
   assert.equal(board.main.runs.length, LAYER_ELEMENTS_MAX);
   assert.equal(board.counters.droppedOps, 5);
+});
+
+// Review finding 24: the UI dropped ops past 400 runs while the core allows 500 elements per
+// layer (ELEMENTS_PER_LAYER_MAX), and counted re-sends and strikes, which add no element.
+test("the UI draws every element the core can send on one layer", () => {
+  const { board, apply } = scene();
+  for (let index = 0; index < 500; index += 1) {
+    apply(start(box(`n${index}`, "x", index * 10), 300), index * 200);
+  }
+  assert.equal(board.counters.droppedOps, 0);
+  apply(start(box("one-too-many"), 300), 200_000);
+  assert.equal(board.counters.droppedOps, 1, "past the core's own cap, an op is counted");
+});
+
+test("re-sends and strikes add no element, and replaced drawings are let go", () => {
+  const { board, apply } = scene();
+  const group: Extract<DrawOp, { kind: "Node" }> = { ...box("g"), shape: "Group" };
+  for (let index = 0; index < 2000; index += 1) {
+    apply(start({ ...group, rect: { ...group.rect, h: 100 + index } }, 150), index * 10);
+    apply(
+      start({ kind: "Strike", op: index, target: "g", label: `v${index}`, rect: group.rect }, 150),
+      index * 10 + 5,
+    );
+  }
+  for (let index = 0; index < 499; index += 1) {
+    apply(start(box(`n${index}`), 150), 30_000 + index);
+  }
+  assert.equal(board.counters.droppedOps, 0);
+  assert.ok(board.main.runs.length <= 2 * LAYER_ELEMENTS_MAX, `${board.main.runs.length} runs`);
 });
 
 test("the nib draws, freezes in place, and flies home once drawing is over", () => {

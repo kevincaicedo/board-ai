@@ -18,6 +18,8 @@ export interface SkipCounts {
   /** Well-formed lines meant for re-simulation (`"k":"input"`), not the UI. */
   otherKind: number;
   overLimit: number;
+  /** View rows skipped inside events that were kept (a hand-made note a view couldn't read). */
+  rows: number;
 }
 
 export type ChapterKind =
@@ -45,7 +47,7 @@ export interface ReplayLog {
 }
 
 export function parseReplayLog(text: string): ReplayLog {
-  const skipped: SkipCounts = { malformed: 0, otherKind: 0, overLimit: 0 };
+  const skipped: SkipCounts = { malformed: 0, otherKind: 0, overLimit: 0, rows: 0 };
   const lines: { t: number; event: UiEvent; order: number }[] = [];
   let lineCount = 0;
   let begin = 0;
@@ -68,6 +70,7 @@ export function parseReplayLog(text: string): ReplayLog {
       switch (result.kind) {
         case "ui":
           lines.push({ t: result.line.t, event: result.line.event, order: lines.length });
+          skipped.rows += result.skippedRows;
           break;
         case "other":
           skipped.otherKind += 1;

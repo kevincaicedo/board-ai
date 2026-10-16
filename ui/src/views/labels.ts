@@ -79,6 +79,14 @@ export function sessionMeta(card: SessionCard, today: string): string {
   return joined(capitalized(dayLabel(card.date, today)), durationLabel(card.duration_ms));
 }
 
+/** What a replay keeps (PRODUCT §7.6, law 10): the captions, never your voice. */
+export const REPLAY_NOTE = "your voice isn't kept, only captions";
+
+/** The line under a replay's title (7b): "Replay · Oct 12 · your voice isn't kept, only captions". */
+export function replaySubtitle(card: SessionCard, today: string): string {
+  return joined("Replay", dayLabel(card.date, today), REPLAY_NOTE);
+}
+
 /** Titles are "Topic · detail"; the topic, at most three words, is how you'd name it aloud. */
 export function shortTitle(title: string): string {
   const topic = title.split(/\s[·:—-]\s|:\s/)[0] ?? title;

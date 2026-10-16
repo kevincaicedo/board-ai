@@ -4,7 +4,22 @@ import type { DownloadProblem } from "../protocol/generated/DownloadProblem.ts";
 import type { SetupBlocker } from "../protocol/generated/SetupBlocker.ts";
 import { firstLaunch } from "./fake.ts";
 import type { GroupProgress } from "./state.ts";
-import { downloadProblem, groupSize, keyHint, percent, startHint } from "./words.ts";
+import {
+  downloadProblem,
+  FOOTER_FIRST_RUN,
+  groupSize,
+  inputLabel,
+  keyHint,
+  keyLabel,
+  keyNote,
+  MIC_DENIED,
+  micStep,
+  percent,
+  startHint,
+  startLabel,
+  thinkingStep,
+  voiceStep,
+} from "./words.ts";
 
 const MIB = 1024 * 1024;
 
@@ -40,7 +55,7 @@ test("every blocker has a line under Start, and a key is named by its provider",
   }
   assert.equal(
     startHint({ ...firstLaunch(), blockers: [{ kind: "TalkerKey", provider: "OpenRouter" }] }),
-    "Paste your OpenRouter API key to start.",
+    "Waiting for: your OpenRouter API key.",
   );
   assert.match(
     startHint({
@@ -69,4 +84,60 @@ test("every download problem is said in plain words", () => {
 test("a saved key's field says so and never shows the key", () => {
   assert.equal(keyHint("Anthropic", false), "sk-ant-…");
   assert.equal(keyHint("Anthropic", true), "Saved · paste to replace");
+});
+
+// 11b · First run states: what each card and the Start row say when something is missing.
+test("Start waits with every blocker named once, in one line (11b)", () => {
+  const waiting = (...blockers: SetupBlocker[]): string | null =>
+    startHint({ ...firstLaunch(), blockers });
+  assert.equal(
+    waiting({ kind: "HearingNotReady" }, { kind: "MicrophoneNotAllowed" }),
+    "Waiting for: the hearing model, and the microphone.",
+  );
+  assert.equal(
+    waiting(
+      { kind: "TalkerKey", provider: "Claude" },
+      { kind: "HearingNotReady" },
+      { kind: "MicrophoneNotAllowed" },
+      { kind: "MicrophoneDenied" },
+    ),
+    "Waiting for: your Anthropic API key, the hearing model, and the microphone.",
+  );
+  assert.equal(waiting({ kind: "OllamaUnreachable" }), "Waiting for: Ollama to start.");
+});
+
+test("each card names its state on its step line (11b)", () => {
+  const status = firstLaunch();
+  assert.equal(thinkingStep(status), "1 · THINKING");
+  assert.equal(
+    thinkingStep({ ...status, talker: { ...status.talker, key: "Saved" } }),
+    "1 · THINKING · KEY SAVED",
+  );
+  assert.equal(voiceStep(false), "2 · VOICE AND HEARING");
+  assert.equal(voiceStep(true), "2 · VOICE AND HEARING · ERROR");
+  assert.equal(micStep("Undetermined"), "3 · MICROPHONE");
+  assert.equal(micStep("Denied"), "3 · MICROPHONE · DENIED");
+});
+
+test("the cards' words match the states frame (11b)", () => {
+  assert.equal(
+    downloadProblem({ kind: "Network" }),
+    "The download stopped: no connection. It picks up where it left off.",
+  );
+  assert.equal(
+    MIC_DENIED,
+    "Turn the microphone on in System Settings › Privacy & Security › Microphone, then come back. This screen notices on its own.",
+  );
+  assert.equal(keyNote(true), "The key never comes back to this screen: only that one is saved.");
+  assert.equal(keyNote(false), "Saved to Keychain. Never written to a file or a log.");
+  assert.equal(keyLabel("ElevenLabs"), "ElevenLabs API key (optional voice)");
+  assert.equal(keyHint("ElevenLabs", false), "Paste, then press Return");
+  assert.equal(inputLabel({ kind: "SystemDefault" }), "System default");
+  assert.equal(inputLabel({ kind: "BuiltIn" }), "Built-in microphone");
+  assert.equal(FOOTER_FIRST_RUN, "Reopen any time with ⌘, or by saying “open settings”.");
+});
+
+test("over a running session the button goes back to talking", () => {
+  assert.equal(startLabel(false), "Start talking");
+  assert.equal(startLabel(true), "Back to talking");
 });

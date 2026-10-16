@@ -292,6 +292,11 @@
   --recall-thumb-height: 126px;
   --recall-board-soften: 4px;
   --replay-caption-lift: 110px;
+  /* 7b · Replaying a past session: title 15/20, the replay line 12/16, 16 px above the row. */
+  --replay-bar-gap: 16px;
+  --type-replay-title-line: 20px;
+  --type-replay-sub-line: 16px;
+  --scrubber-width-compact: 160px;
 
   /* First run (11 · First run): the one screen with typing. Vertical gaps put the orb, title,
      cards, harness row and Start at the artboard's 56 / 144 / 268 / 716 / 796 px at 1440×900. */
@@ -314,6 +319,8 @@
   --size-setup-pill: 40px;
   --size-setup-field: 48px;
   --size-setup-small: 36px;
+  /* The microphone card's input picker (11b): a 32 px pill. */
+  --size-setup-input: 32px;
   --type-setup-title: 40px;
   --type-setup-title-line: 48px;
   --type-setup-lede: 16px;

@@ -62,6 +62,8 @@ export class TauriTransport implements Transport {
   #sink: BatchSink | null = null;
   malformedBatches = 0;
   skippedEvents = 0;
+  /** View rows (a hand-made note, say) skipped while the rest of their view was shown. */
+  skippedRows = 0;
   failedCommands = 0;
   failedSessionLogs = 0;
   /** Sessions that started after the first one (idle timeouts): each reset the stage. */
@@ -116,6 +118,7 @@ export class TauriTransport implements Transport {
       return;
     }
     this.skippedEvents += parsed.skipped;
+    this.skippedRows += parsed.skippedRows;
     const { at, events } = parsed.batch;
     // A new session restarts session time: what came before it in the batch belongs to the old
     // session, then the stage and the clock start over.

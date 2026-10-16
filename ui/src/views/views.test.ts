@@ -15,6 +15,7 @@ import {
   LIBRARY_HINT_FALLBACK,
   libraryHint,
   noteMeta,
+  replaySubtitle,
   sessionMeta,
   shortTitle,
   taskMeta,
@@ -71,6 +72,21 @@ test("lengths and replay clocks read like the canvas", () => {
   assert.equal(sessionMeta(card, "2026-10-15"), "Oct 12 · 31 min");
   assert.equal(sessionMeta({ ...card, date: "2026-10-15" }, "2026-10-15"), "Today · 31 min");
   assert.equal(sessionMeta({ ...card, date: "", duration_ms: 0 }, "2026-10-15"), "");
+});
+
+test("a replay says what it is, when it was, and that your voice isn't kept (7b)", () => {
+  assert.equal(
+    replaySubtitle(card, "2026-10-15"),
+    "Replay · Oct 12 · your voice isn't kept, only captions",
+  );
+  assert.equal(
+    replaySubtitle({ ...card, date: "" }, "2026-10-15"),
+    "Replay · your voice isn't kept, only captions",
+  );
+  assert.equal(
+    replaySubtitle(card, ""),
+    "Replay · Oct 12, 2026 · your voice isn't kept, only captions",
+  );
 });
 
 test("the library names a session you could ask for by its topic", () => {

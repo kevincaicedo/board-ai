@@ -458,33 +458,88 @@ function annotateItems(
   return items;
 }
 
-/** Strike through the old label in orange, then write the new one above it (Components 10b). */
+/** The label a strike crosses out, as its element's plan wrote it. */
+export interface StruckLabel {
+  readonly x: number;
+  readonly y: number;
+  readonly left: number;
+  readonly right: number;
+  readonly size: number;
+  readonly tone: Tone;
+  readonly align: "center" | "left";
+}
+
+/** The handwritten label of an element's plan (its first text), or `null` when it has none. */
+export function labelOf(plan: OpPlan): StruckLabel | null {
+  for (const item of plan.items) {
+    if (item.type === "text") {
+      return {
+        x: item.x,
+        y: item.y,
+        left: item.start[0],
+        right: item.end[0],
+        size: item.size,
+        tone: item.tone,
+        align: item.align,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Components 10b's correction, in label sizes: the new label is written 1.92 sizes above the old
+ * one (50 px over a 26 px label), with the caret between them at 0.62–0.85 sizes under the new
+ * label's middle (92–98 px).
+ */
+const REWRITE_RISE = 1.92;
+const CARET_TOP = 0.62;
+const CARET_BOTTOM = 0.85;
+
+/**
+ * Strike through the old label in orange, then write the new one above it (Components 10b, D-032).
+ * The core's rect is the element's box; the label is where the element's own plan wrote it
+ * (inside a service, above a group or a queue, under an actor), or the rect's middle when the
+ * element isn't drawn here. A label inside or under the drawing is rewritten above its box, where
+ * a group's label sits, so the new words never land on the outline.
+ */
 function strikeItems(
   op: Extract<DrawOp, { kind: "Strike" }>,
   random: Random,
   tokens: PlanTokens,
+  struck: StruckLabel | null,
 ): Item[] {
   const { x, y, w, h } = op.rect;
-  const cx = x + w / 2;
-  const cy = y + h / 2;
-  const caretY = y - 8;
+  const label = struck ?? {
+    x: x + w / 2,
+    y: y + h / 2,
+    left: x,
+    right: x + w,
+    size: tokens.handNode,
+    tone: "ink",
+    align: "center",
+  };
+  const rewriteY = Math.min(label.y - REWRITE_RISE * label.size, y - LABEL_ABOVE);
+  const lineX = label.left - 6;
+  const caretTop = rewriteY + CARET_TOP * label.size;
+  const caretBottom = rewriteY + CARET_BOTTOM * label.size;
   return [
     makeStroke(
-      roughLine(random, x - 6, cy, x + w + 6, cy - 3, { overshoot: 3, bow: 1 }),
+      roughLine(random, lineX, label.y, label.right + 6, label.y - 3, { overshoot: 3, bow: 1 }),
       "annotate",
       2.4,
     ),
     makeStroke(
       [
-        [x + 8, caretY + 6],
-        [x + 14, caretY],
-        [x + 21, caretY + 6],
+        [lineX + 8, caretBottom],
+        [lineX + 14, caretTop],
+        [lineX + 21, caretBottom],
       ],
       "annotate",
       1.8,
       { kind: "head", legs: [0, 1, 2] },
     ),
-    makeText(cx, y - h * 0.5 - 18, op.label, tokens.handNode, "ink"),
+    makeText(label.x, rewriteY, op.label, label.size, label.tone, label.align),
   ];
 }
 
@@ -535,7 +590,8 @@ export function toneOf(fill: Fill | null): Tone | null {
   }
 }
 
-export function planOp(op: DrawOp, tokens: PlanTokens): OpPlan {
+/** `struck` is the label a strike crosses out: its target's, from the board (`labelOf`). */
+export function planOp(op: DrawOp, tokens: PlanTokens, struck: StruckLabel | null = null): OpPlan {
   const random = randomFor(seedKey(op));
   let items: Item[];
   let fallback: Rect;
@@ -582,7 +638,7 @@ export function planOp(op: DrawOp, tokens: PlanTokens): OpPlan {
       fallback = op.rect;
       break;
     case "Strike":
-      items = strikeItems(op, random, tokens);
+      items = strikeItems(op, random, tokens, struck);
       fallback = op.rect;
       break;
     case "Trace":

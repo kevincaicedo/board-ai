@@ -3,7 +3,13 @@ import { test } from "node:test";
 import { codeMarkSeed, codeMarkStroke, utf16Offset } from "./codeMark.ts";
 
 const box = { x: 202, y: 85, w: 77, h: 15 };
-const mark = { line: 43, columns: { begin: 17, end: 29 }, mark: "Underline" as const, at: 0 };
+const mark = {
+  line: 43,
+  columns: { begin: 17, end: 29 },
+  mark: "Underline" as const,
+  at: 0,
+  serial: 0,
+};
 
 test("an underline runs under the marked text in the pen's tone, the same on every replay", () => {
   const seed = codeMarkSeed(1, mark);

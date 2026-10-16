@@ -1,10 +1,12 @@
-// Everything the first-run screen says, in plain words (artboard 11 · First run). Kept apart
-// from the components so the wording is tested and the components only lay it out.
+// Everything the first-run screen says, in plain words (artboards 11 · First run and 11b · First
+// run states). Kept apart from the components so the wording is tested and the components only
+// lay it out.
 
 import type { DownloadProblem } from "../protocol/generated/DownloadProblem.ts";
 import type { InputDevice } from "../protocol/generated/InputDevice.ts";
 import type { KeyName } from "../protocol/generated/KeyName.ts";
 import type { MicChoice } from "../protocol/generated/MicChoice.ts";
+import type { MicPermission } from "../protocol/generated/MicPermission.ts";
 import type { SetupBlocker } from "../protocol/generated/SetupBlocker.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import type { TalkerProvider } from "../protocol/generated/TalkerProvider.ts";
@@ -66,7 +68,7 @@ export function keyLabel(key: KeyName): string {
     case "OpenRouter":
       return "OpenRouter API key";
     case "ElevenLabs":
-      return "ElevenLabs API key";
+      return "ElevenLabs API key (optional voice)";
   }
 }
 
@@ -81,11 +83,43 @@ export function keyHint(key: KeyName, saved: boolean): string {
     case "OpenRouter":
       return "sk-or-…";
     case "ElevenLabs":
-      return "sk_…";
+      return "Paste, then press Return";
   }
 }
 
 export const KEY_NOTE = "Saved to Keychain. Never written to a file or a log.";
+
+/** Under a key field: where a key goes, or, once one is saved, that it never comes back. */
+export function keyNote(saved: boolean): string {
+  return saved ? "The key never comes back to this screen: only that one is saved." : KEY_NOTE;
+}
+
+/** A card's step line, with its state when it has one ("3 · MICROPHONE · DENIED", 11b). */
+function step(base: string, state: string | null): string {
+  return state === null ? base : `${base} · ${state}`;
+}
+
+export function thinkingStep(status: SetupStatus): string {
+  return step("1 · THINKING", status.talker.key === "Saved" ? "KEY SAVED" : null);
+}
+
+export function voiceStep(stopped: boolean): string {
+  return step("2 · VOICE AND HEARING", stopped ? "ERROR" : null);
+}
+
+export function micStep(permission: MicPermission): string {
+  return step("3 · MICROPHONE", permission === "Denied" ? "DENIED" : null);
+}
+
+/** The line under the cards on the first run (11b). */
+export const FOOTER_FIRST_RUN = "Reopen any time with ⌘, or by saying “open settings”.";
+/** The same line over a running session, where the screen is the settings. */
+export const FOOTER_SETTINGS = "Esc closes settings. A change starts a new session.";
+
+/** The button under the cards: it starts the session, or returns to the running one. */
+export function startLabel(settings: boolean): string {
+  return settings ? "Back to talking" : "Start talking";
+}
 
 export const MODES: readonly {
   readonly id: MicChoice;
@@ -99,9 +133,9 @@ export const MODES: readonly {
 export function inputLabel(device: InputDevice): string {
   switch (device.kind) {
     case "SystemDefault":
-      return "Default input";
+      return "System default";
     case "BuiltIn":
-      return "Built-in mic";
+      return "Built-in microphone";
     case "Named":
       return device.name;
   }
@@ -114,7 +148,7 @@ export function harnessChip(name: string, found: boolean): string {
 export function downloadProblem(problem: DownloadProblem): string {
   switch (problem.kind) {
     case "Network":
-      return "The download stopped. Check your connection and try again.";
+      return "The download stopped: no connection. It picks up where it left off.";
     case "Server":
       return `The model server answered ${problem.status}. Try again in a while.`;
     case "Unexpected":
@@ -127,37 +161,49 @@ export function downloadProblem(problem: DownloadProblem): string {
 }
 
 export const MIC_DENIED =
-  "Turn the microphone on in System Settings › Privacy & Security › Microphone, then come back.";
+  "Turn the microphone on in System Settings › Privacy & Security › Microphone, then come back. This screen notices on its own.";
 
 export const OLLAMA_UNREACHABLE =
   "Ollama isn't answering. Start it, then come back to this window.";
 
-/** Why "Start talking" waits: the first blocker, in plain words. */
-export function startHint(status: SetupStatus): string | null {
-  const blocker: SetupBlocker | undefined = status.blockers[0];
-  if (blocker === undefined) {
-    return null;
-  }
+/** What one blocker waits for, said after "Waiting for:". */
+function waitingFor(blocker: SetupBlocker, status: SetupStatus): string {
   switch (blocker.kind) {
     case "SettingsProblem":
-      return `settings.toml can't be used: ${status.settings_problem ?? "it doesn't parse"}. Fix it or move it away.`;
+      return `a settings.toml BoardAI can read (${status.settings_problem ?? "it doesn't parse"}; fix it or move it away)`;
     case "TalkerKey": {
       const key = providerKey(blocker.provider);
-      return key === null
-        ? "Save the key your settings.toml names."
-        : `Paste your ${keyLabel(key)} to start.`;
+      return key === null ? "the key settings.toml names" : `your ${keyLabel(key)}`;
     }
     case "OllamaUnreachable":
-      return "Start Ollama, or pick another provider.";
+      return "Ollama to start";
     case "OllamaModelMissing":
-      return `Pull ${blocker.model} in Ollama, or pick another model.`;
+      return `${blocker.model} in Ollama`;
     case "UnknownHearingModel":
-      return `settings.toml asks for Whisper ${blocker.model}, which BoardAI doesn't have.`;
+      return `a hearing model BoardAI has (settings.toml asks for Whisper ${blocker.model})`;
     case "HearingNotReady":
-      return "Starts once the hearing model is ready.";
+      return "the hearing model";
     case "MicrophoneNotAllowed":
-      return "Allow the microphone to start.";
     case "MicrophoneDenied":
-      return "Turn the microphone on in System Settings to start.";
+      return "the microphone";
   }
+}
+
+/**
+ * Why "Start talking" waits (11b): every blocker, each named once, in one line — "Waiting for:
+ * the hearing model, and the microphone." The cards say how to fix each one.
+ */
+export function startHint(status: SetupStatus): string | null {
+  const names: string[] = [];
+  for (const blocker of status.blockers) {
+    const name = waitingFor(blocker, status);
+    if (!names.includes(name)) {
+      names.push(name);
+    }
+  }
+  if (names.length === 0) {
+    return null;
+  }
+  const last = names.pop() ?? "";
+  return `Waiting for: ${names.length === 0 ? last : `${names.join(", ")}, and ${last}`}.`;
 }

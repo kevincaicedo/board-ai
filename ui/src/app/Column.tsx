@@ -1,5 +1,5 @@
-// The surface column in the right half of the stage (frames 4–6): at most two cards, stacked from
-// the top, or one centered. Cards rise out of a blur when they arrive, glide on a spring when the
+// The surface column in the right half of the stage (frames 4–6): the open detour's card and at
+// most two surfaces, stacked from the top, or one centered. Cards rise out of a blur when they arrive, glide on a spring when the
 // column makes room, and blur out when they leave.
 
 import { useMemo, useRef } from "preact/hooks";
@@ -38,7 +38,7 @@ export function Column() {
       if (card === null) {
         continue;
       }
-      const motion = surfaceMotion(item.enterAt, item.leftAt, at, tokens.durationStandardMs);
+      const motion = surfaceMotion(item, at, tokens.durationStandardMs);
       const visible = at >= item.enterAt && motion.exit < 1;
       write(card, "display", visible ? "block" : "none");
       if (!visible) {

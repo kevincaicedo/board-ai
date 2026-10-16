@@ -59,3 +59,42 @@ export function opensSettings(key: {
 }): boolean {
   return key.code === "Comma" && key.meta && !key.repeat;
 }
+
+/**
+ * Hold Space to talk: one TalkDown, then exactly one TalkUp however the hold ends — Space's
+ * key-up, the window losing focus (⌘-Tab while holding sends the key-up to another app), the
+ * page hiding, or the stage going away. A lost TalkUp leaves the core listening until its 30 s
+ * utterance cap on every turn. It outlives the key handlers, so re-binding them (a mute) never
+ * forgets a hold.
+ */
+export class PushToTalk {
+  #held = false;
+
+  get held(): boolean {
+    return this.#held;
+  }
+
+  down(key: KeyPress, context: KeyContext): UiCommand | null {
+    const command = keyDownCommand(key, context);
+    if (command?.type === "Mic" && command.action === "TalkDown") {
+      if (this.#held) {
+        return null;
+      }
+      this.#held = true;
+    }
+    return command;
+  }
+
+  up(code: string): UiCommand | null {
+    return code === "Space" ? this.release() : null;
+  }
+
+  /** The hold ends without its key-up (blur, hidden page, unmount). */
+  release(): UiCommand | null {
+    if (!this.#held) {
+      return null;
+    }
+    this.#held = false;
+    return { type: "Mic", action: "TalkUp" };
+  }
+}

@@ -303,6 +303,32 @@
   transition: width var(--duration-standard) var(--ease-out);
 }
 
+/* A download that stopped (11b): the fill goes grey until "Try again". */
+.setup-bar-stopped {
+  background: var(--grey-300);
+}
+
+/* "Try again" (11b): a white pill in the signal color, the card's one call to act. */
+.setup-again {
+  flex: none;
+  height: var(--size-setup-small);
+  padding: 0 14px;
+  border-radius: calc(var(--size-setup-small) / 2);
+  border: none;
+  background: var(--bg);
+  box-shadow: var(--shadow-card-control);
+  font-family: inherit;
+  font-size: var(--type-setup-label);
+  color: var(--signal);
+  cursor: pointer;
+}
+
+/* The ElevenLabs key under the talker's key in card 1 (11b). */
+.setup-rule {
+  height: 1px;
+  background: var(--grey-100);
+}
+
 .setup-retry {
   display: flex;
   align-items: center;
@@ -354,7 +380,11 @@
   cursor: pointer;
 }
 
+/* It gives way to the input picker, as on 11b ("Microphone / off" on two lines): only the
+   "Allow microphone" button, which can't shrink, sends the picker to the next line. */
 .setup-mic-state {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -378,6 +408,12 @@
   box-shadow: var(--shadow-card-control);
 }
 
+/* macOS said no (11b): a quiet grey badge, the glyph slashed in ink-2. */
+.setup-mic-badge-off {
+  background: var(--grey-100);
+  box-shadow: none;
+}
+
 .setup-mic-glyph svg,
 .setup-mic-badge svg {
   fill: none;
@@ -387,12 +423,32 @@
   stroke-linejoin: round;
 }
 
+.setup-mic-badge-off svg {
+  stroke: var(--ink-2);
+}
+
+/* "Input" and its picker, a small pill (11b). */
 .setup-input {
-  max-width: 50%;
-  text-align: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 60%;
+  font-size: var(--type-setup-note);
   color: var(--ink-2);
+}
+
+.setup-input-select {
+  min-width: 0;
+  height: var(--size-setup-input);
+  padding: 0 10px;
+  border-radius: calc(var(--size-setup-input) / 2);
+  border: none;
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
   font-family: var(--font-ui);
   font-size: var(--type-setup-note);
+  color: var(--ink);
+  cursor: pointer;
 }
 
 .setup-modes {
@@ -489,8 +545,10 @@
 .setup-pill:has(.setup-radio:focus-visible),
 .setup-mode:has(.setup-radio:focus-visible),
 .setup-small:focus-visible,
+.setup-again:focus-visible,
 .setup-mic-ask:focus-visible,
 .setup-select:focus-visible,
+.setup-input-select:focus-visible,
 .first-run-go:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 3px;

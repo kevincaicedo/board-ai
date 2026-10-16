@@ -53,8 +53,11 @@ const KEYWORDS = new Set([
   "throw",
 ]);
 
+// Every character matches some branch, so the tokens always reassemble the line: a number is a
+// digit run with whatever letters touch it (0xFF, 100ms, 1e9, 2px, 1.5f), since a word can't
+// start with a digit and the plain branch excludes digits.
 const PATTERN =
-  /(\/\/.*$|#\s.*$)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_]*)|(\s+|[^\sA-Za-z0-9_/#]+|[/#])/g;
+  /(\/\/.*$|#\s.*$)|(\d[A-Za-z0-9_]*(?:\.\d[A-Za-z0-9_]*)?)|([A-Za-z_][A-Za-z0-9_]*)|(\s+|[^\sA-Za-z0-9_/#]+|[/#])/g;
 
 export function tokenizeLine(line: string): CodeToken[] {
   const tokens: CodeToken[] = [];

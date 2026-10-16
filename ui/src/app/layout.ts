@@ -6,8 +6,13 @@ import { easeOut, lerp, ramp, spring } from "../canvas/math.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import type { Tokens } from "../styles/tokens.ts";
 
-/** No more than two surfaces sit beside the canvas at once (PRODUCT §7.2). */
-export const COLUMN_VISIBLE_MAX = 2;
+/**
+ * No more than two surfaces sit beside the canvas at once (PRODUCT §7.2): the core's
+ * `SURFACES_BESIDE_CANVAS_MAX`, which counts code, compare and recap cards only. The core sends
+ * the dismiss itself; past this the UI steps the oldest surface out, so it never shows more.
+ * A detour card is not a surface.
+ */
+export const SURFACES_VISIBLE_MAX = 2;
 
 export type ColumnTokens = Pick<
   Tokens,
@@ -27,12 +32,20 @@ export type ColumnTokens = Pick<
   | "durationSceneMs"
 >;
 
+/** A span in which a nested detour's card hides its outer detour's card; `to` is its close. */
+export interface Cover {
+  readonly from: number;
+  readonly to: number | null;
+}
+
 export interface Placed {
   readonly key: string;
   /** When the column made room for it (others start moving). */
   readonly shownAt: number;
   /** When it left, or was pushed out by a newer surface. */
   readonly leftAt: number | null;
+  /** The latest span an inner detour's card hid this one (detour cards only). */
+  readonly cover: Cover | null;
   readonly height: number;
 }
 
@@ -49,8 +62,16 @@ export function surfaceHeight(surface: Surface, tokens: ColumnTokens): number {
   }
 }
 
+function coveredAt(item: Pick<Placed, "cover">, at: number): boolean {
+  const cover = item.cover;
+  return cover !== null && at >= cover.from && (cover.to === null || at < cover.to);
+}
+
 function visibleAt(items: readonly Placed[], at: number): Placed[] {
-  return items.filter((item) => item.shownAt <= at && (item.leftAt === null || at < item.leftAt));
+  return items.filter(
+    (item) =>
+      item.shownAt <= at && (item.leftAt === null || at < item.leftAt) && !coveredAt(item, at),
+  );
 }
 
 /** Tops for a set of items: one is centered on the column's middle; more stack from the top. */
@@ -82,11 +103,10 @@ export function columnTops(
 ): Map<string, number> {
   const changes = new Set<number>();
   for (const item of items) {
-    if (item.shownAt <= at) {
-      changes.add(item.shownAt);
-    }
-    if (item.leftAt !== null && item.leftAt <= at) {
-      changes.add(item.leftAt);
+    for (const change of [item.shownAt, item.leftAt, item.cover?.from, item.cover?.to]) {
+      if (change !== null && change !== undefined && change <= at) {
+        changes.add(change);
+      }
     }
   }
   const ordered = [...changes].sort((a, b) => a - b);
@@ -115,7 +135,10 @@ export function columnTops(
 }
 
 function holdTop(items: readonly Placed[], item: Placed, tokens: ColumnTokens): number {
-  const at = item.leftAt === null ? item.shownAt : item.leftAt - 0.5;
+  // The last moment it was in the column: before it left, before a nested detour covered it.
+  const hidden =
+    item.leftAt ?? (item.cover !== null && item.cover.to === null ? item.cover.from : null);
+  const at = hidden === null ? item.shownAt : hidden - 0.5;
   const tops = new Map<string, number>();
   stackTops(visibleAt(items, at), tokens, tops);
   return tops.get(item.key) ?? tokens.surfaceCenter - item.height / 2;
@@ -128,15 +151,26 @@ export interface Motion {
   readonly exit: number;
 }
 
+/**
+ * A card's motion at `at`: it rises in at `enterAt` and blurs out when it leaves. A detour card a
+ * nested detour covers blurs out the same way, and rises in again when that detour closes.
+ */
 export function surfaceMotion(
-  enterAt: number,
-  leftAt: number | null,
+  item: Pick<Placed, "leftAt" | "cover"> & { readonly enterAt: number },
   at: number,
   durationMs: number,
 ): Motion {
+  const cover = item.cover;
+  const back = cover !== null && cover.to !== null && at >= cover.to ? cover.to : null;
+  const from = back ?? item.enterAt;
+  const hide =
+    cover !== null && coveredAt(item, at)
+      ? easeOut(ramp(at, cover.from, cover.from + durationMs))
+      : 0;
+  const leave = item.leftAt === null ? 0 : easeOut(ramp(at, item.leftAt, item.leftAt + durationMs));
   return {
-    enter: easeOut(ramp(at, enterAt, enterAt + durationMs)),
-    exit: leftAt === null ? 0 : easeOut(ramp(at, leftAt, leftAt + durationMs)),
+    enter: easeOut(ramp(at, from, from + durationMs)),
+    exit: Math.max(hide, leave),
   };
 }
 

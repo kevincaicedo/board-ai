@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "preact/hooks";
 import { ramp, round1, round2 } from "../canvas/math.ts";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
-import { keyDownCommand } from "./keys.ts";
+import { PushToTalk } from "./keys.ts";
 import { escapeAction } from "./replays.ts";
 
 function editable(target: EventTarget | null): boolean {
@@ -42,7 +42,12 @@ export function MicButton() {
   });
 
   useEffect(() => {
-    let talking = false;
+    const talk = new PushToTalk();
+    const send = (command: ReturnType<PushToTalk["release"]>): void => {
+      if (command !== null) {
+        runtime.send(command);
+      }
+    };
     const down = (event: KeyboardEvent): void => {
       const closing = escapeAction(
         runtime.replays.local.value !== null,
@@ -54,37 +59,41 @@ export function MicButton() {
         modified: event.metaKey || event.ctrlKey || event.altKey,
         editable: editable(event.target),
       };
+      // Read at the key press, so a mute never re-binds these handlers mid-hold.
+      const muted = runtime.scene.store.orb.peek().state === "Muted";
       const context = { muted, replay: runtime.replay !== null, escape: closing };
-      const command = keyDownCommand(key, context);
-      if (event.code === "Escape" && closing === "close-replay" && command === null) {
+      if (event.code === "Escape" && closing === "close-replay") {
         if (!key.repeat && !key.modified && !key.editable) {
           event.preventDefault();
           runtime.replays.close();
         }
         return;
       }
-      if (command === null) {
-        return;
-      }
-      if (command.type === "Mic" && command.action === "TalkDown") {
+      const command = talk.down(key, context);
+      if (command?.type === "Mic" && command.action === "TalkDown") {
         event.preventDefault();
-        talking = true;
       }
-      runtime.send(command);
+      send(command);
     };
-    const up = (event: KeyboardEvent): void => {
-      if (event.code === "Space" && talking) {
-        talking = false;
-        runtime.send({ type: "Mic", action: "TalkUp" });
+    const up = (event: KeyboardEvent): void => send(talk.up(event.code));
+    const release = (): void => send(talk.release());
+    const hidden = (): void => {
+      if (document.hidden) {
+        release();
       }
     };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", release);
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", release);
+      document.removeEventListener("visibilitychange", hidden);
+      release();
     };
-  }, [runtime, muted]);
+  }, [runtime]);
 
   return (
     <button

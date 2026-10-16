@@ -9,9 +9,16 @@ import { clamp, easeInOutCubic, easeOut, lerp, ramp, round1, round2 } from "../c
 import { revealLength, type Stroke } from "../canvas/stroke.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import { lineRange, tokenizeLine } from "./code.ts";
-import { codeMarkSeed, codeMarkStroke, type TextBox, utf16Offset } from "./codeMark.ts";
-import { compareRows, compareTitle } from "./compare.ts";
+import {
+  codeMarkKey,
+  codeMarkSeed,
+  codeMarkStroke,
+  type TextBox,
+  utf16Offset,
+} from "./codeMark.ts";
+import { compareOptions, compareRows, compareTitle } from "./compare.ts";
 import { markStrokes } from "./marks.ts";
+import { recapRows } from "./recap.ts";
 
 export function DetourCard({ item }: { item: Extract<ColumnItem, { kind: "detour" }> }) {
   const runtime = useRuntime();
@@ -171,7 +178,7 @@ function CodeMarks({
     <svg class="code-marks" ref={svgRef} aria-hidden="true">
       {marks.map((mark, index) => (
         <path
-          key={codeMarkSeed(surfaceId, mark)}
+          key={codeMarkKey(mark)}
           ref={(element) => {
             pathRefs.current[index] = element;
           }}
@@ -359,18 +366,18 @@ export function CompareCard({
       </div>
       <div class="compare-grid" style={{ gridTemplateColumns: columns }}>
         <span />
-        {surface.options.map((option) => (
-          <span key={option} class="compare-option">
+        {compareOptions(surface).map(({ option, key }) => (
+          <span key={key} class="compare-option">
             {option}
           </span>
         ))}
-        {compareRows(surface).map(({ criterion, row, cells: slots }) => [
-          <span key={`label-${criterion}`} class="compare-criterion">
+        {compareRows(surface).map(({ criterion, row, key: rowKey, cells: slots }) => [
+          <span key={rowKey} class="compare-criterion">
             {criterion}
           </span>,
-          ...slots.map(({ option, col, key }) => (
+          ...slots.map(({ col, key }) => (
             <CompareCell
-              key={`${option}-${criterion}`}
+              key={key}
               surfaceId={surface.id}
               row={row}
               col={col}
@@ -390,8 +397,8 @@ export function RecapCard({ surface }: { surface: Extract<Surface, { kind: "Reca
         <span class="card-title">Recap</span>
       </div>
       <ul class="recap-list">
-        {surface.bullets.map((bullet) => (
-          <li key={bullet}>{bullet}</li>
+        {recapRows(surface).map(({ text, key }) => (
+          <li key={key}>{text}</li>
         ))}
       </ul>
     </>

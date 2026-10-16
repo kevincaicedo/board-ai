@@ -1,6 +1,8 @@
 // The UI's trust boundary for the wire (LLD §3.7). Replay files come from disk and Tauri batches
 // can come from a different build, so every event is checked once here, into the generated types.
-// Unknown or malformed events become `null`; callers count and skip them and never crash.
+// Unknown or malformed events become `null`; callers count and skip them and never crash. A view
+// lists what the vault holds, hand-written files included, so its rows parse one by one: a bad
+// row is skipped and counted (`RowSkips`) and the rest of the view is kept.
 // The parser tables are typed by the generated unions, so a new protocol variant fails typecheck
 // until it is handled here.
 
@@ -33,6 +35,11 @@ import type { UiLogLine } from "./generated/UiLogLine.ts";
 import type { View } from "./generated/View.ts";
 
 type Fields = { readonly [key: string]: unknown };
+
+/** Rows of a view (sessions, tasks, notes, memories, past ops) skipped because they didn't parse. */
+export interface RowSkips {
+  rows: number;
+}
 
 const U8_MAX = 255;
 const U32_MAX = 4_294_967_295;
@@ -103,6 +110,27 @@ function list<T>(value: unknown, parse: (value: unknown) => T | null): T[] | nul
   return out;
 }
 
+/** A view's rows: each one parses on its own, and one that doesn't is skipped and counted. */
+function rows<T>(
+  value: unknown,
+  parse: (value: unknown, skips: RowSkips) => T | null,
+  skips: RowSkips,
+): T[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const out: T[] = [];
+  for (const entry of value) {
+    const parsed = parse(entry, skips);
+    if (parsed === null) {
+      skips.rows += 1;
+    } else {
+      out.push(parsed);
+    }
+  }
+  return out;
+}
+
 /** Element ids follow `ElementId::parse`: 1 to 64 bytes of letters, digits and `_ - . : >`. */
 const ELEMENT_ID = /^[A-Za-z0-9_\-.:>]{1,64}$/;
 
@@ -162,6 +190,7 @@ const fill = (value: unknown): Fill | null => oneOf(value, FILLS);
 type Tagged<U, Tag extends string> = {
   [K in U extends Record<Tag, infer N extends string> ? N : never]: (
     f: Fields,
+    skips: RowSkips,
   ) => Extract<U, Record<Tag, K>> | null;
 };
 
@@ -236,9 +265,10 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
 };
 
 function tagged<U>(
-  table: Record<string, (f: Fields) => U | null>,
+  table: Record<string, (f: Fields, skips: RowSkips) => U | null>,
   tag: string,
   value: unknown,
+  skips: RowSkips = { rows: 0 },
 ): U | null {
   const f = fields(value);
   const name = f?.[tag];
@@ -246,7 +276,7 @@ function tagged<U>(
     return null;
   }
   const parse = table[name];
-  return parse === undefined ? null : parse(f);
+  return parse === undefined ? null : parse(f, skips);
 }
 
 export function parseDrawOp(value: unknown): DrawOp | null {
@@ -334,13 +364,13 @@ function coverShape(value: unknown): CoverShape | null {
   return r === null || shape === null ? null : { rect: r, shape };
 }
 
-function sessionCard(value: unknown): SessionCard | null {
+function sessionCard(value: unknown, skips: RowSkips): SessionCard | null {
   const f = fields(value);
   const id = filled(f?.id);
   const title = text(f?.title);
   const day = date(f?.date);
   const duration = u32(f?.duration_ms);
-  const cover = list(f?.cover, coverShape);
+  const cover = rows(f?.cover, coverShape, skips);
   return id === null || title === null || day === null || duration === null || cover === null
     ? null
     : { id, title, date: day, duration_ms: duration, cover };
@@ -365,13 +395,13 @@ function taskRow(value: unknown): TaskRow | null {
     : { id, title, project, from };
 }
 
-function noteRow(value: unknown): NoteRow | null {
+function noteRow(value: unknown, skips: RowSkips): NoteRow | null {
   const f = fields(value);
   const id = filled(f?.id);
   const body = text(f?.text);
   const day = date(f?.date);
   const from = nullable(f?.from, sessionRef);
-  const links = list(f?.links, text);
+  const links = rows(f?.links, text, skips);
   return id === null || body === null || day === null || from === undefined || links === null
     ? null
     : { id, text: body, date: day, from, links };
@@ -384,9 +414,9 @@ function memoryRow(value: unknown): MemoryRow | null {
   return id === null || body === null ? null : { id, text: body };
 }
 
-function digestCard(value: unknown): DigestCard | null {
+function digestCard(value: unknown, skips: RowSkips): DigestCard | null {
   const f = fields(value);
-  const session = sessionCard(f?.session);
+  const session = sessionCard(f?.session, skips);
   const notes = u32(f?.notes);
   const tasks = u32(f?.tasks);
   const questions = u32(f?.open_questions);
@@ -395,56 +425,71 @@ function digestCard(value: unknown): DigestCard | null {
     : { session, notes, tasks, open_questions: questions };
 }
 
-function pastLayer(value: unknown): PastLayer | null {
+function pastLayer(value: unknown, skips: RowSkips): PastLayer | null {
   const f = fields(value);
   const title = nullable(f?.title, text);
-  const ops = list(f?.ops, parseDrawOp);
+  const ops = rows(f?.ops, parseDrawOp, skips);
   return title === undefined || ops === null ? null : { title, ops };
 }
 
+/** The session digest a Memory view shows; one that doesn't parse is skipped, as a row is. */
+function latestDigest(value: unknown, skips: RowSkips): DigestCard | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  const digest = digestCard(value, skips);
+  if (digest === null) {
+    skips.rows += 1;
+  }
+  return digest;
+}
+
 const VIEWS: Tagged<View, "kind"> = {
-  Library: (f) => {
-    const sessions = list(f.sessions, sessionCard);
+  Library: (f, skips) => {
+    const sessions = rows(f.sessions, sessionCard, skips);
     const more = u32(f.more_sessions);
     return sessions === null || more === null
       ? null
       : { kind: "Library", sessions, more_sessions: more };
   },
-  Tasks: (f) => {
+  Tasks: (f, skips) => {
     const project = nullable(f.project, text);
-    const tasks = list(f.tasks, taskRow);
+    const tasks = rows(f.tasks, taskRow, skips);
     const more = u32(f.more_tasks);
-    const notes = list(f.notes, noteRow);
+    const notes = rows(f.notes, noteRow, skips);
     return project === undefined || tasks === null || more === null || notes === null
       ? null
       : { kind: "Tasks", project, tasks, more_tasks: more, notes };
   },
-  Memory: (f) => {
-    const aboutYou = list(f.about_you, memoryRow);
-    const systems = list(f.systems, memoryRow);
-    const notes = list(f.notes, noteRow);
-    const latest = nullable(f.latest, digestCard);
+  Memory: (f, skips) => {
+    const aboutYou = rows(f.about_you, memoryRow, skips);
+    const systems = rows(f.systems, memoryRow, skips);
+    const notes = rows(f.notes, noteRow, skips);
+    const latest = latestDigest(f.latest, skips);
     return aboutYou === null || systems === null || notes === null || latest === undefined
       ? null
       : { kind: "Memory", about_you: aboutYou, systems, notes, latest };
   },
-  PastSession: (f) => {
-    const session = sessionCard(f.session);
+  PastSession: (f, skips) => {
+    const session = sessionCard(f.session, skips);
     const recap = text(f.recap);
-    const layers = list(f.layers, pastLayer);
+    const layers = rows(f.layers, pastLayer, skips);
     const leftOut = u32(f.ops_left_out);
     return session === null || recap === null || layers === null || leftOut === null
       ? null
       : { kind: "PastSession", session, recap, layers, ops_left_out: leftOut };
   },
-  Replay: (f) => {
-    const session = sessionCard(f.session);
+  Replay: (f, skips) => {
+    const session = sessionCard(f.session, skips);
     return session === null ? null : { kind: "Replay", session };
   },
 };
 
-export function parseView(value: unknown): View | null {
-  return tagged<View>(VIEWS, "kind", value);
+export function parseView(value: unknown, skips: RowSkips = { rows: 0 }): View | null {
+  return tagged<View>(VIEWS, "kind", value, skips);
 }
 
 const EVENTS: Tagged<UiEvent, "type"> = {
@@ -538,47 +583,52 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const session = nullable(f.session, filled);
     return session === undefined ? null : { type: "SessionStart", session };
   },
-  ViewShow: (f) => {
-    const view = parseView(f.view);
+  ViewShow: (f, skips) => {
+    const view = parseView(f.view, skips);
+    // An unknown day ("") only costs the "today" labels: days then read in full.
     const today = date(f.today);
-    return view === null || today === null || today === ""
-      ? null
-      : { type: "ViewShow", view, today };
+    return view === null || today === null ? null : { type: "ViewShow", view, today };
   },
   ViewDismiss: () => ({ type: "ViewDismiss" }),
   OpenSettings: () => ({ type: "OpenSettings" }),
 };
 
-export function parseUiEvent(value: unknown): UiEvent | null {
-  return tagged<UiEvent>(EVENTS, "type", value);
+export function parseUiEvent(value: unknown, skips: RowSkips = { rows: 0 }): UiEvent | null {
+  return tagged<UiEvent>(EVENTS, "type", value, skips);
 }
 
 function sessionTime(value: unknown): number | null {
   return integer(value, 0, SESSION_TIME_MAX);
 }
 
-/** A batch from the live transport. Malformed events are dropped and counted, never fatal. */
-export function parseUiBatch(value: unknown): { batch: UiBatch; skipped: number } | null {
+/**
+ * A batch from the live transport. Malformed events are dropped and counted, never fatal, and so
+ * are the rows views skipped.
+ */
+export function parseUiBatch(
+  value: unknown,
+): { batch: UiBatch; skipped: number; skippedRows: number } | null {
   const f = fields(value);
   const at = sessionTime(f?.at);
   if (f === null || at === null || !Array.isArray(f.events)) {
     return null;
   }
   const events: UiEvent[] = [];
+  const skips: RowSkips = { rows: 0 };
   let skipped = 0;
   for (const entry of f.events) {
-    const event = parseUiEvent(entry);
+    const event = parseUiEvent(entry, skips);
     if (event === null) {
       skipped += 1;
     } else {
       events.push(event);
     }
   }
-  return { batch: { at, events }, skipped };
+  return { batch: { at, events }, skipped, skippedRows: skips.rows };
 }
 
 export type LogLineResult =
-  | { readonly kind: "ui"; readonly line: UiLogLine }
+  | { readonly kind: "ui"; readonly line: UiLogLine; readonly skippedRows: number }
   /** A well-formed line of another kind (`"k":"input"`, for re-simulation): not for the UI. */
   | { readonly kind: "other" }
   | { readonly kind: "malformed"; readonly reason: string };
@@ -610,9 +660,10 @@ export function parseLogLine(line: string): LogLineResult {
   if (f.k !== "ui") {
     return { kind: "malformed", reason: "missing kind" };
   }
-  const event = parseUiEvent(f.event);
+  const skips: RowSkips = { rows: 0 };
+  const event = parseUiEvent(f.event, skips);
   if (event === null) {
     return { kind: "malformed", reason: "unknown or malformed event" };
   }
-  return { kind: "ui", line: { v: LOG_VERSION, t, k: "ui", event } };
+  return { kind: "ui", line: { v: LOG_VERSION, t, k: "ui", event }, skippedRows: skips.rows };
 }

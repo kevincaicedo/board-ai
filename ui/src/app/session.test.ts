@@ -32,6 +32,56 @@ test("captions grow word by word, then the finished line moves up when a new one
   assert.equal(store.captions.value.current?.who, "Assistant");
 });
 
+// The core captions the user as the whole utterance so far (D-035), with is_final once per
+// voiced segment, so a final ends a segment, not the line.
+test("a two-segment utterance shows each word once", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "Orb", state: "Listening", level_percent: 0 }, 900);
+  store.apply({ type: "Caption", who: "User", text: "so the cache", is_final: true }, 1000);
+  store.apply(
+    { type: "Caption", who: "User", text: "so the cache and postgres", is_final: false },
+    1400,
+  );
+  const { current, previous } = store.captions.value;
+  assert.deepEqual(
+    [current?.text, current?.startAt, current?.wordAt, current?.finalAt],
+    ["so the cache and postgres", 1000, 1400, null],
+  );
+  assert.equal(previous, null, "the first segment is not shown again above");
+});
+
+test("after the turn, the user's next words start a new line even when they repeat", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "Orb", state: "Listening", level_percent: 0 }, 900);
+  store.apply({ type: "Caption", who: "User", text: "go on", is_final: true }, 1000);
+  store.apply({ type: "Orb", state: "Thinking", level_percent: 0 }, 1600);
+  store.apply({ type: "Orb", state: "Listening", level_percent: 0 }, 2000);
+  store.apply({ type: "Caption", who: "User", text: "go on please", is_final: false }, 2100);
+  assert.equal(store.captions.value.current?.startAt, 2100);
+  assert.equal(store.captions.value.previous?.text, "go on");
+});
+
+test("a clause cut by a stop is closed, so it fades like a finished one", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "Orb", state: "Speaking", level_percent: 0 }, 900);
+  store.apply(
+    { type: "Caption", who: "Assistant", text: "Before touching Postgres,", is_final: false },
+    1000,
+  );
+  // The user's voice ducks it: it may still resume, so it stays open.
+  store.apply({ type: "Orb", state: "Listening", level_percent: 0 }, 1200);
+  assert.equal(store.captions.value.current?.finalAt, null);
+  store.apply({ type: "Orb", state: "Speaking", level_percent: 0 }, 1500);
+  store.apply(
+    { type: "Caption", who: "Assistant", text: "Before touching Postgres, the", is_final: false },
+    1600,
+  );
+  assert.equal(store.captions.value.current?.startAt, 1000, "a backchannel resumes the line");
+  // Esc: BoardAI stops and nothing more of this clause comes.
+  store.apply({ type: "Orb", state: "Idle", level_percent: 0 }, 2000);
+  assert.equal(store.captions.value.current?.finalAt, 2000);
+});
+
 test("a problem is spoken as a caption with its detail on the line above", () => {
   const store = new SessionStore(tokens);
   store.apply(
@@ -67,7 +117,7 @@ test("the thread tracks when each step was reached and opens and closes detours"
   assert.deepEqual(thread?.detours, [{ title: "cache-aside", openAt: 900, closedAt: 2000 }]);
 });
 
-test("at most two surfaces sit beside the canvas; the oldest steps out", () => {
+test("surfaces stack beside an open detour's card and take updates", () => {
   const store = new SessionStore(tokens);
   const code = (id: number): Surface => ({
     kind: "Code",
@@ -87,7 +137,7 @@ test("at most two surfaces sit beside the canvas; the oldest steps out", () => {
   assert.deepEqual(
     column.map((item) => [item.key, item.leftAt]),
     [
-      ["layer-1", 4000],
+      ["layer-1", null],
       ["surface-1", null],
       ["surface-2", null],
     ],
@@ -177,9 +227,9 @@ test("code marks and compare cells land on their card, bounded", () => {
 });
 
 test("the column centers one card, stacks two, and springs between them", () => {
-  const single: Placed = { key: "a", shownAt: 0, leftAt: null, height: 300 };
+  const single: Placed = { key: "a", shownAt: 0, leftAt: null, cover: null, height: 300 };
   assert.equal(columnTops([single], 100, tokens).get("a"), tokens.surfaceCenter - 150);
-  const second: Placed = { key: "b", shownAt: 1000, leftAt: null, height: 331 };
+  const second: Placed = { key: "b", shownAt: 1000, leftAt: null, cover: null, height: 331 };
   const settled = columnTops([single, second], 1000 + tokens.durationSceneMs, tokens);
   assert.equal(settled.get("a"), tokens.surfaceTop);
   assert.equal(settled.get("b"), tokens.surfaceTop + 300 + tokens.surfaceGap);

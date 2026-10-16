@@ -53,7 +53,7 @@ test("a replay log groups events by time and skips bad lines without crashing", 
       [300, ["Acknowledge"]],
     ],
   );
-  assert.deepEqual(log.skipped, { malformed: 7, otherKind: 1, overLimit: 0 });
+  assert.deepEqual(log.skipped, { malformed: 7, otherKind: 1, overLimit: 0, rows: 0 });
   assert.equal(log.durationMs, 300 + REPLAY_TAIL_MS);
 });
 

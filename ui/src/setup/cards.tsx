@@ -13,12 +13,16 @@ import {
   inputLabel,
   keyHint,
   keyLabel,
+  keyNote,
   MIC_DENIED,
   MODES,
+  micStep,
   OLLAMA_UNREACHABLE,
   PROVIDERS,
   percent,
   providerKey,
+  thinkingStep,
+  voiceStep,
 } from "./words.ts";
 
 export interface CardProps {
@@ -95,7 +99,7 @@ export function ThinkingCard(props: CardProps) {
       : null;
   return (
     <section class="setup-card" aria-labelledby="setup-think" aria-busy={busy}>
-      <CardHead id="setup-think" step="1 · THINKING" title="Who does the talking" />
+      <CardHead id="setup-think" step={thinkingStep(status)} title="Who does the talking" />
       <div role="radiogroup" aria-label="Language model provider" class="setup-pills">
         {PROVIDERS.map((choice) => (
           <label key={choice.id} class="setup-pill">
@@ -116,6 +120,7 @@ export function ThinkingCard(props: CardProps) {
           id="setup-key"
           label={keyLabel(key)}
           hint={keyHint(key, status.talker.key === "Saved")}
+          note={keyNote(status.talker.key === "Saved")}
           disabled={busy}
           onSave={(value) => void controller.saveKey(key, value)}
         />
@@ -127,11 +132,33 @@ export function ThinkingCard(props: CardProps) {
         </p>
       ) : null}
       <Problem text={state.problems.thinking ?? unreadable} />
+      {state.addingVoiceKey ? <VoiceKey {...props} /> : null}
       <Foot>
         <span class="setup-foot-label">Model</span>
         <span class="setup-mono">{status.talker.model}</span>
       </Foot>
     </section>
+  );
+}
+
+/**
+ * The ElevenLabs key, opened from the voice card's "Add a key": it sits with the other key in
+ * card 1, under a rule (11b), and takes the focus when it opens.
+ */
+function VoiceKey({ state, status, controller }: CardProps) {
+  return (
+    <>
+      <div class="setup-rule" />
+      <KeyField
+        id="setup-voice-key"
+        label={keyLabel("ElevenLabs")}
+        hint={keyHint("ElevenLabs", status.keys.includes("ElevenLabs"))}
+        focus={true}
+        disabled={state.busy.has("voice")}
+        onSave={(value) => void controller.saveKey("ElevenLabs", value)}
+      />
+      <Problem text={state.problems.voice} />
+    </>
   );
 }
 
@@ -145,6 +172,7 @@ function ModelRow({
   progress: GroupProgress;
 }) {
   const value = percent(progress);
+  const stopped = progress.problem !== null;
   return (
     <div class="setup-model">
       <div class="setup-model-head">
@@ -153,14 +181,14 @@ function ModelRow({
       </div>
       <div
         role="progressbar"
-        aria-label={label}
+        aria-label={stopped ? `${label}, stopped` : label}
         aria-valuenow={value}
         aria-valuemin={0}
         aria-valuemax={100}
         class="setup-bar"
       >
         <div
-          class="setup-bar-fill"
+          class={stopped ? "setup-bar-fill setup-bar-stopped" : "setup-bar-fill"}
           style={{ width: value === 100 ? "calc(100% - 2px)" : `${value}%` }}
         />
       </div>
@@ -177,7 +205,7 @@ export function VoiceCard({ state, status, controller }: CardProps) {
   const elevenLabsSaved = status.keys.includes("ElevenLabs");
   return (
     <section class="setup-card" aria-labelledby="setup-voice" aria-busy={busy}>
-      <CardHead id="setup-voice" step="2 · VOICE AND HEARING" title="Local models" />
+      <CardHead id="setup-voice" step={voiceStep(downloadProblem !== null)} title="Local models" />
       {kokoro ? (
         <ModelRow name="Voice · Kokoro" label="Kokoro voice download" progress={voice} />
       ) : (
@@ -201,21 +229,13 @@ export function VoiceCard({ state, status, controller }: CardProps) {
       {downloadProblem === null ? null : (
         <div class="setup-retry">
           <Problem text={downloadProblem} />
-          <button type="button" class="setup-small" onClick={() => controller.retryDownloads()}>
+          <button type="button" class="setup-again" onClick={() => controller.retryDownloads()}>
             Try again
           </button>
         </div>
       )}
-      {state.addingVoiceKey ? (
-        <KeyField
-          id="setup-voice-key"
-          label={keyLabel("ElevenLabs")}
-          hint={keyHint("ElevenLabs", elevenLabsSaved)}
-          disabled={busy}
-          onSave={(value) => void controller.saveKey("ElevenLabs", value)}
-        />
-      ) : null}
-      <Problem text={state.problems.voice} />
+      {/* While the key field is open, its refusal shows under it in card 1. */}
+      <Problem text={state.addingVoiceKey ? null : state.problems.voice} />
       <Foot>
         <span class="setup-foot-label">
           {kokoro ? "Prefer ElevenLabs?" : "Prefer the local voice?"}
@@ -278,19 +298,22 @@ function InputPicker({ status, controller, busy }: CardProps & { busy: boolean }
     ...status.input_devices.map((name): InputDevice => ({ kind: "Named", name })),
   ];
   return (
-    <select
-      class="setup-select setup-input"
-      aria-label="Microphone to listen on"
-      value={inputValue(status.input)}
-      disabled={busy}
-      onChange={(event) => void controller.pickInput(inputDevice(event.currentTarget.value))}
-    >
-      {devices.map((device) => (
-        <option key={inputValue(device)} value={inputValue(device)}>
-          {inputLabel(device)}
-        </option>
-      ))}
-    </select>
+    <label class="setup-input">
+      Input
+      <select
+        class="setup-input-select"
+        aria-label="Input device"
+        value={inputValue(status.input)}
+        disabled={busy}
+        onChange={(event) => void controller.pickInput(inputDevice(event.currentTarget.value))}
+      >
+        {devices.map((device) => (
+          <option key={inputValue(device)} value={inputValue(device)}>
+            {inputLabel(device)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -316,7 +339,7 @@ export function MicrophoneCard(props: CardProps) {
   const permission = status.microphone;
   return (
     <section class="setup-card" aria-labelledby="setup-mic" aria-busy={busy}>
-      <CardHead id="setup-mic" step="3 · MICROPHONE" title="How you speak to it" />
+      <CardHead id="setup-mic" step={micStep(permission)} title="How you speak to it" />
       <div class="setup-mic-row">
         {permission === "Undetermined" ? (
           <button
@@ -332,7 +355,11 @@ export function MicrophoneCard(props: CardProps) {
           </button>
         ) : (
           <div class="setup-mic-state">
-            <span class="setup-mic-badge">
+            <span
+              class={
+                permission === "Denied" ? "setup-mic-badge setup-mic-badge-off" : "setup-mic-badge"
+              }
+            >
               <MicGlyph permission={permission} />
             </span>
             <span>{permission === "Granted" ? "Microphone allowed" : "Microphone off"}</span>

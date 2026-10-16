@@ -12,7 +12,7 @@ import { SetupController } from "./controller.ts";
 import { mountSetupOrb } from "./orb.ts";
 import { canStart } from "./state.ts";
 import type { SetupTransport } from "./transport.ts";
-import { harnessChip, startHint } from "./words.ts";
+import { FOOTER_FIRST_RUN, FOOTER_SETTINGS, harnessChip, startHint, startLabel } from "./words.ts";
 
 function Harnesses({ status }: { status: SetupStatus }) {
   const chips = [
@@ -116,11 +116,7 @@ export function FirstRun({
             </div>
             <div class="first-run-foot">
               <Harnesses status={status} />
-              <span class="first-run-later">
-                {settings
-                  ? "Esc closes settings. A change starts a new session."
-                  : "Change any of this later by saying “open settings”."}
-              </span>
+              <span class="first-run-later">{settings ? FOOTER_SETTINGS : FOOTER_FIRST_RUN}</span>
             </div>
             <div class="first-run-start">
               <button
@@ -130,7 +126,7 @@ export function FirstRun({
                 aria-describedby={hint === null ? undefined : "first-run-hint"}
                 onClick={() => void controller.start()}
               >
-                Start talking
+                {startLabel(settings)}
               </button>
               {hint === null ? null : (
                 <p id="first-run-hint" class="setup-note">

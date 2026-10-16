@@ -33,12 +33,13 @@ test("the committed primitives fixture is current and fully valid", () => {
     malformed: 0,
     otherKind: 0,
     overLimit: 0,
+    rows: 0,
   });
 });
 
 test("every fixture line is a valid UI event, in time order", () => {
   const log = parseReplayLog(committed);
-  assert.deepEqual(log.skipped, { malformed: 0, otherKind: 0, overLimit: 0 });
+  assert.deepEqual(log.skipped, { malformed: 0, otherKind: 0, overLimit: 0, rows: 0 });
   const times = committed
     .trim()
     .split("\n")

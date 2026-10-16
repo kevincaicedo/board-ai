@@ -14,6 +14,7 @@ import { ThreadBar } from "../app/ThreadBar.tsx";
 import type { SessionCard } from "../protocol/generated/SessionCard.ts";
 import { parseReplayLog } from "../transport/log.ts";
 import { ReplayTransport } from "../transport/replay.ts";
+import { replaySubtitle } from "./labels.ts";
 import { CloseGlyph } from "./parts.tsx";
 
 type Loaded =
@@ -65,7 +66,34 @@ function ReplayStage({
   );
 }
 
-export function ReplayOverlay({ card, onClose }: { card: SessionCard; onClose: () => void }) {
+/**
+ * The overlay's controls (7b): the title and the replay line stacked above one compact row at
+ * bottom left (play, the chapter track, time, chapter, close) that ends well clear of the orb at
+ * bottom center.
+ */
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      class="card-control replay-close"
+      aria-label="Close the replay"
+      onClick={onClose}
+    >
+      <CloseGlyph />
+    </button>
+  );
+}
+
+export function ReplayOverlay({
+  card,
+  today,
+  onClose,
+}: {
+  card: SessionCard;
+  /** The day the view was read, for "Oct 12" ("" when unknown: the day reads in full). */
+  today: string;
+  onClose: () => void;
+}) {
   const outer = useRuntime();
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   useEffect(() => {
@@ -96,17 +124,22 @@ export function ReplayOverlay({ card, onClose }: { card: SessionCard; onClose: (
       ) : null}
       <div class="replay-bar">
         <div class="replay-bar-head">
-          <button type="button" class="card-control" aria-label="Close replay" onClick={onClose}>
-            <CloseGlyph />
-          </button>
           <span class="replay-bar-title">{card.title}</span>
-          <span class="replay-bar-sub">Replay</span>
+          <span class="replay-bar-sub">{replaySubtitle(card, today)}</span>
         </div>
         {loaded.kind === "ready" ? (
           <RuntimeContext.Provider value={loaded.runtime}>
-            <ReplayControls replay={loaded.replay} keyboard={false} />
+            <ReplayControls
+              replay={loaded.replay}
+              keyboard={false}
+              trailing={<CloseButton onClose={onClose} />}
+            />
           </RuntimeContext.Provider>
-        ) : null}
+        ) : (
+          <div class="replay">
+            <CloseButton onClose={onClose} />
+          </div>
+        )}
       </div>
       {loaded.kind === "failed" ? (
         <p class="replay-problem">I couldn't open that session.</p>

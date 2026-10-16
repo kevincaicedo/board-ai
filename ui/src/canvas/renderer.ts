@@ -5,7 +5,7 @@
 
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
 import type { Tokens } from "../styles/tokens.ts";
-import { type BoardModel, type Layer, type Run, runActive } from "./board.ts";
+import { type BoardModel, type Layer, type Run, runActive, traceRunning } from "./board.ts";
 import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
 import type { Vec } from "./geometry.ts";
 import { clamp, easeInOutCubic, easeOut, ramp, round1, round2 } from "./math.ts";
@@ -517,10 +517,7 @@ export class BoardView {
     if (trace === null || run.trace === null) {
       return;
     }
-    const running =
-      at >= run.clock.startAt &&
-      run.replacedAt === null &&
-      (layer.poppedAt === null || at < layer.poppedAt);
+    const running = traceRunning(run, layer, at);
     trace.dot.style.display = running ? "" : "none";
     if (!running) {
       return;

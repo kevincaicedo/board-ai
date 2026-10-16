@@ -12,7 +12,7 @@ import type { Speaker } from "../protocol/generated/Speaker.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Tokens } from "../styles/tokens.ts";
-import { COLUMN_VISIBLE_MAX, type ColumnTokens, type Placed, surfaceHeight } from "./layout.ts";
+import { type ColumnTokens, type Placed, SURFACES_VISIBLE_MAX, surfaceHeight } from "./layout.ts";
 
 /** Chips kept on screen or in flight; older ones are dropped (they have long since landed). */
 export const CHIPS_MAX = 8;
@@ -24,6 +24,11 @@ export const HIGHLIGHTS_MAX = 64;
 export const CODE_MARKS_MAX = 16;
 /** Session time an item lingers in the store after it left, so its exit can play. */
 export const LEAVE_LINGER_MS = 1500;
+/**
+ * Detour cards open at once: the core's `DETOUR_DEPTH_MAX`. Only the innermost shows; the outer
+ * ones wait under it. A push past this (the core never sends one) steps the outermost out.
+ */
+export const DETOUR_CARDS_MAX = 3;
 
 export interface CaptionLine {
   readonly who: Speaker;
@@ -72,6 +77,8 @@ export interface CodeMark {
   readonly columns: ColumnRange;
   readonly mark: Mark;
   readonly at: number;
+  /** Its place in the card's marks, in arrival order (its key: marks can repeat). */
+  readonly serial: number;
 }
 
 /** The idle suggestion under the orb (frame 1): shown, then cleared when the user speaks. */
@@ -165,6 +172,7 @@ export class SessionStore {
       case "Orb":
         if (event.state !== this.orb.value.state) {
           this.orb.value = { state: event.state, previous: this.orb.value.state, at };
+          this.#closeCaption(event.state, at);
         }
         break;
       case "Caption":
@@ -186,11 +194,13 @@ export class SessionStore {
           shownAt: at + this.#tokens.durationDetourCardDelayMs,
           enterAt: at + this.#tokens.durationDetourCardDelayMs,
           leftAt: null,
+          cover: null,
           height: this.#tokens.detourCardHeight,
         });
         break;
       case "LayerPop":
         this.#leave(key({ kind: "detour", layer: event.layer }), at);
+        this.#uncover(at);
         break;
       case "SurfaceShow":
         this.#showSurface(event.surface, at);
@@ -233,8 +243,19 @@ export class SessionStore {
 
   #caption(who: Speaker, text: string, isFinal: boolean, at: number, detail: string | null): void {
     const { current } = this.captions.value;
+    // The core captions the user as the whole utterance so far, final once per voiced segment
+    // (D-035): a later segment of the same turn (the orb hasn't moved since) extends the line.
+    const nextSegment =
+      current !== null &&
+      who === "User" &&
+      current.who === "User" &&
+      current.startAt >= this.orb.value.at &&
+      text.startsWith(current.text);
     const continues =
-      current !== null && current.finalAt === null && current.who === who && detail === null;
+      current !== null &&
+      current.who === who &&
+      detail === null &&
+      (current.finalAt === null || nextSegment);
     if (continues) {
       const grew = text !== current.text;
       this.captions.value = {
@@ -254,6 +275,25 @@ export class SessionStore {
     };
     if (who === "Assistant") {
       this.#confirmChips(at);
+    }
+  }
+
+  /**
+   * A line that will get no more words is closed, so it lingers and fades like a finished one:
+   * your line once the floor leaves you, and a clause a stop cut once BoardAI is no longer
+   * speaking. A duck (the orb listening over the voice) may still resume, so it stays open.
+   */
+  #closeCaption(state: OrbState, at: number): void {
+    const { current, previous } = this.captions.value;
+    if (current === null || current.finalAt !== null) {
+      return;
+    }
+    const over =
+      current.who === "User"
+        ? state !== "Listening"
+        : state === "Idle" || state === "Thinking" || state === "Muted";
+    if (over) {
+      this.captions.value = { current: { ...current, finalAt: at }, previous };
     }
   }
 
@@ -318,17 +358,44 @@ export class SessionStore {
         ? { ...existing, leftAt: at }
         : existing,
     );
-    // Only two surfaces beside the canvas: the oldest steps out for the newest.
-    const visible = next.filter((existing) => existing.leftAt === null);
-    for (let index = 0; index <= visible.length - COLUMN_VISIBLE_MAX; index += 1) {
-      const oldest = visible[index];
+    // Surfaces and detour cards are capped apart, as the core caps them: the core dismisses its
+    // own surfaces, so stepping the oldest out here only bounds what the column can hold.
+    const max = item.kind === "detour" ? DETOUR_CARDS_MAX : SURFACES_VISIBLE_MAX;
+    const open = next.filter((existing) => existing.kind === item.kind && existing.leftAt === null);
+    for (let index = 0; index <= open.length - max; index += 1) {
+      const oldest = open[index];
       if (oldest !== undefined) {
-        const position = next.indexOf(oldest);
-        next[position] = { ...oldest, leftAt: at };
+        next[next.indexOf(oldest)] = { ...oldest, leftAt: at };
       }
+    }
+    if (item.kind === "detour") {
+      // A nested detour's card takes the outer one's place until it closes.
+      next.forEach((existing, index) => {
+        const covered = existing.cover !== null && existing.cover.to === null;
+        if (existing.kind === "detour" && existing.leftAt === null && !covered) {
+          next[index] = { ...existing, cover: { from: at, to: null } };
+        }
+      });
     }
     next.push(item);
     this.column.value = next;
+  }
+
+  /** A detour closed: the innermost one still open comes back from under it. */
+  #uncover(at: number): void {
+    const items = this.column.value;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item === undefined || item.kind !== "detour" || item.leftAt !== null) {
+        continue;
+      }
+      if (item.cover !== null && item.cover.to === null) {
+        const next = [...items];
+        next[index] = { ...item, cover: { from: item.cover.from, to: at } };
+        this.column.value = next;
+      }
+      return;
+    }
   }
 
   #showSurface(surface: Surface, at: number): void {
@@ -342,6 +409,7 @@ export class SessionStore {
       shownAt: at,
       enterAt: others ? at + this.#tokens.durationSurfaceDelayMs : at,
       leftAt: null,
+      cover: null,
       height: surfaceHeight(surface, this.#tokens),
       highlights:
         surface.kind === "Code" && surface.highlight !== null
@@ -434,7 +502,8 @@ function updated(
       return { ...item, cells };
     }
     case "Mark": {
-      const mark = { line: update.line, columns: update.columns, mark: update.mark, at };
+      const serial = (item.marks[item.marks.length - 1]?.serial ?? -1) + 1;
+      const mark = { line: update.line, columns: update.columns, mark: update.mark, at, serial };
       return { ...item, marks: [...item.marks.slice(-(CODE_MARKS_MAX - 1)), mark] };
     }
   }

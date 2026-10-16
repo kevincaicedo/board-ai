@@ -31,7 +31,11 @@ function ViewBody({ entry }: { entry: ViewEntry }) {
       return <RecallView entry={entry} view={view} />;
     case "Replay":
       return (
-        <ReplayOverlay card={view.session} onClose={() => runtime.send({ type: "CloseView" })} />
+        <ReplayOverlay
+          card={view.session}
+          today={entry.today}
+          onClose={() => runtime.send({ type: "CloseView" })}
+        />
       );
   }
 }
@@ -123,6 +127,7 @@ export function Views() {
           <ReplayOverlay
             key={local.card.id}
             card={local.card}
+            today={open?.today ?? ""}
             onClose={() => runtime.replays.close()}
           />
         </div>

@@ -18,7 +18,12 @@ function events(text: string): { t: number; event: UiEvent }[] {
 
 test("the committed views fixture is what the script writes (run src/replay/write-demo.ts)", () => {
   assert.equal(committed, viewsJsonl());
-  assert.deepEqual(parseReplayLog(committed).skipped, { malformed: 0, otherKind: 0, overLimit: 0 });
+  assert.deepEqual(parseReplayLog(committed).skipped, {
+    malformed: 0,
+    otherKind: 0,
+    overLimit: 0,
+    rows: 0,
+  });
 });
 
 test("the views fixture opens every view, replacing and closing them in order", () => {
@@ -58,7 +63,7 @@ test("each card a fixture can play has a session log, current and valid", () => 
     assert.ok(ids.has(id), `${id} is a library card`);
     assert.equal(fixture(`sessions/${id}`), text, `sessions/${id} is current`);
     const log = parseReplayLog(text);
-    assert.deepEqual(log.skipped, { malformed: 0, otherKind: 0, overLimit: 0 });
+    assert.deepEqual(log.skipped, { malformed: 0, otherKind: 0, overLimit: 0, rows: 0 });
     const first = log.batches[0]?.events[0];
     assert.deepEqual(first, { type: "SessionStart", session: id });
     assert.ok(log.batches.some((batch) => batch.events.some((event) => event.type === "OpStart")));

@@ -2,23 +2,33 @@
 // itself at once. The key is read from the field once and handed to `onSave`; it is never kept
 // in state, and once saved the field only says that a key is saved.
 
-import { useRef } from "preact/hooks";
-import { KEY_NOTE } from "./words.ts";
+import { useEffect, useRef } from "preact/hooks";
 
 export function KeyField({
   id,
   label,
   hint,
+  note = null,
+  focus = false,
   disabled,
   onSave,
 }: {
   id: string;
   label: string;
   hint: string;
+  /** The line under the field, when it has one. */
+  note?: string | null;
+  /** Take the focus when it appears (a field opened from another card's button). */
+  focus?: boolean;
   disabled: boolean;
   onSave: (value: string) => void;
 }) {
   const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (focus) {
+      field.current?.focus();
+    }
+  }, [focus]);
   const save = (): void => {
     const input = field.current;
     if (input === null) {
@@ -61,7 +71,7 @@ export function KeyField({
           }}
         />
       </form>
-      <span class="setup-note">{KEY_NOTE}</span>
+      {note === null ? null : <span class="setup-note">{note}</span>}
     </div>
   );
 }

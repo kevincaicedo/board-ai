@@ -30,7 +30,7 @@ function failedReplay(url: string): ReplayLog {
     ],
     durationMs: REPLAY_TAIL_MS,
     chapters: [{ at: 0, kind: "Idle" }],
-    skipped: { malformed: 0, otherKind: 0, overLimit: 0 },
+    skipped: { malformed: 0, otherKind: 0, overLimit: 0, rows: 0 },
   };
 }
 
@@ -41,10 +41,10 @@ async function loadReplay(url: string): Promise<ReplayLog> {
       return failedReplay(url);
     }
     const log = parseReplayLog(await response.text());
-    const { malformed, otherKind, overLimit } = log.skipped;
-    if (malformed + overLimit > 0) {
+    const { malformed, otherKind, overLimit, rows } = log.skipped;
+    if (malformed + overLimit + rows > 0) {
       console.warn(
-        `replay ${url}: skipped ${malformed} malformed and ${overLimit} over-limit lines`,
+        `replay ${url}: skipped ${malformed} malformed and ${overLimit} over-limit lines, and ${rows} unreadable view rows`,
       );
     }
     if (otherKind > 0) {
