@@ -5,8 +5,8 @@ import { useMemo, useRef } from "preact/hooks";
 import { bump, easeOut, ramp, round1, round2 } from "../canvas/math.ts";
 import type { ChipKind } from "../protocol/generated/ChipKind.ts";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
-import { chipFlight } from "./layout.ts";
-import { chipCommand } from "./session.ts";
+import { chipFlight, sourceChipFade } from "./layout.ts";
+import { type ChipHolder, chipCommand } from "./session.ts";
 
 function ChipGlyph({ kind }: { kind: ChipKind }) {
   switch (kind) {
@@ -38,7 +38,8 @@ function ChipGlyph({ kind }: { kind: ChipKind }) {
 export function Chips() {
   const runtime = useRuntime();
   const tokens = runtime.tokens;
-  const chips = runtime.scene.store.chips.value;
+  const store = runtime.scene.store;
+  const chips = store.chips.value;
   const refs = useRef(new Map<number, HTMLElement>());
   const edgeRef = useRef<HTMLDivElement>(null);
   const glowRef = useRef<HTMLDivElement>(null);
@@ -57,7 +58,7 @@ export function Chips() {
       write(element, "top", `${round1(originY)}px`);
       if (chip.kind === "Source") {
         const enter = easeOut(ramp(at, chip.at, chip.at + tokens.durationStandardMs));
-        const leave = easeOut(ramp(at, chip.flyAt, chip.flyAt + tokens.durationStandardMs));
+        const leave = sourceChipFade(chip.flyAt, chip.hold, at, tokens.durationStandardMs);
         write(element, "display", at >= chip.at && leave < 1 ? "flex" : "none");
         write(element, "opacity", String(round2(enter * (1 - leave))));
         write(element, "transform", `translateY(${round1(tokens.surfaceRise * (1 - enter))}px)`);
@@ -112,7 +113,11 @@ export function Chips() {
           </>
         );
         const command = chipCommand(chip);
-        // A source chip with a location opens it: the code card on that line (PRODUCT §7.3).
+        const hold = (holder: ChipHolder, on: boolean): void =>
+          store.holdChip(chip.serial, holder, on, runtime.at);
+        // A source chip with a location opens it: the code card on that line (PRODUCT §7.3). It
+        // holds while the pointer is on it or it has keyboard focus; a click's focus doesn't
+        // count, or a clicked chip would stay until something else took focus.
         return command === null ? (
           <div key={chip.serial} class="chip" ref={keep}>
             {body}
@@ -125,6 +130,10 @@ export function Chips() {
             aria-label={`Open ${chip.text}`}
             ref={keep}
             onClick={() => runtime.send(command)}
+            onPointerEnter={() => hold("pointer", true)}
+            onPointerLeave={() => hold("pointer", false)}
+            onFocus={(event) => hold("focus", event.currentTarget.matches(":focus-visible"))}
+            onBlur={() => hold("focus", false)}
           >
             {body}
           </button>

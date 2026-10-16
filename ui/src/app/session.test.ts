@@ -8,10 +8,11 @@ import {
   chipFlight,
   columnTops,
   type Placed,
+  sourceChipFade,
   suggestionLook,
   surfaceHeight,
 } from "./layout.ts";
-import { CODE_MARKS_MAX, chipCommand, SessionStore } from "./session.ts";
+import { type Chip, CODE_MARKS_MAX, chipCommand, SessionStore } from "./session.ts";
 
 const tokens = readTokens(
   tokenSourceFromCss(readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8")),
@@ -284,6 +285,91 @@ test("a source chip with a location opens its line; other chips ask nothing", ()
   assert.equal(touched && chipCommand(touched), null, "a file a harness touched opens nothing");
   assert.equal(note && chipCommand(note), null);
   assert.equal(chipCommand({ kind: "Memory", source }), null, "only a source chip opens code");
+});
+
+/** A store holding one source chip shown at 1 000 ms, so its fade deadline is 1 000 + hold. */
+function sourceChip(): { store: SessionStore; chip: () => Chip; deadline: number } {
+  const store = new SessionStore(tokens);
+  const source = { path: "internal/user/service.go", line: 43 };
+  store.apply({ type: "Chip", kind: "Source", text: "service.go:43", source }, 1_000);
+  const chip = (): Chip => {
+    const [only] = store.chips.value;
+    assert.ok(only);
+    return only;
+  };
+  return { store, chip, deadline: 1_000 + tokens.durationChipHoldMaxMs };
+}
+
+const fade = (chip: Chip, at: number): number =>
+  sourceChipFade(chip.flyAt, chip.hold, at, tokens.durationStandardMs);
+
+test("a source chip doesn't fade while the pointer is on it, and fades as it is let go", () => {
+  const { store, chip, deadline } = sourceChip();
+  const fadeMs = tokens.durationStandardMs;
+  store.holdChip(chip().serial, "pointer", true, deadline - 500);
+  assert.equal(fade(chip(), deadline + 10 * fadeMs), 0, "held long past its deadline");
+  const leftAt = deadline + 10 * fadeMs;
+  store.holdChip(chip().serial, "pointer", false, leftAt);
+  assert.equal(chip().hold, null);
+  assert.equal(chip().flyAt, leftAt, "the deadline had passed: it fades from leaving");
+  assert.equal(fade(chip(), leftAt), 0);
+  assert.ok(fade(chip(), leftAt + fadeMs / 2) > 0);
+  assert.equal(fade(chip(), leftAt + fadeMs), 1, "over its usual fade");
+});
+
+test("a source chip let go before its deadline fades on its usual timing", () => {
+  const { store, chip, deadline } = sourceChip();
+  store.holdChip(chip().serial, "pointer", true, 1_500);
+  store.holdChip(chip().serial, "pointer", false, 2_000);
+  assert.equal(chip().flyAt, deadline);
+  assert.equal(fade(chip(), deadline), 0);
+  assert.equal(fade(chip(), deadline + tokens.durationStandardMs), 1);
+});
+
+test("keyboard focus holds a source chip like the pointer; it fades once both have left", () => {
+  const { store, chip, deadline } = sourceChip();
+  const serial = chip().serial;
+  store.holdChip(serial, "focus", true, 2_000);
+  store.holdChip(serial, "pointer", true, 2_500);
+  store.holdChip(serial, "pointer", false, deadline + 1_000);
+  assert.deepEqual(chip().hold, { since: 2_000, pointer: false, focus: true }, "focus still holds");
+  assert.equal(fade(chip(), deadline + 2_000), 0);
+  store.holdChip(serial, "focus", false, deadline + 3_000);
+  assert.equal(chip().flyAt, deadline + 3_000);
+  assert.equal(fade(chip(), deadline + 3_000 + tokens.durationStandardMs), 1);
+});
+
+test("a chip caught fading eases back while held", () => {
+  const { store, chip, deadline } = sourceChip();
+  const fadeMs = tokens.durationStandardMs;
+  const caughtAt = deadline + fadeMs / 2;
+  const before = fade(chip(), caughtAt);
+  assert.ok(before > 0 && before < 1);
+  store.holdChip(chip().serial, "pointer", true, caughtAt);
+  assert.equal(fade(chip(), caughtAt), before, "no jump when caught");
+  assert.ok(fade(chip(), caughtAt + fadeMs / 2) < before);
+  assert.equal(fade(chip(), caughtAt + fadeMs), 0, "fully back");
+});
+
+test("with reduced motion (no fade time) a source chip still holds, then goes at once", () => {
+  assert.equal(sourceChipFade(4_000, null, 3_999, 0), 0);
+  assert.equal(sourceChipFade(4_000, null, 4_000, 0), 1);
+  assert.equal(sourceChipFade(4_000, { since: 4_500 }, 4_500, 0), 0, "caught after it went");
+  assert.equal(sourceChipFade(4_000, { since: 3_000 }, 9_000, 0), 0);
+});
+
+test("a held source chip keeps its slot; other chips and unknown serials don't hold", () => {
+  const { store, chip, deadline } = sourceChip();
+  store.holdChip(chip().serial, "pointer", true, 2_000);
+  const later = deadline + tokens.durationChipFlyMs + 1_000;
+  store.apply({ type: "Chip", kind: "Note", text: "Cache-aside", source: null }, later);
+  const [held, note] = store.chips.value;
+  assert.notEqual(note?.slot, held?.slot, "a new chip never lands on the held one");
+  const chips = store.chips.value;
+  store.holdChip(note?.serial ?? -1, "pointer", true, later);
+  store.holdChip(999, "focus", true, later);
+  assert.equal(store.chips.value, chips, "nothing changed, nothing re-rendered");
+  assert.equal(note?.hold, null);
 });
 
 test("a chip flight rises in, arcs to the target and shrinks into it", () => {

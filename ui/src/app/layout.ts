@@ -228,6 +228,23 @@ export function chipFlight(
   };
 }
 
+/**
+ * How far a source chip has faded, from 0 (shown) to 1 (gone): over `fadeMs` from its deadline.
+ * While held it doesn't fade, and one caught fading eases back over `fadeMs` from where it was.
+ */
+export function sourceChipFade(
+  flyAt: number,
+  hold: { readonly since: number } | null,
+  at: number,
+  fadeMs: number,
+): number {
+  const faded = (time: number): number => easeOut(ramp(time, flyAt, flyAt + fadeMs));
+  if (hold === null) {
+    return faded(at);
+  }
+  return faded(hold.since) * (1 - easeOut(ramp(at, hold.since, hold.since + fadeMs)));
+}
+
 export type SuggestionTokens = Pick<
   Tokens,
   "durationSuggestionInMs" | "durationSuggestionOutMs" | "suggestionRise" | "suggestionBlur"

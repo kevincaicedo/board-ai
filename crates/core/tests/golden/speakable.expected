@@ -1,6 +1,6 @@
 clause 0 [talker@0]
   caption: "It calls getUserByID() in internal/user/service.go:42,"
-  speech:  "It calls get user by ID in internal slash user slash service dot go line 42,"
+  speech:  "It calls get user by ID in internal slash user slash service dot go, line 42,"
 op 0 at clause 0 byte 26: Cite { path: "internal/user/service.go", line: 42 }
 clause 1 [talker@55]
   caption: "see L42-58."
@@ -14,3 +14,11 @@ clause 3 [talker@114]
 clause 4 [talker@183]
   caption: "The APIs and IDs stay as written."
   speech:  "The APIs and IDs stay as written."
+clause 5 [talker@217]
+  caption: "Open tcp.go:88-95 and handler.go:L12; we meet at 12:30,"
+  speech:  "Open tcp dot go, lines 88 to 95 and handler dot go, line 12; we meet at 12 30,"
+op 1 at clause 5 byte 5: Cite { path: "tcp.go", line: 88 }
+op 2 at clause 5 byte 22: Cite { path: "handler.go", line: 12 }
+clause 6 [talker@273]
+  caption: "not 9:05 or 7:00 PM, on localhost:8080."
+  speech:  "not 9 oh 5 or 7 P M, on localhost:8080."

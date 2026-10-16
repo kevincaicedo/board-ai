@@ -1,6 +1,7 @@
 // What the Preact surfaces show, as signals: captions, the thread, the surface column and captured
-// chips. Built only from protocol events stamped with session time; the UI holds no state the
-// core owns, just the timestamps it needs to animate what the core said (LLD law 1).
+// chips. Built from protocol events stamped with session time, plus the one interaction that
+// changes timing, holding a source chip; the UI holds no state the core owns, just the timestamps
+// it needs to animate what the core said (LLD law 1).
 
 import { signal } from "@preact/signals";
 import type { CellMark } from "../protocol/generated/CellMark.ts";
@@ -116,10 +117,24 @@ export interface Chip {
   readonly source: SourceRef | null;
   readonly at: number;
   readonly slot: number;
-  /** When it flies to the brain edge (a source chip fades instead). */
+  /**
+   * When it flies to the brain edge. A source chip fades instead, and never while held: let go,
+   * it fades at this deadline, or as it is let go once the deadline has passed.
+   */
   readonly flyAt: number;
   /** Set once BoardAI confirmed out loud; until then flyAt is the fallback deadline. */
   readonly confirmed: boolean;
+  /** A source chip under the pointer or keyboard focus; `null` when neither holds it. */
+  readonly hold: ChipHold | null;
+}
+
+/** What holds a source chip in place: the pointer over it, keyboard focus on it, or both. */
+export type ChipHolder = "pointer" | "focus";
+
+export interface ChipHold {
+  readonly since: number;
+  readonly pointer: boolean;
+  readonly focus: boolean;
 }
 
 export interface OrbStatus {
@@ -446,7 +461,10 @@ export class SessionStore {
 
   #chip(kind: ChipKind, text: string, source: SourceRef | null, at: number): void {
     const tokens = this.#tokens;
-    const waiting = this.chips.value.filter((chip) => chip.flyAt + tokens.durationChipFlyMs > at);
+    // A held chip keeps its slot past its deadline, so a new chip never lands on it.
+    const waiting = this.chips.value.filter(
+      (chip) => chip.hold !== null || chip.flyAt + tokens.durationChipFlyMs > at,
+    );
     const taken = new Set(waiting.map((chip) => chip.slot));
     let slot = 0;
     while (taken.has(slot) && slot < CHIP_SLOTS - 1) {
@@ -462,8 +480,25 @@ export class SessionStore {
       slot,
       flyAt: at + tokens.durationChipHoldMaxMs,
       confirmed: false,
+      hold: null,
     };
     this.chips.value = [...this.chips.value, chip].slice(-CHIPS_MAX);
+  }
+
+  /** The pointer or keyboard focus came onto a source chip (`on`), or left it. */
+  holdChip(serial: number, holder: ChipHolder, on: boolean, at: number): void {
+    let changed = false;
+    const chips = this.chips.value.map((chip) => {
+      if (chip.serial !== serial) {
+        return chip;
+      }
+      const next = chipHeld(chip, holder, on, at);
+      changed ||= next !== chip;
+      return next;
+    });
+    if (changed) {
+      this.chips.value = chips;
+    }
   }
 
   /** BoardAI started speaking: waiting chips fly once it has said "Noted" (PRODUCT §6.2 capture). */
@@ -487,6 +522,30 @@ export class SessionStore {
       this.chips.value = chips;
     }
   }
+}
+
+/**
+ * A chip with a holder on or off. Only a source chip holds (the others take no pointer). The hold
+ * keeps its start while a second holder joins, and letting go of the last one moves the fade
+ * deadline to that moment if it had passed. The same chip comes back when nothing changed.
+ */
+export function chipHeld(chip: Chip, holder: ChipHolder, on: boolean, at: number): Chip {
+  if (chip.kind !== "Source") {
+    return chip;
+  }
+  const hold = chip.hold;
+  const pointer = holder === "pointer" ? on : (hold?.pointer ?? false);
+  const focus = holder === "focus" ? on : (hold?.focus ?? false);
+  if (pointer || focus) {
+    if (hold !== null && hold.pointer === pointer && hold.focus === focus) {
+      return chip;
+    }
+    return { ...chip, hold: { since: hold?.since ?? at, pointer, focus } };
+  }
+  if (hold === null) {
+    return chip;
+  }
+  return { ...chip, hold: null, flyAt: Math.max(chip.flyAt, at) };
 }
 
 /**

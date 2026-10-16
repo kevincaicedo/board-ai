@@ -1,10 +1,13 @@
 //! Speakable text (LLD §2.3). Captions show text as written; text-to-speech gets a normalized
-//! form: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42".
+//! form: `getUserByID` → "get user by ID", `service.go` → "service dot go", `L42` → "line 42",
+//! `tcp.go:88-95` → "tcp dot go, lines 88 to 95", `12:30` → "12 30".
 //!
 //! Normalization is table-driven and records, piece by piece, which caption bytes produced which
 //! speakable bytes. Word timings arrive in speakable offsets; the map turns them back into caption
 //! offsets for the caption reveal and the heard prefix, and turns op anchors (caption offsets)
 //! into speakable offsets for scheduling.
+
+use super::citation;
 
 /// Whole tokens with a spoken form, matched case-insensitively.
 const WHOLE_TOKENS: &[(&str, &str)] = &[
@@ -43,6 +46,25 @@ const WHOLE_TOKENS: &[(&str, &str)] = &[
 /// Arrows written inside a token ("client->CDN", "API→Redis"), between word characters, read as
 /// "to". Longest first, so "-->" is not read as "-" plus "->".
 const ARROWS: &[&str] = &["-->", "->", "=>", "→", "⇒"];
+
+/// How a line reference reads before its numbers: `(one line, a range of lines)`. Alone (`L42`),
+/// or after a cited path (`service.go:42`), where the comma gives the path its pause.
+const LINE_WORDS: (&str, &str) = ("line ", "lines ");
+const CITED_LINE_WORDS: (&str, &str) = (", line ", ", lines ");
+/// Between a range's ends: `L42-58` → "lines 42 to 58".
+const LINE_RANGE_TO: &str = " to ";
+
+/// A clock time's minutes after the hour: `9:00` → "9 o'clock", `15:00` → "15 hundred",
+/// `9:05` → "9 oh 5", `12:30` → "12 30". On the hour before a meridiem (`7:00 pm`) they are
+/// silent: "7 P M".
+const ON_THE_HOUR: &str = " o'clock";
+const ON_THE_HOUR_24: &str = " hundred";
+const BEFORE_TEN_PAST: &str = " oh ";
+const MINUTES: &str = " ";
+/// A clock time's meridiem, written onto it (`7:30pm`) or as the next word (`7:30 PM`), matched
+/// case-insensitively without a final full stop. Spelled as letters: misaki's lexicon (Kokoro)
+/// reads `AM` as the verb "am".
+const MERIDIEMS: &[(&str, &str)] = &[("am", "A M"), ("a.m", "A M"), ("pm", "P M"), ("p.m", "P M")];
 
 /// Separators inside a token, between word characters. `.` between two digits stays a decimal
 /// point; `::` is handled before these.
@@ -90,6 +112,7 @@ impl Speakable {
             caption,
             text: String::with_capacity(caption.len() + caption.len() / 4),
             spans: Vec::new(),
+            meridiem_at: None,
         };
         let mut token_begin: Option<usize> = None;
         for (index, ch) in caption.char_indices() {
@@ -163,6 +186,8 @@ struct Builder<'a> {
     caption: &'a str,
     text: String,
     spans: Vec<Span>,
+    /// Where a meridiem word begins that the clock time before it claimed (`9:00 PM`).
+    meridiem_at: Option<usize>,
 }
 
 impl Builder<'_> {
@@ -238,9 +263,24 @@ impl Builder<'_> {
             self.emit(begin, end, spoken);
             return;
         }
-        if self.line_reference(begin, end) {
+        if self.meridiem_at.take_if(|at| *at == begin).is_some()
+            && let Some(spoken) = meridiem(core)
+        {
+            self.emit(begin, end, spoken);
             return;
         }
+        if self.line_reference(begin, end)
+            || self.cited_lines(begin, end)
+            || self.clock_time(begin, end)
+        {
+            return;
+        }
+        self.separated(begin, end);
+    }
+
+    /// A token cut at its separators (`.`, `/`, `_`, `::`, arrows), each part read as a word.
+    fn separated(&mut self, begin: usize, end: usize) {
+        let core = &self.caption[begin..end];
         let screaming = core.contains('_') && !core.chars().any(char::is_lowercase);
         let mut part_begin = begin;
         let mut index = begin;
@@ -280,9 +320,6 @@ impl Builder<'_> {
         let mut chars = rest.chars();
         let ch = chars.next()?;
         let next = chars.next()?;
-        if ch == ':' && rest[1..].bytes().all(|byte| byte.is_ascii_digit()) {
-            return Some((1, " line "));
-        }
         if ch == '.' && previous.is_ascii_digit() && next.is_ascii_digit() {
             return None;
         }
@@ -292,37 +329,137 @@ impl Builder<'_> {
 
     /// `L42` → "line 42", `L42-58` → "lines 42 to 58".
     fn line_reference(&mut self, begin: usize, end: usize) -> bool {
-        let core = &self.caption[begin..end];
-        let Some(numbers) = core.strip_prefix('L') else {
-            return false;
-        };
-        let (first, last) = match numbers.split_once(['-', '–']) {
-            Some((first, last)) => (first, Some(last)),
-            None => (numbers, None),
-        };
-        let digits =
-            |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
-        if !digits(first) || !last.is_none_or(digits) {
+        if !self.caption[begin..end].starts_with('L') {
             return false;
         }
-        let first_begin = begin + 1;
-        let first_end = first_begin + first.len();
+        let Some(numbers) = LineNumbers::parse(&self.caption[begin + 1..end]) else {
+            return false;
+        };
+        self.lines(begin, begin + 1, numbers, LINE_WORDS);
+        true
+    }
+
+    /// A citation's lines after its path, by the same rule that makes it a citation (a path with
+    /// a file extension or a folder): `tcp.go:88-95` → "tcp dot go, lines 88 to 95",
+    /// `handler.go:L12` → "handler dot go, line 12". Any other `word:42` keeps its colon.
+    fn cited_lines(&mut self, begin: usize, end: usize) -> bool {
+        let core = &self.caption[begin..end];
+        let Some(colon) = core.rfind(':') else {
+            return false;
+        };
+        let lead = if core[colon + 1..].starts_with('L') {
+            2
+        } else {
+            1
+        };
+        let Some(numbers) = LineNumbers::parse(&core[colon + lead..]) else {
+            return false;
+        };
+        if citation::parse(core).is_none() {
+            return false;
+        }
+        self.separated(begin, begin + colon);
+        self.lines(
+            begin + colon,
+            begin + colon + lead,
+            numbers,
+            CITED_LINE_WORDS,
+        );
+        true
+    }
+
+    /// `lead` is `begin..numbers_begin`: the `L` of `L42`, or the `:` or `:L` after a path.
+    fn lines(
+        &mut self,
+        begin: usize,
+        numbers_begin: usize,
+        numbers: LineNumbers,
+        (one, range): (&str, &str),
+    ) {
+        let first_end = numbers_begin + numbers.first_size;
         self.emit(
             begin,
-            first_begin,
-            if last.is_some() { "lines " } else { "line " },
+            numbers_begin,
+            if numbers.last_begin.is_some() {
+                range
+            } else {
+                one
+            },
         );
-        self.copy(first_begin, first_end);
-        if last.is_some() {
-            let dash_end = first_end
-                + self.caption[first_end..]
-                    .chars()
-                    .next()
-                    .map_or(1, char::len_utf8);
-            self.emit(first_end, dash_end, " to ");
-            self.copy(dash_end, end);
+        self.copy(numbers_begin, first_end);
+        if let Some(last_begin) = numbers.last_begin {
+            let last_begin = numbers_begin + last_begin;
+            self.emit(first_end, last_begin, LINE_RANGE_TO);
+            self.copy(last_begin, numbers_begin + numbers.size);
+        }
+    }
+
+    /// A clock time, `12:30` → "12 30", `9:05` → "9 oh 5", `09:00` → "9 o'clock",
+    /// `7:00 pm` → "7 P M". Never a line: that needs a path (`cited_lines`).
+    fn clock_time(&mut self, begin: usize, end: usize) -> bool {
+        let Some(mut time) = ClockTime::parse(&self.caption[begin..end]) else {
+            return false;
+        };
+        if time.meridiem == Meridiem::Absent
+            && (1..=12).contains(&time.hour)
+            && self.claim_next_meridiem(end)
+        {
+            time.meridiem = Meridiem::NextWord;
+        }
+        let hour_end = begin + time.hour_size;
+        let minutes_begin = hour_end + 1;
+        let minutes_end = minutes_begin + 2;
+        // A leading zero is silent ("09:30" is "9 30"), as people say it.
+        let hour_begin = if time.hour_size == 2 && self.caption[begin..].starts_with('0') {
+            self.emit(begin, begin + 1, "");
+            begin + 1
+        } else {
+            begin
+        };
+        self.copy(hour_begin, hour_end);
+        match (time.minutes, time.meridiem) {
+            (0, Meridiem::Attached(_) | Meridiem::NextWord) => {
+                self.emit(hour_end, minutes_end, "");
+            }
+            (0, Meridiem::Absent) if (1..=12).contains(&time.hour) => {
+                self.emit(hour_end, minutes_end, ON_THE_HOUR);
+            }
+            (0, Meridiem::Absent) => self.emit(hour_end, minutes_end, ON_THE_HOUR_24),
+            (1..=9, _) => {
+                self.emit(hour_end, minutes_begin + 1, BEFORE_TEN_PAST);
+                self.copy(minutes_begin + 1, minutes_end);
+            }
+            (_, _) => {
+                self.emit(hour_end, minutes_begin, MINUTES);
+                self.copy(minutes_begin, minutes_end);
+            }
+        }
+        match time.meridiem {
+            Meridiem::Attached(spoken) => {
+                self.emit(minutes_end, minutes_end, " ");
+                self.emit(minutes_end, end, spoken);
+            }
+            Meridiem::Absent | Meridiem::NextWord => {}
         }
         true
+    }
+
+    /// A meridiem as the word right after a clock time (`9:00 PM`, `7:30 a.m.`): `core` speaks
+    /// it when it reaches it.
+    fn claim_next_meridiem(&mut self, time_end: usize) -> bool {
+        let Some(next) = self.caption[time_end..].strip_prefix(' ') else {
+            return false;
+        };
+        let word = next
+            .split(char::is_whitespace)
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(TRAILING_PUNCTUATION);
+        let claimed = meridiem(word).is_some();
+        if claimed {
+            self.meridiem_at = Some(time_end + 1);
+        }
+        claimed
     }
 
     /// A word with no separators: camelCase is split, and words are lowercased except acronyms.
@@ -360,6 +497,82 @@ fn whole_token(token: &str) -> Option<&'static str> {
         .map(|(_, spoken)| *spoken)
 }
 
+fn meridiem(written: &str) -> Option<&'static str> {
+    MERIDIEMS
+        .iter()
+        .find(|(meridiem, _)| meridiem.eq_ignore_ascii_case(written))
+        .map(|(_, spoken)| *spoken)
+}
+
+/// A line reference's numbers, `42` or `42-58` (an en dash too). Offsets are bytes from the
+/// first digit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LineNumbers {
+    first_size: usize,
+    /// Where a range's last number begins, past its dash.
+    last_begin: Option<usize>,
+    size: usize,
+}
+
+impl LineNumbers {
+    fn parse(text: &str) -> Option<Self> {
+        let digits =
+            |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+        let (first, last_begin) = match text.split_once(['-', '–']) {
+            Some((first, last)) => (first, Some(text.len() - last.len())),
+            None => (text, None),
+        };
+        let last_valid = last_begin.is_none_or(|begin| digits(&text[begin..]));
+        (digits(first) && last_valid).then_some(Self {
+            first_size: first.len(),
+            last_begin,
+            size: text.len(),
+        })
+    }
+}
+
+/// `H:MM` with an hour to 23 (one or two digits), minutes to 59 (two), and an optional meridiem
+/// written onto it (`7:30pm`, hour 1 to 12). `16:9`, `3:1` and `12:30:45` are not clock times.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClockTime {
+    hour: u32,
+    hour_size: usize,
+    minutes: u32,
+    meridiem: Meridiem,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Meridiem {
+    Absent,
+    /// Written onto the time (`7:30pm`), with its spoken form.
+    Attached(&'static str),
+    /// The word after the time (`7:30 PM`), which speaks itself.
+    NextWord,
+}
+
+impl ClockTime {
+    fn parse(text: &str) -> Option<Self> {
+        let number = |text: &str| -> Option<u32> {
+            (!text.is_empty() && text.len() <= 2 && text.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| text.parse().ok())
+                .flatten()
+        };
+        let (hour_text, rest) = text.split_once(':')?;
+        let hour = number(hour_text).filter(|hour| *hour <= 23)?;
+        let minutes = number(rest.get(..2)?).filter(|minutes| *minutes <= 59)?;
+        let meridiem = match rest.get(2..)? {
+            "" => Meridiem::Absent,
+            written => Meridiem::Attached(meridiem(written).filter(|_| (1..=12).contains(&hour))?),
+        };
+        Some(Self {
+            hour,
+            hour_size: hour_text.len(),
+            minutes,
+            meridiem,
+        })
+    }
+}
+
 /// Byte ranges of camelCase parts: a split before an uppercase letter that follows a lowercase
 /// one, and before the last capital of an acronym followed by a lowercase word ("HTTPServer" →
 /// "HTTP", "Server"). Plural acronyms ("APIs", "IDs") and plain words ("Redis") stay whole.
@@ -385,7 +598,7 @@ fn camel_parts(word: &str) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SEPARATORS, Speakable, WHOLE_TOKENS};
+    use super::{MERIDIEMS, SEPARATORS, Speakable, WHOLE_TOKENS};
 
     #[test]
     fn normalizes_code_words_for_speech() {
@@ -399,7 +612,7 @@ mod tests {
             ),
             ("see L42", "see line 42"),
             ("L42-58,", "lines 42 to 58,"),
-            ("service.go:42", "service dot go line 42"),
+            ("service.go:42", "service dot go, line 42"),
             ("user_id", "user id"),
             ("MAX_RETRIES", "max retries"),
             ("HTTPServer", "HTTP server"),
@@ -428,6 +641,58 @@ mod tests {
         }
     }
 
+    /// A citation's lines read after a pause; a clock time reads as a time. Only a path with a
+    /// file extension or a folder is a citation (`narration::citation`), so `word:42` keeps its
+    /// colon rather than inventing a line.
+    #[test]
+    fn reads_cited_lines_and_clock_times() {
+        for (caption, spoken) in [
+            ("tcp.go:88-95", "tcp dot go, lines 88 to 95"),
+            ("tcp.go:88–95.", "tcp dot go, lines 88 to 95."),
+            ("service.go:42", "service dot go, line 42"),
+            ("handler.go:L12", "handler dot go, line 12"),
+            ("handler.go:L12-20", "handler dot go, lines 12 to 20"),
+            (
+                "internal/user/service.go:42,",
+                "internal slash user slash service dot go, line 42,",
+            ),
+            ("(see `service.go:43`).", "(see service dot go, line 43)."),
+            (
+                "crates/core/Makefile:3",
+                "crates slash core slash Makefile, line 3",
+            ),
+            ("service.go:0", "service dot go:0"),
+            ("tcp.go:88-x", "tcp dot go:88-x"),
+            ("main:42", "main:42"),
+            ("localhost:8080", "localhost:8080"),
+            ("http://example.com:80", "http://example dot com:80"),
+            ("at 12:30.", "at 12 30."),
+            ("9:05", "9 oh 5"),
+            ("09:30", "9 30"),
+            ("00:15", "0 15"),
+            ("9:00", "9 o'clock"),
+            ("12:00", "12 o'clock"),
+            ("15:00", "15 hundred"),
+            ("7:00pm", "7 P M"),
+            ("7:30PM,", "7 30 P M,"),
+            ("11:05am", "11 oh 5 A M"),
+            ("9:00 AM", "9 A M"),
+            ("at 7:30 a.m. sharp", "at 7 30 A M. sharp"),
+            ("12:00 pm, then", "12 P M, then"),
+            ("9:00, am I late", "9 o'clock, am I late"),
+            ("I am at 9:00", "I am at 9 o'clock"),
+            ("13:00 PM", "13 hundred PM"),
+            ("13:30pm", "13:30pm"),
+            ("16:9", "16:9"),
+            ("3:1", "3:1"),
+            ("12:30:45", "12:30:45"),
+            ("24:00", "24:00"),
+            ("12:60", "12:60"),
+        ] {
+            assert_eq!(Speakable::from_caption(caption).text(), spoken, "{caption}");
+        }
+    }
+
     #[test]
     fn every_table_entry_is_spoken() {
         for (written, spoken) in WHOLE_TOKENS {
@@ -443,6 +708,15 @@ mod tests {
                 Speakable::from_caption(&caption).text(),
                 format!("a{spoken}b")
             );
+        }
+        for (written, spoken) in MERIDIEMS {
+            for caption in [format!("7:30{written}"), format!("7:30 {written}")] {
+                assert_eq!(
+                    Speakable::from_caption(&caption).text(),
+                    format!("7 30 {spoken}"),
+                    "{caption}"
+                );
+            }
         }
     }
 
@@ -474,6 +748,47 @@ mod tests {
                 "monotonic at {offset}"
             );
             previous = caption;
+        }
+    }
+
+    /// The rewritten citation and time keep the map: each number maps one to one, a rewritten
+    /// colon or dash snaps to where it was written, and both directions stay monotonic.
+    #[test]
+    fn cited_lines_and_clock_times_keep_the_offset_map() {
+        let caption = "See tcp.go:88-95 at 09:05 now";
+        let speakable = Speakable::from_caption(caption);
+        let text = speakable.text();
+        assert_eq!(text, "See tcp dot go, lines 88 to 95 at 9 oh 5 now");
+        let at = |word: &str| text.find(word).expect("spoken");
+        let colon = caption.find(':').expect("written");
+        assert_eq!(speakable.caption_offset(at("lines")), colon);
+        assert_eq!(speakable.caption_offset(at("88") + 1), colon + 2);
+        assert_eq!(speakable.caption_offset(at("to")), colon + 3);
+        assert_eq!(speakable.caption_offset(at("95")), colon + 4);
+        assert_eq!(speakable.speakable_offset(colon + 4), at("95"));
+        let time = caption.find("09").expect("written");
+        assert_eq!(speakable.caption_offset(at("9 oh")), time + 1);
+        assert_eq!(speakable.speakable_offset(time), at("9 oh"));
+        assert_eq!(speakable.caption_offset(at("oh")), time + 2);
+        assert_eq!(speakable.caption_offset(at("5 now")), time + 4);
+        assert_eq!(speakable.speakable_offset(caption.len() - 3), at("now"));
+        let mut previous = 0;
+        for offset in 0..=text.len() {
+            let mapped = speakable.caption_offset(offset);
+            assert!(
+                mapped >= previous && mapped <= caption.len(),
+                "monotonic at {offset}"
+            );
+            previous = mapped;
+        }
+        let mut previous = 0;
+        for offset in (0..=caption.len()).filter(|offset| caption.is_char_boundary(*offset)) {
+            let mapped = speakable.speakable_offset(offset);
+            assert!(
+                mapped >= previous && mapped <= text.len(),
+                "monotonic at {offset}"
+            );
+            previous = mapped;
         }
     }
 }

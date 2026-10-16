@@ -84,7 +84,7 @@ fn a_cited_line_that_was_read_shows_one_chip_as_it_is_said() {
             })
             .expect("said")
     };
-    // A caption shows a token it reads differently ("service dot go line 43") once it is said
+    // A caption shows a token it reads differently ("service dot go, line 43") once it is said
     // whole; the chip comes as its first word starts (I1 holds it to that word).
     let (before, after) = (caption("lookup in"), caption("service.go:43"));
     assert!(

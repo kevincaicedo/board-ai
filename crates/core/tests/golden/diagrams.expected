@@ -47,9 +47,9 @@ clause 8 [talker@396]
 op 17 at clause 8 byte 4: Node { id: ElementId("n1"), label: "1", shape: None, placement: Child { parent: ElementId("n3"), side: Some(Left) }, stack: 1, fill: None }
 clause 9 [talker@417]
   caption: "See `internal/net/tcp.go:88-95`, and handler.go:L12."
-  speech:  "See internal slash net slash tcp dot go:88-95, and handler dot go:L12."
+  speech:  "See internal slash net slash tcp dot go, lines 88 to 95, and handler dot go, line 12."
 op 18 at clause 9 byte 4: Cite { path: "internal/net/tcp.go", line: 88 }
 op 19 at clause 9 byte 37: Cite { path: "handler.go", line: 12 }
 clause 10 [talker@470]
   caption: "The port is localhost:8080 at 12:30."
-  speech:  "The port is localhost line 8080 at 12 line 30."
+  speech:  "The port is localhost:8080 at 12 30."

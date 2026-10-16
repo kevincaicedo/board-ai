@@ -44,9 +44,6 @@ pub const GROUP_LABEL_SPACE: i32 = 22;
 /// How far an annotation mark sits outside its target.
 pub const ANNOTATION_MARGIN: i32 = 10;
 
-/// How far a blocked edge bows away from the straight line.
-const CURVE_LIFT: i32 = CELL_HEIGHT / 2;
-
 /// Smallest circle; a longer label stretches it into an ellipse of this height.
 const CIRCLE_DIAMETER: u32 = 56;
 
@@ -430,56 +427,8 @@ pub fn inflate(rect: Rect, margin: i32, top_extra: i32) -> Rect {
     }
 }
 
-/// An edge between two boxes: from the nearest sides, straight unless another node is in the
-/// way, then one curve bowing around it.
-#[must_use]
-pub fn edge_path(from: Rect, to: Rect, obstacles: &[Rect]) -> EdgePath {
-    let (a, b) = (from.center(), to.center());
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let horizontal = dx.abs() >= dy.abs();
-    let (start, end) = if horizontal {
-        let (start_x, end_x) = if dx >= 0 {
-            (from.right(), to.x)
-        } else {
-            (from.x, to.right())
-        };
-        (Point { x: start_x, y: a.y }, Point { x: end_x, y: b.y })
-    } else {
-        let (start_y, end_y) = if dy >= 0 {
-            (from.bottom(), to.y)
-        } else {
-            (from.y, to.bottom())
-        };
-        (Point { x: a.x, y: start_y }, Point { x: b.x, y: end_y })
-    };
-    let corridor = segment_box(start, end);
-    let blocked = obstacles.iter().any(|rect| rect.intersects(corridor));
-    let control = blocked.then(|| {
-        let middle = Point {
-            x: (start.x + end.x) / 2,
-            y: (start.y + end.y) / 2,
-        };
-        if horizontal {
-            Point {
-                x: middle.x,
-                y: middle.y - CURVE_LIFT,
-            }
-        } else {
-            Point {
-                x: middle.x + CURVE_LIFT,
-                y: middle.y,
-            }
-        }
-    });
-    EdgePath {
-        start,
-        control,
-        end,
-    }
-}
-
 /// The thin box a straight segment sweeps, for the obstacle test.
-fn segment_box(start: Point, end: Point) -> Rect {
+pub(super) fn segment_box(start: Point, end: Point) -> Rect {
     let x = start.x.min(end.x);
     let y = start.y.min(end.y);
     Rect {
@@ -559,10 +508,7 @@ pub fn path_bounds(path: EdgePath) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CELL_WIDTH, Cell, CellSpan, Grid, columns_for, edge_path, node_size, rect_in, start_next_to,
-    };
-    use crate::geometry::Rect;
+    use super::{CELL_WIDTH, Cell, CellSpan, Grid, columns_for, node_size, rect_in, start_next_to};
     use crate::ids::ElementId;
     use crate::narration::ops::Direction;
     use crate::protocol::NodeShape;
@@ -628,39 +574,5 @@ mod tests {
         };
         let rect = rect_in(span, 120, 64);
         assert_eq!(rect.center().x, CELL_WIDTH + CELL_WIDTH / 2);
-    }
-
-    #[test]
-    fn edges_join_nearest_sides_and_bow_around_obstacles() {
-        let a = Rect {
-            x: 0,
-            y: 0,
-            w: 100,
-            h: 60,
-        };
-        let b = Rect {
-            x: 400,
-            y: 0,
-            w: 100,
-            h: 60,
-        };
-        let straight = edge_path(a, b, &[]);
-        assert_eq!((straight.start.x, straight.end.x), (100, 400));
-        assert_eq!(straight.control, None);
-        let between = Rect {
-            x: 200,
-            y: 10,
-            w: 100,
-            h: 40,
-        };
-        assert!(edge_path(a, b, &[between]).control.is_some());
-        let below = Rect {
-            x: 0,
-            y: 300,
-            w: 100,
-            h: 60,
-        };
-        let down = edge_path(a, below, &[]);
-        assert_eq!((down.start.y, down.end.y), (60, 300));
     }
 }

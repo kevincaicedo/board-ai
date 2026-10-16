@@ -9,10 +9,10 @@ use boardai_core::board::excalidraw::export_layer;
 use boardai_core::board::{
     AnnotationRequest, Board, EdgeRequest, ElementKind, NodeRequest, Placed, Rejected,
 };
-use boardai_core::geometry::Rect;
+use boardai_core::geometry::{Point, Rect};
 use boardai_core::ids::{ElementId, LayerId, OpId};
 use boardai_core::narration::ops::{CellsSpec, Direction, IndexLabels, Placement, Side};
-use boardai_core::protocol::{DrawOp, LineStyle, Mark, NodeShape};
+use boardai_core::protocol::{DrawOp, EdgePath, LineStyle, Mark, NodeShape};
 use boardai_core::time::SessionTime;
 
 fn id(text: &str) -> ElementId {
@@ -60,6 +60,16 @@ impl Builder {
     }
 
     fn node(&mut self, name: &str, shape: Option<NodeShape>, placement: Placement) -> DrawOp {
+        self.labelled(name, name, shape, placement)
+    }
+
+    fn labelled(
+        &mut self,
+        name: &str,
+        label: &str,
+        shape: Option<NodeShape>,
+        placement: Placement,
+    ) -> DrawOp {
         let op = self.op();
         let node_id = id(name);
         let placed = self.board.place_node(
@@ -67,7 +77,7 @@ impl Builder {
             op,
             NodeRequest {
                 id: &node_id,
-                label: name,
+                label,
                 shape,
                 placement: &placement,
                 stack: 1,
@@ -104,6 +114,22 @@ impl Builder {
                 style: LineStyle::Solid,
             },
         )
+    }
+
+    fn edge(&mut self, from: &str, to: &str) -> DrawOp {
+        let op = self.op();
+        let (from, to) = (id(from), id(to));
+        let placed = self.board.place_edge(
+            MAIN,
+            op,
+            EdgeRequest {
+                from: &from,
+                to: &to,
+                label: None,
+                style: LineStyle::Solid,
+            },
+        );
+        self.start(placed)
     }
 
     fn cells(&mut self, name: &str, count: u8, vertical: bool, placement: Placement) -> DrawOp {
@@ -452,4 +478,58 @@ fn off_grid_drawings_keep_clear_with_room_between() {
         !three.intersects(frame),
         "{three:?} on the group's frame {frame:?}"
     );
+}
+
+/// Where a quadratic edge passes, at `steps` points along it.
+fn curve_points(path: EdgePath, steps: u32) -> Vec<(f64, f64)> {
+    let control = path.control.unwrap_or(Point {
+        x: (path.start.x + path.end.x) / 2,
+        y: (path.start.y + path.end.y) / 2,
+    });
+    (0..=steps)
+        .map(|step| {
+            let t = f64::from(step) / f64::from(steps);
+            let along = |a: i32, b: i32, c: i32| {
+                (1.0 - t) * (1.0 - t) * f64::from(a)
+                    + 2.0 * (1.0 - t) * t * f64::from(b)
+                    + t * t * f64::from(c)
+            };
+            (
+                along(path.start.x, control.x, path.end.x),
+                along(path.start.y, control.y, path.end.y),
+            )
+        })
+        .collect()
+}
+
+/// A blocked edge's curve bows around what is in its way and clears it. A live hash table
+/// (gemma4) chained `key1 → key2` past a wide box between them: the one fixed bow lifts a curve
+/// least near its ends, so it ran through the box's corner, by the box beside its end.
+#[test]
+fn an_edge_bowing_around_a_node_clears_it() {
+    let mut board = Builder::default();
+    board.cells("index", 4, true, Placement::Auto);
+    board.labelled("key1", "Key1", None, near("index.0", Direction::Right));
+    board.labelled(
+        "collision1",
+        "Collision Detection",
+        None,
+        near("key1", Direction::Right),
+    );
+    board.labelled("key2", "Key2", None, near("key1", Direction::Right));
+    let DrawOp::Edge { path, .. } = board.edge("key1", "key2") else {
+        panic!("an edge");
+    };
+    assert!(path.control.is_some(), "the box between them is in the way");
+    let boxed = board.areas()["collision1"].0;
+    for (x, y) in curve_points(path, 64) {
+        let inside = x > f64::from(boxed.x)
+            && x < f64::from(boxed.right())
+            && y > f64::from(boxed.y)
+            && y < f64::from(boxed.bottom());
+        assert!(
+            !inside,
+            "{path:?} runs through {boxed:?} at ({x:.0}, {y:.0})"
+        );
+    }
 }

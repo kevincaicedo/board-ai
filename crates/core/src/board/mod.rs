@@ -18,6 +18,7 @@ pub mod layout;
 mod lifecycle;
 pub mod metrics;
 mod place;
+mod route;
 mod sequence;
 pub mod summary;
 mod tone;
@@ -526,7 +527,7 @@ impl Board {
                 ) => None,
             })
             .collect();
-        let path = layout::edge_path(from_rect, to_rect, &obstacles);
+        let path = route::edge_path(from_rect, to_rect, &obstacles);
         let draw = DrawOp::Edge {
             id: id.clone(),
             op,
