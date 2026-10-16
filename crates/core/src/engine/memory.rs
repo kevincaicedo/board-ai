@@ -14,7 +14,6 @@
 use crate::conversation::ConversationState;
 use crate::conversation::cues::{self, MemoryCue};
 use crate::effect::{Effect, ForgetScope};
-use crate::engine::listen::ChangeGate;
 use crate::engine::reply::Reply;
 use crate::engine::text::{FORGOTTEN_LINE, KEPT_LINE, OFF_THE_RECORD_LINE};
 use crate::engine::{Core, TurnMarks};
@@ -196,7 +195,7 @@ impl Core {
     /// An inferred memory waits for the user's next words, unless a code change already does:
     /// one yes can't answer two questions.
     fn open_proposal(&mut self, now: SessionTime, capture: CaptureId, text: &str) -> String {
-        if matches!(self.gate, ChangeGate::Awaiting { .. }) {
+        if !self.gate.is_closed() {
             return "Proposed, not kept: it waits in the session digest. Don't ask about it now; \
                     a code change is waiting for the user's yes."
                 .to_owned();

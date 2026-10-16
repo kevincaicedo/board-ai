@@ -6,17 +6,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::conversation::{ConversationState, cues};
 use crate::effect::{Effect, ForgetScope, Gain};
 use crate::engine::Core;
+use crate::engine::text::change_question;
 use crate::geometry::Rect;
 use crate::harness::HarnessKind;
-use crate::history::{AssistantPart, Message};
-use crate::ids::{CaptureId, ElementId, LayerId, OpId};
+use crate::history::{AssistantPart, Message, UserPart};
+use crate::ids::{CaptureId, ClauseId, ElementId, LayerId, OpId};
 use crate::input::Input;
 use crate::limits::{BARGE_IN_DECISION_MS, DETOUR_DEPTH_MAX, VOICE_ONSET_DUCK_HOLD_MS};
 use crate::memory::{MemoryAction, MemoryWrite};
+use crate::narration::speakable::Speakable;
 use crate::protocol::{DrawOp, EdgePath, NodeShape, UiEvent};
 use crate::sim::speech::FakeSpeech;
 use crate::time::SessionTime;
-use crate::tools::ToolCall;
 
 #[derive(Clone, Debug, Default)]
 pub struct Checker {
@@ -28,8 +29,9 @@ pub struct Checker {
     started_ops: BTreeSet<OpId>,
     layer_pushes: usize,
     layer_pops: usize,
-    /// When a code change was proposed and not yet run.
-    change_proposed: Option<SessionTime>,
+    /// The text sent to speech for every clause, so a change can be traced to the question
+    /// BoardAI asked about it (I9).
+    synthesized: BTreeMap<ClauseId, String>,
     /// Memories proposed and not yet kept, by capture, with when they were proposed.
     proposals: BTreeMap<CaptureId, SessionTime>,
     /// The user said "don't remember this session".
@@ -119,13 +121,9 @@ impl Checker {
                 }
             }
             Input::TalkerDone { .. } => self.talk_in_flight = false,
-            Input::TalkerToolCall { invocation } => {
-                if matches!(invocation.call, Ok(ToolCall::ProposeChange { .. })) {
-                    self.change_proposed = Some(now);
-                }
-            }
             Input::VoiceOnset => self.last_onset = Some(now),
-            Input::VoiceStart
+            Input::TalkerToolCall { .. }
+            | Input::VoiceStart
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }
             | Input::TalkerDelta { .. }
@@ -175,20 +173,12 @@ impl Checker {
                     self.violate(now, "I7: a backchannel stopped the voice".into());
                 }
             }
-            // I9: a change runs only after a proposal and a spoken yes.
+            Effect::Synthesize { clause, text } => {
+                self.synthesized.insert(*clause, text.clone());
+            }
             Effect::RunHarness { spec, .. } => {
-                if let HarnessKind::Change { .. } = spec.kind {
-                    let yes = self
-                        .change_proposed
-                        .is_some_and(|at| cues::is_affirmative(&self.finals_since(at)));
-                    if !yes {
-                        let finals = self.finals_since(SessionTime::ZERO);
-                        self.violate(
-                            now,
-                            format!("I9: change ran without a yes (heard {finals:?})"),
-                        );
-                    }
-                    self.change_proposed = None;
+                if let HarnessKind::Change { branch } = &spec.kind {
+                    self.check_change(now, branch, &spec.brief, speech);
                 }
             }
             Effect::Ui(UiEvent::Acknowledge) => {
@@ -205,11 +195,34 @@ impl Checker {
                     self.proposals.clear();
                 }
             }
-            Effect::Synthesize { .. }
-            | Effect::RunTool { .. }
+            Effect::RunTool { .. }
             | Effect::CancelHarness { .. }
             | Effect::Log(_)
             | Effect::WakeAt { .. } => {}
+        }
+    }
+
+    /// I9: a change runs only on a yes begun after BoardAI's own question naming exactly that
+    /// branch and instruction played to its end.
+    fn check_change(&mut self, now: SessionTime, branch: &str, brief: &str, speech: &FakeSpeech) {
+        let question = Speakable::from_caption(&change_question(branch, brief));
+        let heard_at = self
+            .synthesized
+            .iter()
+            .filter(|(_, text)| text.as_str() == question.text())
+            .filter_map(|(clause, _)| speech.finished_at(*clause))
+            .filter(|at| *at <= now)
+            .max();
+        let yes = heard_at.is_some_and(|at| cues::is_affirmative(&self.finals_since(at)));
+        if !yes {
+            let finals = self.finals_since(SessionTime::ZERO);
+            self.violate(
+                now,
+                format!(
+                    "I9: change {brief:?} on {branch} ran without a yes to BoardAI's question \
+                     about it (question heard at {heard_at:?}, user said {finals:?})"
+                ),
+            );
         }
     }
 
@@ -386,6 +399,9 @@ impl Checker {
         for message in &messages[self.history.len().min(messages.len())..] {
             self.check_committed(now, message, scripts);
         }
+        for problem in history_shape(messages) {
+            self.violate(now, problem);
+        }
         self.history = messages.to_vec();
         // I4: pushes and pops balance with the open detours.
         let open = self.layer_pushes.saturating_sub(self.layer_pops);
@@ -417,6 +433,73 @@ impl Checker {
             }
         }
     }
+}
+
+/// What the providers require of the history's shape, which an append-only history can never
+/// repair (D-036, review findings 1 and 11): it starts with the user, every `tool_use` is answered
+/// in the very next message, and every tool result answers a call of the message right before.
+#[must_use]
+pub fn history_shape(messages: &[Message]) -> Vec<String> {
+    let mut problems = Vec::new();
+    let first = messages
+        .iter()
+        .find(|message| !matches!(message, Message::System { .. }));
+    if matches!(first, Some(Message::Assistant { .. })) {
+        problems.push("history: the first turn is the assistant's".to_owned());
+    }
+    for (index, message) in messages.iter().enumerate() {
+        let calls = tool_uses(message);
+        let answered: Vec<&str> = messages
+            .get(index + 1)
+            .map(tool_results)
+            .unwrap_or_default();
+        for id in &calls {
+            if !answered.contains(id) {
+                problems.push(format!(
+                    "history: tool_use {id} has no tool_result after it"
+                ));
+            }
+        }
+        let asked: Vec<&str> = index
+            .checked_sub(1)
+            .and_then(|before| messages.get(before))
+            .map(tool_uses)
+            .unwrap_or_default();
+        for id in tool_results(message) {
+            if !asked.contains(&id) {
+                problems.push(format!(
+                    "history: tool_result {id} answers no call before it"
+                ));
+            }
+        }
+    }
+    problems
+}
+
+fn tool_uses(message: &Message) -> Vec<&str> {
+    let Message::Assistant { parts, .. } = message else {
+        return Vec::new();
+    };
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            AssistantPart::ToolUse { id, .. } => Some(id.as_str()),
+            AssistantPart::Text { .. } => None,
+        })
+        .collect()
+}
+
+fn tool_results(message: &Message) -> Vec<&str> {
+    let Message::User { parts } = message else {
+        return Vec::new();
+    };
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            UserPart::ToolResult { id, .. } => Some(id.as_str()),
+            UserPart::Text { .. } => None,
+        })
+        .collect()
 }
 
 fn op_id(op: &DrawOp) -> OpId {
@@ -453,4 +536,103 @@ pub fn strip_tags(text: &str) -> String {
 #[must_use]
 pub fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::history_shape;
+    use crate::history::{AssistantPart, Message, UserPart};
+    use crate::ids::ToolCallId;
+
+    fn id(text: &str) -> ToolCallId {
+        ToolCallId::parse(text).unwrap_or_else(|| unreachable!("a valid id"))
+    }
+
+    fn user(text: &str) -> Message {
+        Message::User {
+            parts: vec![UserPart::Text { text: text.into() }],
+        }
+    }
+
+    fn calls(ids: &[&str]) -> Message {
+        Message::Assistant {
+            parts: ids
+                .iter()
+                .map(|call| AssistantPart::ToolUse {
+                    id: id(call),
+                    name: "read_file".into(),
+                    input_json: "{}".into(),
+                })
+                .collect(),
+            raw: None,
+        }
+    }
+
+    fn results(ids: &[&str]) -> Message {
+        Message::User {
+            parts: ids
+                .iter()
+                .map(|call| UserPart::ToolResult {
+                    id: id(call),
+                    content: "ok".into(),
+                    is_error: false,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_well_formed_history_passes() {
+        let history = [
+            Message::System {
+                text: "Board now: empty".into(),
+            },
+            user("show me the service"),
+            calls(&["a", "b"]),
+            results(&["a", "b"]),
+            Message::Assistant {
+                parts: vec![AssistantPart::Text {
+                    text: "Here.".into(),
+                }],
+                raw: None,
+            },
+        ];
+        assert!(history_shape(&history).is_empty());
+    }
+
+    /// The planted violations: each shape the providers reject turns the check red.
+    #[test]
+    fn orphans_strays_and_an_assistant_first_are_caught() {
+        let orphan = [user("hi"), calls(&["a"]), user("what does it do")];
+        assert_eq!(
+            history_shape(&orphan).len(),
+            1,
+            "{:?}",
+            history_shape(&orphan)
+        );
+        let late = [
+            user("hi"),
+            calls(&["a"]),
+            Message::System {
+                text: "note".into(),
+            },
+            results(&["a"]),
+        ];
+        assert_eq!(history_shape(&late).len(), 2, "{:?}", history_shape(&late));
+        let partial = [user("hi"), calls(&["a", "b"]), results(&["a"])];
+        assert_eq!(history_shape(&partial).len(), 1);
+        let assistant_first = [
+            Message::System {
+                text: "context".into(),
+            },
+            Message::Assistant {
+                parts: vec![AssistantPart::Text {
+                    text: "Sure".into(),
+                }],
+                raw: None,
+            },
+            user("and the database"),
+        ];
+        assert_eq!(history_shape(&assistant_first).len(), 1);
+    }
 }

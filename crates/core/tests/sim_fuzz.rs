@@ -11,12 +11,12 @@ use std::collections::BTreeMap;
 
 use boardai_core::conversation::ConversationState;
 use boardai_core::effect::{Effect, LogRecord, Milestone};
-use boardai_core::engine::text::SYNTHESIS_FAILED_DETAIL;
+use boardai_core::engine::text::{CHANGE_QUESTION_END, SYNTHESIS_FAILED_DETAIL};
 use boardai_core::harness::HarnessKind;
 use boardai_core::ids::{ClauseId, ElementId, LayerId};
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
 use boardai_core::limits::VOICE_ONSET_DUCK_HOLD_MS;
-use boardai_core::protocol::{MicAction, PointerTarget, UiCommand, UiEvent};
+use boardai_core::protocol::{MicAction, PointerTarget, Speaker, UiCommand, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
 use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD, USER_ONSET_LEAD_MS};
 use boardai_core::{CoreConfig, MicMode};
@@ -130,9 +130,17 @@ fn reply(rng: &mut Rng) -> ScriptedReply {
                 kind: TalkerFailureKind::Timeout,
                 detail: "deadline".into(),
             };
-            reply = reply.stops(StopReason::Failed { failure });
+            // A call that came before the failure: it is committed, so it needs its result.
+            reply = reply
+                .calls("list_dir", r#"{"path":"internal"}"#)
+                .stops(StopReason::Failed { failure });
         }
-        7 => reply = reply.stops(StopReason::MaxTokens),
+        // The decoders deliver a max_tokens turn's calls as invalid (cut-off input).
+        7 => {
+            reply = reply
+                .calls("read_file", r#"{"path":"internal/us"#)
+                .stops(StopReason::MaxTokens);
+        }
         _ => {}
     }
     reply
@@ -151,13 +159,76 @@ fn saying_with_onset(sim: &mut Sim, at: u64, text: &str) -> u64 {
     USER_ONSET_LEAD_MS + saying(sim, at + USER_ONSET_LEAD_MS, text)
 }
 
+/// How the user answers BoardAI's question about a change.
+const ANSWERS: &[&str] = &["yes", "yes, go ahead", "go", "no", "hmm, not now"];
+
+/// The longest a user listens for BoardAI to finish asking about a change.
+const QUESTION_LISTEN_MS: u64 = 15_000;
+
+/// After the last action, the longest the user waits for BoardAI to finish its reply.
+const FINAL_REPLY_WAIT_MS: u64 = 60_000;
+
+/// BoardAI is still talking and its question about a change is queued: asked since the last
+/// request, not yet heard whole, not stopped.
+fn is_asking_about_a_change(sim: &Sim) -> bool {
+    let mut asking = false;
+    for (_, effect) in sim.effects() {
+        match effect {
+            Effect::Synthesize { text, .. } => asking |= text.ends_with(CHANGE_QUESTION_END),
+            Effect::Ui(UiEvent::Caption {
+                who: Speaker::Assistant,
+                text,
+                is_final: true,
+            }) if text.ends_with(CHANGE_QUESTION_END) => asking = false,
+            Effect::Talk { .. } | Effect::StopVoice => asking = false,
+            Effect::Ui(_)
+            | Effect::Duck { .. }
+            | Effect::CancelTalk
+            | Effect::RunTool { .. }
+            | Effect::RunHarness { .. }
+            | Effect::CancelHarness { .. }
+            | Effect::Log(_)
+            | Effect::Remember(_)
+            | Effect::WakeAt { .. }
+            | Effect::Forget { .. }
+            | Effect::AcceptProposal { .. } => {}
+        }
+    }
+    asking
+        && matches!(
+            sim.core().state(),
+            ConversationState::Speaking | ConversationState::Thinking
+        )
+}
+
+/// BoardAI has asked about a change and waits: its last words were the question.
+fn asked_about_a_change(sim: &Sim) -> bool {
+    let last_said = sim
+        .ui()
+        .filter_map(|(_, event)| {
+            let UiEvent::Caption {
+                who: Speaker::Assistant,
+                text,
+                is_final: true,
+            } = event
+            else {
+                return None;
+            };
+            Some(text)
+        })
+        .last();
+    *sim.core().state() == ConversationState::Idle
+        && last_said.is_some_and(|text| text.ends_with(CHANGE_QUESTION_END))
+}
+
 /// One random user action at the current time; returns how long to leave the floor alone.
-fn act(sim: &mut Sim, rng: &mut Rng, last_pointer_ms: &mut u64) -> u64 {
+fn act(sim: &mut Sim, rng: &mut Rng) -> u64 {
     let now = sim.now().as_ms();
     let speaking = *sim.core().state() == ConversationState::Speaking;
     match rng.below(12) {
         0 | 1 => saying(sim, now, rng.pick(QUESTIONS)),
-        2 if speaking && now > *last_pointer_ms + 1_600 => {
+        // Right after pointing too: a hover never turns a backchannel into an interruption (I7).
+        2 if speaking => {
             sim.user_backchannel(now, rng.pick(&["mm-hm", "yeah", "okay", "right", "got it"]));
             2_000
         }
@@ -168,7 +239,6 @@ fn act(sim: &mut Sim, rng: &mut Rng, last_pointer_ms: &mut u64) -> u64 {
                 layer: LayerId::MAIN,
                 id,
             });
-            *last_pointer_ms = now;
             sim.at(now, Input::Command(UiCommand::Pointer { target }));
             0
         }
@@ -214,6 +284,10 @@ type Reached = fn(&Effect) -> bool;
 /// The paths the fuzzer must reach, as predicates over effects.
 const PATHS: &[(&str, Reached)] = &[
     ("stop voice", |effect| matches!(effect, Effect::StopVoice)),
+    (
+        "change asked",
+        |effect| matches!(effect, Effect::Synthesize { text, .. } if text.ends_with(CHANGE_QUESTION_END)),
+    ),
     ("onset duck", |effect| {
         *effect
             == Effect::Log(LogRecord::Milestone {
@@ -330,17 +404,33 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
         sim.talker.push(reply);
     }
     fail_some_clauses(&mut sim, seed);
-    let mut last_pointer_ms = 0;
     sim.user_says(0, "walk me through the request path");
     for _ in 0..30 {
-        let quiet = if memory.below(6) == 0 {
+        // A user who listens to BoardAI's question about a change before doing anything else.
+        if is_asking_about_a_change(&sim) && memory.below(3) > 0 {
+            let until = sim.now().as_ms() + QUESTION_LISTEN_MS;
+            sim.run_until_true(until, |sim| *sim.core().state() == ConversationState::Idle);
+            continue;
+        }
+        let quiet = if asked_about_a_change(&sim) && memory.below(3) > 0 {
+            let now = sim.now().as_ms();
+            saying(&mut sim, now, memory.pick(ANSWERS))
+        } else if memory.below(6) == 0 {
             let now = sim.now().as_ms();
             saying(&mut sim, now, memory.pick(CONTROLS))
         } else {
-            act(&mut sim, &mut rng, &mut last_pointer_ms)
+            act(&mut sim, &mut rng)
         };
         let until = sim.now().as_ms() + quiet.max(100 + rng.below(4_000));
         sim.run_until(until);
+    }
+    // BoardAI finishes what it is saying, and a question about a change at its end gets its
+    // answer too.
+    let until = sim.now().as_ms() + FINAL_REPLY_WAIT_MS;
+    sim.run_until_true(until, |sim| *sim.core().state() == ConversationState::Idle);
+    if asked_about_a_change(&sim) {
+        let now = sim.now().as_ms();
+        saying(&mut sim, now, memory.pick(ANSWERS));
     }
     let end = sim.now().as_ms() + 120_000;
     sim.run_until(end);
@@ -377,6 +467,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "problem",
         "op",
         "camera",
+        "change asked",
         "change",
         "dropped",
         "skipped clause",

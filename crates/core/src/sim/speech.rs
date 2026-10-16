@@ -64,6 +64,8 @@ pub struct FakeSpeech {
     order: Vec<ClauseId>,
     /// Clauses whose synthesis fails, answered with `SynthesisFailed`.
     failing: BTreeSet<ClauseId>,
+    /// Clauses a `StopVoice` cut off before their end.
+    cut: BTreeSet<ClauseId>,
 }
 
 impl Default for FakeSpeech {
@@ -78,6 +80,7 @@ impl Default for FakeSpeech {
             started: BTreeMap::new(),
             order: Vec::new(),
             failing: BTreeSet::new(),
+            cut: BTreeSet::new(),
         }
     }
 }
@@ -183,6 +186,9 @@ impl FakeSpeech {
             .ms_since(playing.started_at)
             .min(playing.duration_ms);
         let offset_ms = u32::try_from(offset_ms).unwrap_or(u32::MAX);
+        if u64::from(offset_ms) < playing.duration_ms {
+            self.cut.insert(playing.clause);
+        }
         if let Some((_, timings)) = self.started.get_mut(&playing.clause) {
             // Words after the fade were never heard.
             timings.words.retain(|word| word.start_ms <= offset_ms);
@@ -205,6 +211,17 @@ impl FakeSpeech {
             .find(|word| word.byte_offset >= offset)
             .map_or(timings.duration_ms, |word| word.start_ms);
         Some(started_at.plus_ms(u64::from(start_ms)))
+    }
+
+    /// When `clause` played to its end, if it did (or will, while it is still playing); `None`
+    /// for a clause that never started or was cut off.
+    #[must_use]
+    pub fn finished_at(&self, clause: ClauseId) -> Option<SessionTime> {
+        if self.cut.contains(&clause) {
+            return None;
+        }
+        let (started_at, timings) = self.started.get(&clause)?;
+        Some(started_at.plus_ms(u64::from(timings.duration_ms)))
     }
 
     /// Start times of every word that began playing, in order.

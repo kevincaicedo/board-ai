@@ -7,6 +7,7 @@
 //! simulator and session replay rely on.
 
 mod camera;
+mod gate;
 mod listen;
 mod memory;
 mod ops;
@@ -34,7 +35,8 @@ use crate::voice::Voice;
 use text::SYNTHESIS_FAILED_DETAIL;
 
 use camera::Cameras;
-use listen::{ChangeGate, UserSide};
+use gate::ChangeGate;
+use listen::UserSide;
 use memory::Memory;
 use ops::OpQueue;
 use reply::{ContextTracker, Reply};
@@ -330,6 +332,9 @@ impl Core {
         let mut captions = Vec::new();
         self.voice.captions(&mut captions);
         effects.extend(captions.into_iter().map(Effect::Ui));
+        // Before the reply can finish: its last clause may be the change question that just
+        // played.
+        self.arm_change_gate(now);
         self.maybe_finish_reply(effects);
         self.maybe_report(now, effects);
         self.update_orb(now, effects);

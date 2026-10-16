@@ -5,7 +5,7 @@
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use boardai_core::effect::{ForgetScope, LogRecord};
 use boardai_core::ids::CaptureId;
@@ -19,17 +19,34 @@ use futures_util::future::BoxFuture;
 
 use super::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
 use crate::limits::{MEMORY_STORE_MEMORIES_MAX, MEMORY_STORE_RECALL_HITS_MAX};
+use crate::store::{SystemWallClock, WallClock};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MemoryStore {
     // Never held across an await: every method locks, copies and returns.
     memories: Mutex<VecDeque<MemoryWrite>>,
+    /// For the views' `today`: the UI refuses a view without one.
+    clock: Arc<dyn WallClock>,
+}
+
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self::with_clock(Arc::new(SystemWallClock))
+    }
 }
 
 impl MemoryStore {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[must_use]
+    pub fn with_clock(clock: Arc<dyn WallClock>) -> Self {
+        Self {
+            memories: Mutex::new(VecDeque::new()),
+            clock,
+        }
     }
 
     /// A copy of what is remembered, oldest first.
@@ -128,7 +145,7 @@ impl MemoryStore {
         };
         ToolOutput::View {
             view: Box::new(view),
-            today: String::new(),
+            today: self.clock.now().date(),
         }
     }
 }
@@ -207,9 +224,12 @@ mod tests {
     use boardai_core::tools::ToolOutput;
     use boardai_core::views::View;
 
+    use std::sync::Arc;
+
     use super::MemoryStore;
     use crate::limits::MEMORY_STORE_MEMORIES_MAX;
     use crate::session::ports::{StoreRead, StoreSink};
+    use crate::store::{FakeWallClock, WallTime};
 
     fn memory(text: &str) -> MemoryWrite {
         MemoryWrite {
@@ -268,6 +288,18 @@ mod tests {
         store.forget(SessionTime::ZERO, ForgetScope::Session);
         let held = store.memories.lock().map_or(1, |memories| memories.len());
         assert_eq!(held, 0);
+    }
+
+    /// Review (low): the views carried an empty `today`, and the UI refuses a `ViewShow`
+    /// without a date, so no view ever showed while memory was off.
+    #[tokio::test]
+    async fn views_carry_today() {
+        let clock = FakeWallClock::at(WallTime::from_unix_ms(1_792_022_400_000));
+        let store = MemoryStore::with_clock(Arc::new(clock));
+        let ToolOutput::View { today, .. } = store.read(StoreRead::Memory).await else {
+            panic!("a view");
+        };
+        assert_eq!(today, "2026-10-15");
     }
 
     #[test]

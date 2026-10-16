@@ -205,6 +205,13 @@ impl Voice {
             .is_some_and(|clause| clause.status == Status::Skipped)
     }
 
+    /// The clause's audio has played to its end.
+    #[must_use]
+    pub fn played(&self, id: ClauseId) -> bool {
+        self.clause(id)
+            .is_some_and(|clause| clause.status == Status::Played)
+    }
+
     /// A playback report. Earlier clauses have finished; positions never move backwards.
     pub fn playback_at(&mut self, now: SessionTime, position: PlaybackPosition) -> bool {
         let Some(index) = self

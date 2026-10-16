@@ -35,16 +35,6 @@ impl Utterance {
         }
     }
 
-    /// Continues a turn whose answer was cancelled before anything was heard: the new words
-    /// join the words already said (LLD §2.2, Thinking + `VoiceStart`).
-    #[must_use]
-    pub fn resume(previous: &str, now: SessionTime) -> Self {
-        let mut utterance = Self::start(now, true);
-        utterance.finals.push_str(previous.trim());
-        truncate_at_char(&mut utterance.finals, UTTERANCE_MAX_BYTES);
-        utterance
-    }
-
     #[must_use]
     pub fn started_at(&self) -> SessionTime {
         self.started_at
@@ -95,6 +85,13 @@ impl Utterance {
     #[must_use]
     pub fn is_voice_active(&self) -> bool {
         self.voice_started_at.is_some()
+    }
+
+    /// The final transcript of the last voiced segment is in: its words are known, even when
+    /// there are none.
+    #[must_use]
+    pub fn has_final(&self) -> bool {
+        self.final_after_voice_end
     }
 
     #[must_use]

@@ -142,6 +142,8 @@ struct Recorder {
     memory: MemoryStore,
     /// Sessions opened, and how each one ended (`discard` or `digest`), in order.
     lifecycle: Mutex<Vec<&'static str>>,
+    /// After this many session starts, a start never answers (a wedged vault volume).
+    starts_answered_max: Mutex<Option<usize>>,
 }
 
 impl Recorder {
@@ -233,7 +235,21 @@ impl StoreSink for Recorder {
     }
 
     fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        let started = self
+            .lifecycle()
+            .iter()
+            .filter(|what| **what == "start")
+            .count();
         self.note("start");
+        let stalls = self
+            .starts_answered_max
+            .lock()
+            .ok()
+            .and_then(|max| *max)
+            .is_some_and(|max| started >= max);
+        if stalls {
+            return Box::pin(std::future::pending());
+        }
         Box::pin(std::future::ready(SessionOpened {
             session: Some("2026-10-15-143210".to_owned()),
             context: Some("Where you left off: Raft.".to_owned()),
@@ -281,6 +297,15 @@ struct Harness {
 }
 
 fn start(talker: Arc<ScriptedTalker>, refusing_voice: bool) -> Harness {
+    start_with_store(talker, refusing_voice, None)
+}
+
+/// [`start`] with a store whose session starts stop answering after `starts_answered_max`.
+fn start_with_store(
+    talker: Arc<ScriptedTalker>,
+    refusing_voice: bool,
+    starts_answered_max: Option<usize>,
+) -> Harness {
     let channels = SessionChannels::new();
     let speech: Box<dyn SpeechOut> = if refusing_voice {
         Box::new(RefusingVoice)
@@ -290,7 +315,10 @@ fn start(talker: Arc<ScriptedTalker>, refusing_voice: bool) -> Harness {
             VirtualVoiceConfig::default(),
         ))
     };
-    let recorder = Arc::new(Recorder::default());
+    let recorder = Arc::new(Recorder {
+        starts_answered_max: Mutex::new(starts_answered_max),
+        ..Recorder::default()
+    });
     let parts = SessionParts {
         core: CoreConfig {
             talker_name: "the model".to_owned(),

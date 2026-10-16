@@ -96,7 +96,7 @@ Detours are not states. They are a stack inside the thread (§2.6), and speaking
 | `Listening` | `VoiceEnd`, and the turn sounds unfinished | `Listening` | `WakeAt(+1500 ms)` |
 | `Listening` | `Tick` (grace expired) | `Thinking` | `Talk` |
 | `Thinking` | first clause synthesized | `Speaking` | orb → speaking, captions start |
-| `Thinking` | `VoiceStart` | `Listening` | `CancelTalk`. The new words join the same turn. |
+| `Thinking` | `VoiceStart` | `Listening` | `CancelTalk`. The new words join the same turn when nothing of the answer was heard. |
 | `Speaking` | `PlaybackAt` | `Speaking` | fire due ops (§2.4) |
 | `Speaking` | `VoiceOnset` | `Speaking` | `Duck { gain: 0.25 }` at once, `WakeAt(+300 ms)`: a tentative duck |
 | `Speaking` | `Tick` (onset hold over, no `VoiceStart`) | `Speaking` | `Duck { gain: 1.0 }`, nothing else |
@@ -104,8 +104,9 @@ Detours are not states. They are a stack inside the thread (§2.6), and speaking
 | `Ducked` | classified as a backchannel | `Speaking` | `Duck { gain: 1.0 }`, orb acknowledges |
 | `Ducked` | classified as an interruption, or `Tick` | `Listening` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7) |
 | `Speaking` | `PlaybackDrained` and the talker is done | `Idle` | orb → idle |
-| any | `Command(Mute)` | `Muted` | `StopVoice`, `CancelTalk` |
+| any | `Command(Mute)` | `Muted` | `StopVoice`, `CancelTalk`; a change waiting for a yes is cancelled (§3.5) |
 | `Speaking`, `Thinking` | `Command(Stop)` (Esc) | `Idle` | `StopVoice`, `CancelTalk` if streaming, board freeze, commit heard text (§2.7); a question nothing was heard of is dropped, as with mute |
+| any | `Command(Stop)` | (as above) | A change waiting for a yes is cancelled (§3.5) |
 | `Ducked` | `Command(Stop)` | `Listening` | Confirms the interruption: as the row above for an interruption |
 | `Muted` | `Command(Unmute)` | `Idle` | |
 
@@ -118,23 +119,23 @@ It is an **interruption** if any of these hold:
 - (a) The first words contain a cue: wait, stop, hold on, hang on, what, why, how, no, actually, sorry, pause, slower, repeat, back, skip.
 - (b) Four or more words.
 - (c) At least 700 ms of voice.
-- (d) A pointer target was set within the last 1.5 s.
+- (d) A pointer target was set no earlier than 1.5 s before the onset, and the words are not a backchannel. The UI reports a hover as a pointer, so a mouse drifting over a node while you say "mm-hm" must not take the floor (I7). While the pointer counts, the decision waits for the segment's final transcript: "this" said in 300 ms has no partial, and a partial ("got" of "got it") can look like more than a backchannel. Rules (a)–(c) still decide at once.
 
-It is a **backchannel** if `VoiceEnd` arrives with less than 700 ms of voice and the transcript is empty or in the backchannel lexicon: mm-hm, uh-huh, yeah, yes, right, ok, okay, sure, got it, I see, nice.
+It is a **backchannel** if `VoiceEnd` arrives with less than 700 ms of voice and the transcript is empty or in the backchannel lexicon: mm-hm, uh-huh, yeah, yes, right, ok, okay, sure, got it, I see, nice. With a pointer target as in (d), the final transcript decides: a backchannel (or nothing) stays a backchannel, anything else interrupts.
 
 If neither applies within 900 ms of onset, it is an interruption. A person who keeps talking wants the floor.
 
-A cue said too fast for a partial ("wait" in 300 ms) is first taken for a backchannel; its final transcript, arriving within 600 ms of that decision, still interrupts.
+A cue said too fast for a partial ("wait" in 300 ms) is first taken for a backchannel; its final transcript, arriving within 600 ms of that decision, still interrupts. That holds in `Thinking` too: a backchannel decided between clauses, while no audio was ready, leaves the core thinking, and the late cue stops the reply there.
 
 **Voice onset.** `VoiceStart` can only come ~160 ms after you start talking (the detector's 150 ms minimum, counted in 32 ms windows), which would miss the 100 ms duck budget. So the detector also reports its first window above the speech threshold as `VoiceOnset`. While speaking, the core ducks on it at once and holds the duck for 300 ms (`VOICE_ONSET_DUCK_HOLD_MS`). A `VoiceStart` within the hold takes the duck over and the barge-in proceeds exactly as above; without one (a cough, a click) the gain comes back when the hold ends and nothing else changes. Onsets in any other state, and without the key in push-to-talk mode, do nothing. The core remembers the gain it last set, so a stop always leaves the voice at full gain, even when nothing was playing (a barge-in decided while the talker was still writing the next clause).
 
 **Push-to-talk.** While the key is held the user keeps the floor through pauses; releasing it ends the turn as soon as the final transcript is in. Pressing it while BoardAI speaks interrupts at once, without ducking. In push-to-talk mode, voice without the key is ignored: the runtime keeps the microphone closed except while the user holds the floor (§3.1).
 
-**Joining a turn.** Thinking + `VoiceStart` joins the new words to the same turn only when nothing of the answer was heard yet. The user's message enters the history right before the turn's first assistant content, so joined words become one message.
+**Joining a turn.** Thinking + `VoiceStart` joins the new words to the same turn only when nothing of the answer was heard yet. The user's message enters the history right before the turn's first assistant content, so joined words become one message. Whether anything was heard is known only once the stop settles: speech out may already be playing a clause the core hasn't heard about. So the question stays pending through the stop; if `VoiceStopped` reports audio that played, the question is committed before the heard fragment (D-036), and a question still pending when the new turn ends joins its words.
 
-**Mute** stops the voice and the stream and drops the utterance in progress. If that utterance had words, it closes a pending change gate (I9): words cut off by mute can cancel a change, never confirm one. The core owns mute; the runtime carries it out by muting speech in while the core is `Muted` (§3.1).
+**Mute** stops the voice and the stream and drops the utterance in progress. It cancels a change waiting for a yes, and drops one not yet asked about with the reply (§3.5, I9). If the utterance had words, it also closes a proposed memory (§2.8). The core owns mute; the runtime carries it out by muting speech in while the core is `Muted` (§3.1).
 
-**Stop.** `Esc` stops BoardAI like a confirmed interruption with no words. In `Idle`, `Listening` and `Muted` it changes nothing.
+**Stop.** `Esc` stops BoardAI like a confirmed interruption with no words, and cancels a change waiting for a yes (§3.5). In `Idle`, `Listening` and `Muted` it changes nothing else.
 
 **Spoken cancel.** An utterance made only of a cancel phrase ("stop that research", "cancel the review", "cancel that"), give or take fillers, cancels the newest running harness task it names (`CancelHarness`) before the talker hears the words, with a note that it is done. Whatever that task reports later is ignored. The phrases are a table in `conversation::cues`; "stop" alone stays an interruption cue.
 
@@ -238,6 +239,8 @@ When an interruption is confirmed:
 
 The `HeardPrefix` type can only be constructed from a playback offset, so no code path can commit text the user didn't hear.
 
+**Tool calls are never orphaned.** Whenever an assistant message carrying tool calls is committed (a tool round, or a stream that stopped on `max_tokens`, a refusal or a failure with calls in it), the next message is the user's results for every one of them: the answer that came in, or the error `CALL_NOT_RUN` for a call the reply stopped before using. Providers reject a `tool_use` without its result, and the history can't be repaired, so one orphan would fail every later request (I12). A heard prefix committed after an interruption holds text only, never calls.
+
 ### 2.8 Memory policy
 
 The policy is a pure function from a candidate memory to an action. The table is in [PRODUCT §7.4](../PRODUCT.md); in code it is a single `match` on `MemoryKind`:
@@ -291,11 +294,12 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 | I4 | Detour depth ≤ 3, and pushes and pops balance by session end | Type (bounded stack) + simulator |
 | I5 | At most one talker stream in flight | State owns `Option<TalkerTurn>`; `CancelTalk` precedes `Talk` (simulator) |
 | I6 | Existing board elements never move (a group's box only grows) | Layout API places only new ids (test) + simulator |
-| I7 | A backchannel never stops the voice | Table test over the lexicon |
+| I7 | A backchannel never stops the voice, even with a pointer target set | Table test over the lexicon, with and without a pointer + simulator |
 | I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
-| I9 | A code change never runs without your spoken yes | Deterministic gate in core (§3.5) + test |
+| I9 | A code change never runs without your spoken yes to BoardAI's own question naming it | Deterministic gate in core (§3.5) + simulator property: the yes began after the question with that branch and instruction played to its end |
 | I10 | A "don't remember this session" leaves nothing in the vault | Store test |
 | I11 | A stroke starts inside its layer's camera frame | Simulator property (the fuzzer found the strike-under-focus case) |
+| I12 | The history is always a request the providers accept: it starts with the user, every `tool_use` is answered in the very next message, and every tool result answers the message before | Simulator property on every step + planted unit test (review findings 1 and 11) |
 
 ## 3. Runtime
 
@@ -305,10 +309,10 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 |---|---|---|---|
 | **Audio I/O** | CoreAudio's real-time thread | Single-producer, single-consumer rings (`rtrb`): mic in (16 kHz mono f32, 2 s), voice out (24 kHz, 4 s); atomics for samples played and the duck gain | No allocation, locks or system calls in the callback |
 | **Speech in** | two dedicated threads (VAD, Whisper), plus one forwarding task (`LiveListener`) | Mic ring → `SpeechInLink`; follows the session's `Listening` watch | Silero VAD on 32 ms windows: `VoiceOnset`, `VoiceStart`, `VoiceEnd`. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. The task forwards inputs and applies `Listening`: muted while the mic is closed, and the vocabulary when the board's terms change. |
-| **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. After every step it publishes `Listening` on a `watch`: whether the core would hear the mic (closed while `Muted`; in push-to-talk mode open only while `Listening` or `Ducked`), and the labels just drawn. Runtime failures reported through a `ProblemLink` become `Problem` UI events, stamped, logged and batched like the core's. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, ends the session (§3.6), then flushes the store. It also runs the session's life: it opens a session when it starts, rests after `SESSION_IDLE_TIMEOUT_MS` (30 min) without input, and opens a new session on the next words (`VoiceStart`, not a bare `VoiceOnset`), with a new core and session time from zero. The voice, the microphone and their links belong to the orchestrator, not the session: every new core speaks and listens through the same ones. |
+| **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. After every step it publishes `Listening` on a `watch`: whether the core would hear the mic (closed while `Muted`; in push-to-talk mode open only while `Listening` or `Ducked`), and the labels just drawn. Runtime failures reported through a `ProblemLink` become `Problem` UI events, stamped, logged and batched like the core's. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run or doesn't answer within `SESSION_TOOL_TIMEOUT_MS`) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, ends the session (§3.6), then flushes the store; every step is bounded, and `SessionHandle::close` as a whole within `SESSION_CLOSE_TIMEOUT_MS` (past it the task is aborted). It also runs the session's life: it opens a session when it starts, rests after `SESSION_IDLE_TIMEOUT_MS` (30 min) without input, and opens a new session on the next words (`VoiceStart`, not a bare `VoiceOnset`), with a new core and session time from zero. Opening races the close: the store gets `SESSION_START_TIMEOUT_MS` to answer `start_session` (past it the session opens without context and unrecorded, and is never ended in the store, so a late store can't end another session), and a close during the start or the wake's wait for the last digest returns at once with nothing opened. The voice, the microphone and their links belong to the orchestrator, not the session: every new core speaks and listens through the same ones. |
 | **Talker** | tokio task | Effects in, inputs out | One stream, tagged with a generation; `CancelTalk` drops it, and the orchestrator drops any of its inputs still in the inbox |
 | **Speech out** | tokio task + one inference thread, plus one forwarding task | `SpeechOut` port (`LiveVoice`); answers through a `SpeechOutLink`. Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings. `LiveVoice` puts synthesize, stop and reset on the actor's queue, sets the duck on the ring's gain atomic directly (it can never wait or be lost behind a full queue), and forwards `ClauseReady`, `SynthesisFailed`, `PlaybackDrained`, `VoiceStopped` and the playback watch. `VirtualVoice` stands in when audio cannot start: estimated timings, real-time playback, the same reports |
-| **Tools** | blocking pool | | Repo reads and search, bounded (§5) |
+| **Tools** | blocking pool | | Repo reads and search, bounded (§5); each call answers within `SESSION_TOOL_TIMEOUT_MS` (10 s) or fails `Unavailable` |
 | **Harness** | one subprocess per task | JSON lines on stdout | Cancel: SIGINT, then kill after 3 s |
 | **Store** | tokio task, the only writer | `StoreSink` port. Non-blocking: inputs, UI events and logs, `remember`, `forget`, `accept_proposal`. Async: `read` (recall, a past board, the views), `start_session`, `finish_session`, `flush` | Event log, vault files, SQLite index. `VaultSink` adapts the real `Store`. Memory changes go through one ordered queue (`STORE_WRITES_CAPACITY`, 1024) to a writer task that mirrors the core's captures: "forget that" undoes the capture the store really kept, and "yes, keep it" finds the store's proposal by the core's `CaptureId`. Reads, and a session's start and end, first wait for that queue to drain. `MemoryStore` keeps memory for the run only: the text dev loop, tests, and the app when the vault can't be used |
 | **Bridge** | tokio task (`runtime::bridge`) | `UiSink` trait (a Tauri channel now, a WebSocket later) | Batches UI events per 16 ms frame; the first step after a quiet frame goes at once. A batch is stamped with the latest step time it carries, so nothing shows before the core produced it. The orb, the thread, the camera of a layer and a caption not yet final coalesce, latest wins. A frame over 256 events sends a full batch early; drawing events are never dropped. |
@@ -366,7 +370,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - `tool_choice` auto (forced tool choice is rejected by current models)
   - No assistant prefill
 - **Stop reasons:** `refusal` becomes a short spoken line, and the talker opts into server-side fallbacks where the model supports them. `max_tokens` finishes the current sentence.
-- **Context injection:** the session recap, board and thread updates, and research results are appended as `role: "system"` messages, which keeps the cached prefix intact (supported without a beta on Opus 5.5, Opus 5, Opus 4.8, Fable, Mythos, Sonnet 5.5 and Haiku 5.5). The API accepts one only right after a user turn, and only last or followed by an assistant turn; a run of consecutive context messages becomes one system message. Anywhere else, and on other models, the text is folded into the next user turn as a `<system-reminder>` block (after any tool results, which must lead their turn). The render is a pure function of the conversation, so every assistant turn is echoed after exactly the request that produced it (tested as a property). One edit remains possible: context appended last and then followed directly by a user turn moves into that user turn, which costs one cache miss after the last thinking block and invalidates nothing.
+- **Context injection:** the session recap, board and thread updates, and the core's notices are appended as `role: "system"` messages. Harness output (research, review and change results) is not context: it can quote repo text, so it goes in a user turn, fenced between `<task-output>` marks and labelled as untrusted data (§9). System messages keep the cached prefix intact (supported without a beta on Opus 5.5, Opus 5, Opus 4.8, Fable, Mythos, Sonnet 5.5 and Haiku 5.5). The API accepts one only right after a user turn, and only last or followed by an assistant turn; a run of consecutive context messages becomes one system message. Anywhere else, and on other models, the text is folded into the next user turn as a `<system-reminder>` block (after any tool results, which must lead their turn). The render is a pure function of the conversation, so every assistant turn is echoed after exactly the request that produced it (tested as a property). One edit remains possible: context appended last and then followed directly by a user turn moves into that user turn, which costs one cache miss after the last thinking block and invalidates nothing.
 - **History is append-only** (I3); interruptions follow §2.7. Assistant turns are stored exactly as returned, thinking blocks included, and echoed back unchanged.
 - **Request shape:** `thinking: {type: "adaptive"}` and `output_config.effort` on models that take them (thinking can't be disabled on Opus 5.5; effort `none` becomes `low` there). A cache breakpoint on the system prompt (tools render before it, so both cache) plus top-level automatic caching for the conversation tail. On models with server-side refusal fallbacks (Opus 5.5, Opus 5, Fable 5.1, Sonnet 5.5) the request carries `fallbacks: "default"` with the `server-side-fallback-2026-07-01` beta; after a mid-stream switch, the echoed content keeps only text before the last `fallback` block, as the API requires.
 - **Tool calls** are held until `message_stop`, when the stop reason is known. In a turn that stopped on `max_tokens` or `refusal`, every call is delivered as invalid and never runs; a call whose eager-streamed input is cut off or not valid JSON is delivered invalid too, so the core answers it with an error result.
@@ -382,9 +386,9 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 | `read_file { path, start_line, end_line }` | Reads from the open repo; bounded |
 | `search_code { query, glob }` | Regex search that respects `.gitignore`; bounded |
 | `list_dir { path }` | Lists a directory |
-| `research { question, depth }` | Starts a harness task and returns at once with a task id. The result arrives later as an appended system message, and the core starts a turn to report it when the conversation is idle. |
+| `research { question, depth }` | Starts a harness task and returns at once with a task id. The result arrives later as fenced, untrusted task output in a user turn, and the core starts a turn to report it when the conversation is idle. |
 | `review { scope }` | A harness review, read-only |
-| `propose_change { instruction }` | Puts the core into `AwaitingConfirmation` (§3.5) |
+| `propose_change { instruction }` | One short sentence (≤ 200 bytes) that BoardAI reads out and runs word for word; held until the reply ends, then asked about (§3.5). One at a time |
 | `remember { kind, text, about, links }` | Passes through the memory policy (§2.8). `about` (`you` or `systems`) says who it is about and picks the memory file; an inferred memory is only proposed, and the talker asks whether to keep it |
 | `add_task { title, project, links }` | Adds a task |
 | `recall { query }` | Searches the index for memories, notes and digests |
@@ -428,7 +432,12 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 | **Output we read** | init, assistant text and tool use, tool results, final result | The RPC event stream |
 
 - **Common output.** Both map to `HarnessEvent`: `Progress(text)`, `FileTouched(path)`, `Finished { summary, citations }` or `Failed`.
-- **Confirmation gate (I9).** `propose_change` makes BoardAI say what will happen and on which branch. The core accepts the change only if the **next user utterance** matches the affirmative lexicon (yes, go, go ahead, do it, sure, okay). A tool result or repo content can never confirm a change, which blocks prompt injection from files.
+- **Confirmation gate (I9).** The yes must confirm something you actually heard, and exactly that runs (`core::engine::gate`):
+  - **Proposed.** `propose_change` is checked and held, never armed. The instruction is whitespace-collapsed and at most `CHANGE_INSTRUCTION_MAX_BYTES` (200), since it is read out word for word; an empty or longer one, or a second proposal while one is pending, gets an error result and never replaces the first.
+  - **Asking.** When the talker's reply ends normally (end of turn, or `max_tokens`), the core itself speaks and captions a fixed line built from the instruction and its branch: "I'd change this on boardai/add-jitter: Add jitter to the retry backoff. Should I go ahead?" It is the reply's last clause, sent as speakable text with word timings like any clause.
+  - **Open.** The gate opens only when that clause's audio has played to its end, with no stop settling. The next utterance resolves it: an affirmative (yes, yeah, yep, go, go ahead, do it, sure, okay, ok) begun after the gate opened runs `RunHarness Change` with exactly that instruction and branch; anything else (other words, or a yes begun earlier) cancels it.
+  - **Dropped or cancelled.** A proposal whose question never played whole goes with its reply: an interruption, Esc, mute or new words while thinking (including a stream cancelled before its tool round completed), a refusal, a failure, the tool-round limit, or a question the voice could not say. An open gate is cancelled by Esc, by mute, by any utterance that is not the yes, and by a harness report turn (its own questions must not inherit the yes). The talker is told in each case, when it knew of the proposal.
+  - A tool result, harness output or repo content can never confirm a change, which blocks prompt injection from files. One yes answers one question: a proposed memory waits in the digest while a change is pending (D-075).
 - **Limits.**
   - Concurrency: 2 research or review tasks and 1 change task at a time; up to 4 more queue, and beyond that a task is refused out loud.
   - Timeouts: 10 minutes for research, 30 for a change.
@@ -649,6 +658,9 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Session idle | 30 min | runtime::session | The session ends with its digest; the next words (an unmute, if muted) start a new one |
 | Quitting | 8 s scribe + 2 s writes; store shutdown 3 s | runtime::session, app | Past the scribe's share, the minimal digest; past the rest, quitting goes on and the next start writes it |
 | Waiting for a finishing digest | 1 s | runtime::session | Its scribe is cancelled (the minimal digest) and the new session starts |
+| Session start | 3 s | runtime::session | The session opens without its context and unrecorded: it is never ended in the store. A close meanwhile returns at once |
+| Tool call | 10 s | runtime::session | Answered `Unavailable` ("timed out"); a blocked read ends on the blocking pool, unused |
+| Closing a session | 13 s (8 + 2 + 2 + 1) | runtime::session | The session task is aborted, so quitting returns |
 
 The core's own limits live in `boardai_core::limits` (the rows above marked core are there too):
 
@@ -674,6 +686,7 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 | Talker notices / harness reports waiting | 8 / 8 | core::engine | The oldest notice is dropped; the two oldest reports merge into one message |
 | Tool calls per response / tool rounds per turn | 16 / 8 | core::engine | Extra calls get an error result; past the rounds the turn ends with a spoken line |
 | Branch slug | 40 bytes | core::engine | Cut at a word |
+| Change instruction | 200 bytes | core::engine | `propose_change` gets an error result asking for one short sentence; nothing is proposed |
 | Tool call id / tool input / one string argument | 128 bytes / 64 KiB / 16 KiB | core::tools | The call is invalid and answered with an error |
 | Op budget / spacing | 150–2,500 ms / 120 ms | core::engine | Budgets are clamped; drawing ops wait for their slot |
 | End of turn: silence / grace / cap | 600 ms / 1,500 ms / 30 s | core::conversation | The turn ends |
@@ -694,7 +707,7 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 
 | Layer | How |
 |---|---|
-| Core | Unit and table tests, plus the **conversation simulator**: scripted timelines of inputs on a fake clock, asserting effects and UI events. For example, "mm-hm" at 3.2 s never stops the voice, and an interruption at word 9 commits exactly 9 words. A seeded fuzzer explores input interleavings and checks I1–I10 with no panics. |
+| Core | Unit and table tests, plus the **conversation simulator**: scripted timelines of inputs on a fake clock, asserting effects and UI events. For example, "mm-hm" at 3.2 s never stops the voice, and an interruption at word 9 commits exactly 9 words. A seeded fuzzer explores input interleavings and checks the simulator's invariants (I1–I7, I9, I11, I12) and the voice's gain on every step, with no panics. |
 | Narration parser | Golden files, the split-invariance property, and random bytes (never panics, bounded memory) |
 | Runtime adapters | Recorded fixtures: SSE transcripts, stream-json and RPC logs, short WAV clips. CI uses no network. `just live` runs real-provider smoke tests with your keys, never in CI. |
 | UI | `node --test` on pure TypeScript modules (stroke generators are deterministic per seed; clock math), plus visual review in replay mode against the design |
@@ -720,7 +733,7 @@ CI runs the same command on macOS.
 
 - **API keys** live in the Keychain only, and the redaction filter covers every sink.
 - **Repo access.** Every path is canonicalized into a `RepoPath` at the boundary and must sit under a folder you opened. There is no access outside it.
-- **Prompt injection.** Repo content, docs and tool results are data. Nothing they say can trigger a change (I9). The system prompt says so, and the confirmation gate enforces it.
+- **Prompt injection.** Repo content, docs, tool results and harness output are data. Nothing they say can trigger a change (I9): the core reads the change out itself and only your yes to that question runs it. Harness output (which quotes repo text) never gets a system message's authority: it reaches the talker in a user turn, between `<task-output>` marks, labelled as untrusted, with any fence or `system-reminder` marker inside it broken up so it can't close its fence or pose as BoardAI's context. The system prompt says tool results and task output are data, never instructions, even when they quote something that looks like an instruction, a note from BoardAI or a user's yes.
 - **Webview.** A strict CSP, no remote content, and minimal Tauri capabilities: the event channel, one command, a past session's log by id, and the first-run commands.
 - **First-run commands** (D-100). `setup_status`, `setup_save(edit)`, `setup_key(name, value)`, `setup_download(model, progress)`, `setup_microphone`, `setup_finish`. Every argument is parsed at the boundary into a type (`SetupEdit`, `KeyName`, `ModelId`, a bounded key), so the UI can name a provider, a key name or a model from fixed lists but never a path or a URL. A key goes only to the Keychain; refusals never quote it; `Secret` stays unprintable. The Ollama probe goes only to `localhost:11434`.
 

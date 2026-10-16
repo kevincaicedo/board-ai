@@ -11,9 +11,9 @@ use boardai_core::input::Input;
 use boardai_core::limits::DETOUR_DEPTH_MAX;
 use boardai_core::narration::DETOUR_REFUSAL_LINE;
 use boardai_core::protocol::{MicAction, PointerTarget, UiCommand, UiEvent};
-use boardai_core::sim::Sim;
 use boardai_core::sim::check::{squash, strip_tags};
 use boardai_core::sim::talker::ScriptedReply;
+use boardai_core::sim::{Entry, Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD};
 use common::{DEMO, assert_clean, config, count, op_starts, transcript};
 
 /// Runs until word `word` (1-based) of the answer has started, then interrupts inside it with a
@@ -166,8 +166,10 @@ fn a_cue_said_too_fast_for_a_partial_still_interrupts() {
     assert!(count(&sim, |effect| *effect == Effect::Ui(UiEvent::Acknowledge)) == 1);
 }
 
+/// Rule (d): pointing interrupts as soon as the words are known not to be a backchannel. "this"
+/// in 280 ms has no partial, so the decision comes with its final transcript.
 #[test]
-fn pointing_while_speaking_interrupts_at_once() {
+fn pointing_while_speaking_interrupts_on_the_first_words() {
     let mut sim = Sim::new(config());
     sim.talker.push(ScriptedReply::says(DEMO));
     sim.user_says(0, "Walk me through it.");
@@ -190,7 +192,12 @@ fn pointing_while_speaking_interrupts_at_once() {
         .effects()
         .find(|(_, effect)| **effect == Effect::StopVoice)
         .map(|(at, _)| at.as_ms());
-    assert_eq!(stop, Some(at + 100), "rule (d) decides at onset");
+    let final_at = at + 100 + USER_MS_PER_WORD + USER_FINAL_DELAY_MS;
+    assert_eq!(
+        stop,
+        Some(final_at),
+        "rule (d) decides on the final transcript"
+    );
     let users = user_texts(&sim);
     assert!(
         users[1].contains("[Pointing at: cdn \"CDN\" on the main board]"),
@@ -347,4 +354,108 @@ fn an_interruption_between_clauses_leaves_the_next_answer_at_full_volume() {
         "the barge-in ducked"
     );
     assert!((sim.speech.gain() - 1.0).abs() < f32::EPSILON);
+}
+
+/// Review finding 4 (fixed by D-088): an interruption confirmed while the voice was silent (a
+/// tool round was running) never restored the duck, so every later answer played at 25 %.
+#[test]
+fn the_gain_is_restored_after_an_interruption_over_a_silent_voice() {
+    let mut sim = Sim::new(config());
+    sim.tools.respond(
+        "search_code",
+        boardai_core::tools::ToolOutput::Text {
+            text: "no matches".into(),
+        },
+    );
+    sim.talker
+        .push(ScriptedReply::says("Let me look.").calls("search_code", r#"{"query":"ttl"}"#));
+    sim.talker.push(ScriptedReply::says("Found nothing yet."));
+    sim.talker.push(ScriptedReply::says(
+        "Sure, the cache layer keeps hot rows in memory.",
+    ));
+    sim.user_says(0, "where is the ttl set");
+    assert!(sim.run_until_true(20_000, |sim| sim.talker.requests.len() == 1));
+    // The continuation after the tool round is slow to start.
+    sim.talker.first_token_ms = 5_000;
+    // "Let me look." has played and the voice is silent.
+    assert!(sim.run_until_true(20_000, |sim| {
+        sim.trace()
+            .iter()
+            .any(|(_, entry)| matches!(entry, Entry::Input(Input::PlaybackDrained)))
+    }));
+    let at = sim.now().as_ms() + 5;
+    sim.user_says(at, "what about the cache layer instead");
+    sim.run_until(at + 20_000);
+    assert_clean(&sim);
+    assert!(
+        (sim.speech.gain() - 1.0).abs() < f32::EPSILON,
+        "the voice stays ducked"
+    );
+}
+
+/// Review finding 10: a cue said too fast for a partial is taken for a backchannel; when no
+/// clause was ready at that moment the backchannel left the core in Thinking, and the final
+/// "wait" that came next was ignored (LLD §2.2 says it still interrupts).
+#[test]
+fn a_late_cue_interrupts_even_between_clauses() {
+    let mut sim = Sim::new(config());
+    sim.talker.chunk_interval_ms = 400;
+    sim.talker.push(ScriptedReply::says(
+        "Sure. The cache sits in front of the database and answers most of the reads.",
+    ));
+    sim.user_says(0, "explain the cache");
+    // "Sure." plays, then the voice waits for the next clause while the talker streams.
+    assert!(sim.run_until_true(20_000, |sim| {
+        sim.trace()
+            .iter()
+            .any(|(_, entry)| matches!(entry, Entry::Input(Input::PlaybackDrained)))
+    }));
+    let at = sim.now().as_ms() + 5;
+    // "wait" in 300 ms: no partial, an empty transcript at VoiceEnd, the final 120 ms later.
+    sim.user_says_for(at, "wait", 300);
+    sim.run_until(at + 20_000);
+    assert_clean(&sim);
+    let acknowledged = sim
+        .effects()
+        .any(|(_, effect)| *effect == Effect::Ui(UiEvent::Acknowledge));
+    assert!(acknowledged, "first taken for a backchannel");
+    let stopped = sim
+        .effects()
+        .any(|(at_effect, effect)| at_effect.as_ms() > at && *effect == Effect::CancelTalk);
+    assert!(
+        stopped,
+        "the late \"wait\" was ignored: {:#?}",
+        transcript(&sim)
+    );
+}
+
+/// Review finding 23: the UI sends `Pointer` on hover, and rule (d) turned any backchannel said
+/// within 1.5 s of the mouse crossing a node into an interruption (I7).
+#[test]
+fn a_hover_does_not_turn_a_backchannel_into_an_interruption() {
+    let mut sim = Sim::new(config());
+    sim.talker.push(ScriptedReply::says(DEMO));
+    sim.user_says(0, "how does a request reach our API");
+    assert!(sim.run_until_true(30_000, |sim| !op_starts(sim).is_empty()));
+    let at = sim.now().as_ms() + 200;
+    // The mouse drifts across the browser node, then the user says "mm-hm".
+    sim.at(
+        at,
+        Input::Command(UiCommand::Pointer {
+            target: Some(PointerTarget::Element {
+                layer: LayerId::MAIN,
+                id: ElementId::parse("client").expect("valid"),
+            }),
+        }),
+    );
+    sim.user_backchannel(at + 300, "mm-hm");
+    sim.run_until(at + 2_000);
+    assert_clean(&sim);
+    let stopped = sim
+        .effects()
+        .any(|(_, effect)| matches!(effect, Effect::StopVoice | Effect::CancelTalk));
+    assert!(
+        !stopped,
+        "a backchannel stopped the voice because the mouse moved"
+    );
 }

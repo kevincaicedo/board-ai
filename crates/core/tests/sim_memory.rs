@@ -532,9 +532,11 @@ fn words_begun_before_a_proposal_cannot_keep_it() {
     assert_eq!(accepted(&sim), vec![CaptureId(0)], "the next words do");
 }
 
-/// I9, the same way: a yes already being said when a change is proposed doesn't run it.
+/// I9, the same way: a yes said over BoardAI's proposal cuts it off before BoardAI could ask, so
+/// it runs nothing and the proposal is dropped; only a yes after the question, once proposed
+/// again, runs it.
 #[test]
-fn a_yes_begun_before_a_change_was_proposed_does_not_run_it() {
+fn a_yes_said_over_a_proposal_runs_nothing_until_it_is_asked_again() {
     let mut sim = Sim::new(config());
     sim.talker.chunk_interval_ms = 200;
     sim.talker.push(
@@ -542,7 +544,11 @@ fn a_yes_begun_before_a_change_was_proposed_does_not_run_it() {
             .calls("propose_change", r#"{"instruction":"add jitter"}"#),
     );
     sim.talker.push(ScriptedReply::says("Shall I?"));
-    sim.talker.push(ScriptedReply::says("Running it."));
+    sim.talker.push(
+        ScriptedReply::says("Let me ask properly.")
+            .calls("propose_change", r#"{"instruction":"add jitter"}"#),
+    );
+    sim.talker.push(ScriptedReply::says(""));
     sim.user_says(0, "add jitter to retries");
     let speaking = sim.run_until_true(10_000, |sim| {
         *sim.core().state() == boardai_core::conversation::ConversationState::Speaking
@@ -550,13 +556,23 @@ fn a_yes_begun_before_a_change_was_proposed_does_not_run_it() {
     assert!(speaking);
     let over = sim.now().as_ms() + 100;
     sim.user_says(over, "yes go ahead");
-    sim.run_until(over + 8_000);
+    sim.run_until(over + 12_000);
     assert!(
         sim.harness.started.is_empty(),
-        "the yes began before the proposal"
+        "the yes began before BoardAI asked"
     );
-    sim.user_says(over + 8_000, "yes");
-    sim.run_until(over + 14_000);
+    let dropped = sim.talker.requests.iter().any(|request| {
+        request.messages.iter().any(|message| {
+            matches!(message, Message::System { text } if text.contains("proposed change was dropped"))
+        })
+    });
+    assert!(dropped, "the talker hears the proposal was dropped");
+    sim.user_says(over + 12_000, "yes");
+    sim.run_until(over + 20_000);
     assert_clean(&sim);
-    assert_eq!(sim.harness.started.len(), 1, "the next yes runs it");
+    assert_eq!(
+        sim.harness.started.len(),
+        1,
+        "the yes after the question runs it"
+    );
 }

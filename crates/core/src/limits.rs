@@ -170,6 +170,12 @@ pub const TOOL_ROUNDS_PER_TURN_MAX: usize = 8;
 /// Longest branch slug for a change (`boardai/<slug>`); longer slugs are cut at a word.
 pub const BRANCH_SLUG_MAX_BYTES: usize = 40;
 
+/// Longest `propose_change` instruction, whitespace collapsed. BoardAI reads it to the user word
+/// for word before asking for the yes, and exactly it runs (I9), so it must be one short spoken
+/// sentence; with the branch the question stays under the 300-byte clause cap. A longer one is
+/// refused with an error result asking for a shorter one.
+pub const CHANGE_INSTRUCTION_MAX_BYTES: usize = 200;
+
 /// Harness results waiting to be reported; older ones are reported together in one message.
 pub const HARNESS_REPORTS_MAX: usize = 8;
 

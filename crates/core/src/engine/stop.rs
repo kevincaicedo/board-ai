@@ -11,6 +11,7 @@
 use crate::conversation::ConversationState;
 use crate::conversation::utterance::Utterance;
 use crate::effect::{Effect, Gain, Milestone};
+use crate::engine::gate::GateClosed;
 use crate::engine::{Core, milestone};
 use crate::heard::HeardPrefix;
 use crate::history::{AssistantPart, Message};
@@ -50,8 +51,10 @@ impl Core {
 
     /// `Esc` (PRODUCT §8.9): BoardAI stops at once, like a confirmed interruption with no words.
     /// The stroke in flight freezes, what was heard is committed, and the floor goes idle. A
-    /// question nothing was heard of is dropped, as with mute: a stop means "not this".
+    /// question nothing was heard of is dropped, as with mute: a stop means "not this", so a
+    /// change waiting for a yes is cancelled in every state (I9).
     pub(super) fn on_stop(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        self.close_change_gate(GateClosed::Stop);
         match std::mem::replace(&mut self.state, ConversationState::Idle) {
             ConversationState::Speaking | ConversationState::Thinking => {
                 self.stop_reply(now, true, effects);
@@ -165,8 +168,10 @@ impl Core {
         }
     }
 
-    /// Forgets the finished reply: its clauses, its ops and their anchors.
+    /// Forgets the finished reply: its clauses, its ops and their anchors. A change it proposed
+    /// whose question never played to the end goes with it.
     pub(super) fn end_reply(&mut self) {
+        self.drop_unasked_change();
         self.reply = None;
         self.voice.clear();
         self.queue.fired.clear();

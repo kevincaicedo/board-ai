@@ -312,3 +312,70 @@ fn user_captions_follow_partials_and_finals() {
     );
     let _ = Input::Tick;
 }
+
+/// Review finding 11: a barge-in while Thinking raced a `ClauseReady` speech out had already
+/// sent. The core judged "nothing heard" and joined the question into the new words, then
+/// `VoiceStopped` reported audio that played: the heard fragment went into the history before
+/// (and without) its question, which breaks D-036 and makes every later request invalid.
+#[test]
+fn audio_heard_after_a_rejoin_keeps_the_question_before_the_answer() {
+    use boardai_core::history::Message;
+    use boardai_core::input::PlaybackPosition;
+    let mut sim = Sim::new(config());
+    sim.talker.chunk_interval_ms = 100;
+    sim.talker.push(ScriptedReply::says(
+        "Sure. The cache sits in front of the database. It answers most reads quickly.",
+    ));
+    sim.user_says(0, "explain the cache");
+    let found = sim.run_until_true(20_000, |sim| {
+        sim.effects()
+            .any(|(_, effect)| matches!(effect, Effect::Synthesize { .. }))
+    });
+    assert!(found);
+    let (synthesized_at, clause) = sim
+        .effects()
+        .find_map(|(at, effect)| {
+            let Effect::Synthesize { clause, .. } = effect else {
+                return None;
+            };
+            Some((at.as_ms(), *clause))
+        })
+        .expect("a clause");
+    let ready_at = synthesized_at + sim.speech.synthesis_ms;
+    // Speech out sent ClauseReady and started playing just after the VAD queued VoiceStart.
+    sim.user_says(ready_at - 1, "and the database");
+    sim.at(
+        ready_at + 5,
+        Input::VoiceStopped {
+            last: Some(PlaybackPosition {
+                clause,
+                offset_ms: 250,
+            }),
+        },
+    );
+    sim.run_until(ready_at + 15_000);
+    assert_clean(&sim);
+    let history: Vec<&Message> = sim
+        .core()
+        .conversation()
+        .messages()
+        .iter()
+        .filter(|message| !matches!(message, Message::System { .. }))
+        .collect();
+    assert!(
+        matches!(history.first(), Some(Message::User { .. })),
+        "the history starts with an assistant turn: {:#?}",
+        transcript(&sim)
+    );
+    let lines = transcript(&sim);
+    let question = lines
+        .iter()
+        .position(|line| line.contains("explain the cache"));
+    let heard = lines
+        .iter()
+        .position(|line| line.starts_with("assistant(heard): Sure"));
+    assert!(
+        question.is_some() && question < heard,
+        "the question comes before what was heard of its answer: {lines:#?}"
+    );
+}

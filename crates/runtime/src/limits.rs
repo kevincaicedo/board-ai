@@ -337,6 +337,12 @@ pub const SESSION_DEADLINES_MAX: usize = 1024;
 /// `ToolFailure::Unavailable`, which the talker reads (the core allows 16 calls per reply).
 pub const SESSION_TOOL_TASKS_MAX: usize = 32;
 
+/// How long one repo tool or store read may take. Past it the call is answered with
+/// `ToolFailure::Unavailable` ("timed out"), so the tool round goes on: a read can block on a
+/// FIFO or a hung network volume. A blocking read itself can't be interrupted; it ends on the
+/// blocking pool, and its answer is not used.
+pub const SESSION_TOOL_TIMEOUT_MS: u64 = 10_000;
+
 /// Harness tasks the session follows at once. The harness pool already caps running and
 /// queued tasks (2 + 1, queue 4); past this a task is answered at once with
 /// `HarnessFailure::QueueFull`, which the core says out loud.
@@ -366,6 +372,18 @@ pub const SESSION_FINISH_WRITE_MS: u64 = 2_000;
 /// being written, its scribe is cancelled (the minimal digest is written) and the new session
 /// waits at most this long for it.
 pub const SESSION_FINISH_CANCEL_WAIT_MS: u64 = 1_000;
+
+/// How long opening a session waits for the store (it drains the memory writes, then starts the
+/// log and reads the context). Past it the session opens anyway, with no context and unrecorded:
+/// it is never finished in the store, so a store that answers late can't end the wrong session.
+/// A close that arrives meanwhile is taken at once.
+pub const SESSION_START_TIMEOUT_MS: u64 = 3_000;
+
+/// The whole of `SessionHandle::close`: the scribe's quit share, the session's writes, the
+/// store's flush, and a second for stopping the session's tasks. Every step inside is bounded on
+/// its own; past this the session task is aborted, so quitting returns even if one is not.
+pub const SESSION_CLOSE_TIMEOUT_MS: u64 =
+    SESSION_QUIT_DIGEST_MS + SESSION_FINISH_WRITE_MS + SESSION_FLUSH_TIMEOUT_MS + 1_000;
 
 /// Bytes of the context a session starts with (where you left off, what BoardAI keeps about
 /// you); past it the rest is left out at a line boundary.

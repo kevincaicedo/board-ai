@@ -31,7 +31,8 @@ pub enum InterruptionReason {
     Words,
     /// (c) At least 700 ms of voice.
     Voice,
-    /// (d) A pointer target set within the last 1.5 s.
+    /// (d) A pointer target set within 1.5 s of the onset, and final words that are not a
+    /// backchannel.
     Pointer,
     /// Neither rule applied within 900 ms: a person who keeps talking wants the floor.
     Timeout,
@@ -72,6 +73,13 @@ impl BargeIn {
 
     /// Applies the rules in the LLD's order. `pointer_set_at` is when the pointer last landed on
     /// a target, if it is still on one.
+    ///
+    /// Rule (d) needs words that are not a backchannel: the UI reports a hover as a pointer, and
+    /// a mouse drifting over a node while the user says "mm-hm" is no request for the floor (I7,
+    /// review finding 23). So while the pointer counts, the decision waits for the segment's
+    /// final transcript: "this" said in 300 ms has no partial, and a partial ("got" of "got it")
+    /// can look like more than a backchannel. Rules (a) to (c) still decide at once; past them
+    /// the wait ends by `VoiceEnd` plus the final, well inside the 900 ms window.
     #[must_use]
     pub fn decide(&self, now: SessionTime, pointer_set_at: Option<SessionTime>) -> Decision {
         let text = self.utterance.text();
@@ -85,11 +93,20 @@ impl BargeIn {
         if voiced_ms >= u64::from(BARGE_IN_VOICE_MS) {
             return Decision::Interruption(InterruptionReason::Voice);
         }
-        if pointer_set_at.is_some_and(|set_at| now.ms_since(set_at) <= BARGE_IN_POINTER_WINDOW_MS) {
-            return Decision::Interruption(InterruptionReason::Pointer);
-        }
-        if !self.utterance.is_voice_active() && cues::is_backchannel(&text) {
-            return Decision::Backchannel;
+        // Measured from the onset, so a decision that waits for the words still sees it.
+        let pointing = pointer_set_at
+            .is_some_and(|set_at| set_at.plus_ms(BARGE_IN_POINTER_WINDOW_MS) >= self.onset);
+        let backchannel_words = cues::is_backchannel(&text);
+        let words_known = !self.utterance.is_voice_active() && self.utterance.has_final();
+        match (pointing, words_known, backchannel_words) {
+            (true, true, false) => return Decision::Interruption(InterruptionReason::Pointer),
+            (true, true, true) => return Decision::Backchannel,
+            (true, false, _) => {}
+            (false, _, _) => {
+                if !self.utterance.is_voice_active() && backchannel_words {
+                    return Decision::Backchannel;
+                }
+            }
         }
         if now >= self.decide_by() {
             return Decision::Interruption(InterruptionReason::Timeout);
@@ -135,14 +152,14 @@ mod tests {
                 InterruptionReason::Words,
             ),
             ("hmm", 750, None, InterruptionReason::Voice),
-            ("this one", 400, Some(3_000), InterruptionReason::Pointer),
+            ("this one", 400, Some(1_800), InterruptionReason::Pointer),
         ];
         for (text, voiced_ms, pointer, reason) in cases {
             let mut barge_in = BargeIn::new(at(3_200));
-            barge_in.utterance_mut().transcript(text, false);
             barge_in
                 .utterance_mut()
                 .voice_end(at(3_200 + u64::from(voiced_ms)), voiced_ms);
+            barge_in.utterance_mut().transcript(text, true);
             let decision = barge_in.decide(at(3_700), pointer.map(at));
             assert_eq!(decision, Decision::Interruption(reason), "{text}");
         }
@@ -152,7 +169,7 @@ mod tests {
     fn an_old_pointer_does_not_count_and_silence_past_the_window_interrupts() {
         let mut barge_in = BargeIn::new(at(10_000));
         barge_in.utterance_mut().transcript("this", false);
-        let stale = at(10_400 - BARGE_IN_POINTER_WINDOW_MS - 1);
+        let stale = at(10_000 - BARGE_IN_POINTER_WINDOW_MS - 1);
         assert_eq!(
             barge_in.decide(at(10_400), Some(stale)),
             Decision::Undecided
@@ -167,5 +184,47 @@ mod tests {
             barge_in.decide(late, None),
             Decision::Interruption(InterruptionReason::Timeout)
         );
+    }
+
+    /// I7 with the mouse on the board: a hover just before (or during) a backchannel leaves it a
+    /// backchannel (review finding 23).
+    #[test]
+    fn a_backchannel_while_pointing_stays_a_backchannel() {
+        for phrase in BACKCHANNELS {
+            let mut barge_in = BargeIn::new(at(3_200));
+            let first = phrase.split(' ').next().unwrap_or(phrase);
+            barge_in.utterance_mut().transcript(first, false);
+            assert_eq!(
+                barge_in.decide(at(3_500), Some(at(3_000))),
+                Decision::Undecided,
+                "a partial waits: {phrase}"
+            );
+            barge_in.utterance_mut().voice_end(at(3_550), 350);
+            barge_in.utterance_mut().transcript(phrase, true);
+            assert_eq!(
+                barge_in.decide(at(3_670), Some(at(3_000))),
+                Decision::Backchannel,
+                "{phrase}"
+            );
+        }
+    }
+
+    /// Pointing with no words yet: the final transcript decides. "this" interrupts; an empty
+    /// final is a backchannel.
+    #[test]
+    fn pointing_with_no_words_yet_waits_for_the_final() {
+        let pointer = Some(at(3_000));
+        let mut this = BargeIn::new(at(3_200));
+        this.utterance_mut().voice_end(at(3_480), 280);
+        assert_eq!(this.decide(at(3_480), pointer), Decision::Undecided);
+        this.utterance_mut().transcript("this", true);
+        assert_eq!(
+            this.decide(at(3_600), pointer),
+            Decision::Interruption(InterruptionReason::Pointer)
+        );
+        let mut nothing = BargeIn::new(at(3_200));
+        nothing.utterance_mut().voice_end(at(3_480), 280);
+        nothing.utterance_mut().transcript("", true);
+        assert_eq!(nothing.decide(at(3_600), pointer), Decision::Backchannel);
     }
 }

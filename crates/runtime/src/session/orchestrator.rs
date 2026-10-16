@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use super::deadlines::Deadlines;
 use super::inbox::{Envelope, Inbox};
 use super::listening::{Listening, ListeningPublisher};
-use super::ports::{SessionClose, SpeechOut, StoreSink};
+use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreSink};
 use super::talker::Talker;
 use super::work::Work;
 use crate::bridge::BridgeHandle;
@@ -36,6 +36,7 @@ use crate::clock::{Clock, TokioClock};
 use crate::limits::{
     SCRIBE_DIGEST_DEADLINE_MS, SESSION_FINISH_CANCEL_WAIT_MS, SESSION_FINISH_WRITE_MS,
     SESSION_FLUSH_TIMEOUT_MS, SESSION_IDLE_TIMEOUT_MS, SESSION_QUIT_DIGEST_MS,
+    SESSION_START_TIMEOUT_MS,
 };
 use crate::llm::LlmProvider;
 
@@ -58,6 +59,7 @@ enum Phase {
     Active {
         spoke: bool,
         last_activity: SessionTime,
+        store: StoreSession,
     },
     /// The last session ended after an idle timeout; the next words open a new one. A muted
     /// session stays muted: only an unmute opens the next.
@@ -65,6 +67,14 @@ enum Phase {
         muted: bool,
         finishing: Option<Finishing>,
     },
+}
+
+/// Whether the store answered the session's start. Only a session it opened is ended there: a
+/// store that answers late must never end (or forget) some other session in its place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StoreSession {
+    Opened,
+    Unanswered,
 }
 
 /// A session's digest being written in the background.
@@ -86,6 +96,8 @@ pub(crate) struct Orchestrator {
     pub(crate) store: Arc<dyn StoreSink>,
     pub(crate) bridge: BridgeHandle,
     pub(crate) listening: ListeningPublisher,
+    /// The session's close, which the long waits of opening a session race against.
+    closing: CancelToken,
     pub(crate) deadlines: Deadlines,
     pub(crate) own_answers: VecDeque<Input>,
     pub(crate) effects: Vec<Effect>,
@@ -108,10 +120,13 @@ impl Orchestrator {
             listening: ListeningPublisher::new(config.mic, parts.listening),
             core: Core::new(config.clone()),
             config,
+            // Until the store answers the first start.
             phase: Phase::Active {
                 spoke: false,
                 last_activity: SessionTime::ZERO,
+                store: StoreSession::Unanswered,
             },
+            closing: parts.closing,
             clock,
             inbox: parts.inbox,
             talker: Talker::new(parts.talker),
@@ -174,8 +189,28 @@ impl Orchestrator {
 
     /// Opens a session in the store and starts a core for it. The first session uses the
     /// clock the session was spawned with; a later one restarts session time at zero.
+    ///
+    /// The store gets `SESSION_START_TIMEOUT_MS` to answer; past it the session opens without
+    /// its context and unrecorded. A close that arrives meanwhile returns at once, with nothing
+    /// opened: quitting never waits on a stalled vault.
     async fn open_session(&mut self) {
-        let opened = self.store.start_session().await;
+        let closing = self.closing.clone();
+        let bound = Duration::from_millis(SESSION_START_TIMEOUT_MS);
+        let answered = tokio::select! {
+            biased;
+            () = closing.cancelled() => return,
+            answered = tokio::time::timeout(bound, self.store.start_session()) => answered,
+        };
+        let (opened, store) = match answered {
+            Ok(opened) => (opened, StoreSession::Opened),
+            Err(_elapsed) => {
+                tracing::error!(
+                    "the store did not open the session within {SESSION_START_TIMEOUT_MS} ms; it \
+                     runs unrecorded"
+                );
+                (SessionOpened::default(), StoreSession::Unanswered)
+            }
+        };
         if self.stats.sessions > 0 {
             self.clock = TokioClock::start();
         }
@@ -191,6 +226,7 @@ impl Orchestrator {
         self.phase = Phase::Active {
             spoke: false,
             last_activity: now,
+            store,
         };
         let start = UiEvent::SessionStart {
             session: opened.session,
@@ -212,6 +248,10 @@ impl Orchestrator {
                         return;
                     }
                     self.wake().await;
+                    // Closing came first: no session opened for these words.
+                    if matches!(self.phase, Phase::Resting { .. }) {
+                        return;
+                    }
                 }
                 self.step(input).await;
             }
@@ -359,6 +399,7 @@ impl Orchestrator {
         let Phase::Active {
             spoke,
             last_activity,
+            ..
         } = &mut self.phase
         else {
             return;
@@ -396,6 +437,7 @@ impl Orchestrator {
         let Phase::Active {
             spoke,
             last_activity,
+            store,
         } = &mut self.phase
         else {
             return;
@@ -411,34 +453,43 @@ impl Orchestrator {
                 return;
             }
         };
-        let spoke = *spoke;
+        let (spoke, store) = (*spoke, *store);
         self.quiet_down().await;
-        let cancel = CancelToken::new();
-        let deadline = Duration::from_millis(SCRIBE_DIGEST_DEADLINE_MS);
-        let close = self.close_for(spoke, now, deadline, cancel.clone());
-        let task = tokio::spawn(self.store.finish_session(close));
         tracing::info!(muted, "the session ended after its idle timeout");
-        self.phase = Phase::Resting {
-            muted,
-            finishing: Some(Finishing { cancel, task }),
+        let finishing = match store {
+            StoreSession::Opened => {
+                let cancel = CancelToken::new();
+                let deadline = Duration::from_millis(SCRIBE_DIGEST_DEADLINE_MS);
+                let close = self.close_for(spoke, now, deadline, cancel.clone());
+                let task = tokio::spawn(self.store.finish_session(close));
+                Some(Finishing { cancel, task })
+            }
+            StoreSession::Unanswered => None,
         };
+        self.phase = Phase::Resting { muted, finishing };
     }
 
     /// The first words after resting: the last digest gets a moment (its scribe is cancelled,
-    /// so the minimal digest is written), then a new session opens.
+    /// so the minimal digest is written), then a new session opens. A close meanwhile ends the
+    /// wait at once, and no session opens.
     async fn wake(&mut self) {
-        if let Phase::Resting {
-            finishing: Some(finishing),
-            ..
-        } = &mut self.phase
-        {
+        // Taken out, so a handle that has finished is never awaited again.
+        let finishing = match &mut self.phase {
+            Phase::Resting { finishing, .. } => finishing.take(),
+            Phase::Active { .. } => None,
+        };
+        if let Some(mut finishing) = finishing {
             finishing.cancel.cancel();
             let wait = Duration::from_millis(SESSION_FINISH_CANCEL_WAIT_MS);
-            if tokio::time::timeout(wait, &mut finishing.task)
-                .await
-                .is_err()
-            {
-                tracing::warn!("the last session's digest is still being written");
+            let closing = self.closing.clone();
+            tokio::select! {
+                biased;
+                () = closing.cancelled() => return,
+                waited = tokio::time::timeout(wait, &mut finishing.task) => {
+                    if waited.is_err() {
+                        tracing::warn!("the last session's digest is still being written");
+                    }
+                }
             }
         }
         self.open_session().await;
@@ -454,7 +505,15 @@ impl Orchestrator {
         let deadline = Duration::from_millis(SESSION_QUIT_DIGEST_MS);
         let bound = deadline + Duration::from_millis(SESSION_FINISH_WRITE_MS);
         match std::mem::replace(&mut self.phase, resting) {
-            Phase::Active { spoke, .. } => {
+            Phase::Active {
+                store: StoreSession::Unanswered,
+                ..
+            } => tracing::warn!("the store never opened this session; it is not ended there"),
+            Phase::Active {
+                spoke,
+                store: StoreSession::Opened,
+                ..
+            } => {
                 let close = self.close_for(spoke, self.clock.now(), deadline, CancelToken::new());
                 if tokio::time::timeout(bound, self.store.finish_session(close))
                     .await
@@ -557,6 +616,7 @@ pub(crate) struct OrchestratorParts {
     pub(crate) store: Arc<dyn StoreSink>,
     pub(crate) bridge: BridgeHandle,
     pub(crate) listening: Arc<watch::Sender<Listening>>,
+    pub(crate) closing: CancelToken,
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

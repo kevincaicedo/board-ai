@@ -1,5 +1,5 @@
 //! The user's side of the conversation (LLD §2.2): voice activity, transcripts, end of turn,
-//! barge-in, push-to-talk, mute, the user's message, and the change gate (I9).
+//! barge-in, push-to-talk, mute, and the user's message.
 
 use crate::board::FrozenOp;
 use crate::conversation::ConversationState;
@@ -7,8 +7,8 @@ use crate::conversation::barge_in::{BargeIn, Decision};
 use crate::conversation::cues;
 use crate::conversation::utterance::Utterance;
 use crate::effect::{Effect, Gain, Milestone};
+use crate::engine::gate::GateClosed;
 use crate::engine::{Core, MicMode, TurnMarks, milestone};
-use crate::harness::{HarnessKind, HarnessTask};
 use crate::history::{Message, UserPart};
 use crate::limits::{
     BACKCHANNEL_LATE_FINAL_MS, DETOUR_QUESTION_MAX_BYTES, VOICE_ONSET_DUCK_HOLD_MS,
@@ -52,19 +52,6 @@ impl UserContext {
 pub(super) struct UserSide {
     pub pending: Option<PendingUser>,
     pub context: UserContext,
-}
-
-/// The confirmation gate for code changes (LLD §3.5, I9). Only the user's next utterance can
-/// open it; tool results and repo text never reach it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum ChangeGate {
-    Closed,
-    Awaiting {
-        instruction: String,
-        branch: String,
-        /// When it was proposed: only words begun after it can answer it.
-        opened_at: SessionTime,
-    },
 }
 
 impl Core {
@@ -139,27 +126,13 @@ impl Core {
     }
 
     /// Thinking + voice: the request is cancelled. When nothing of the answer was heard, the new
-    /// words join the same turn; otherwise they start a new one.
+    /// words join the same turn; otherwise they start a new one. Which of the two is known only
+    /// once the stop settles: speech out may already be playing a clause the core hasn't heard
+    /// about. So the question stays pending; the settled stop commits it before any heard
+    /// fragment (D-036), and a question still pending when the turn ends joins the new words.
     fn rejoin(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
-        let heard_something = self.voice.heard().is_some()
-            || self
-                .reply
-                .as_ref()
-                .is_some_and(|reply| reply.streams.iter().any(|stream| stream.committed));
-        let utterance = match (heard_something, self.user.pending.take()) {
-            (false, Some(pending)) => {
-                let mut context = pending.context;
-                context.merge(std::mem::take(&mut self.user.context));
-                self.user.context = context;
-                Utterance::resume(&pending.text, now)
-            }
-            (_, pending) => {
-                self.user.pending = pending;
-                Utterance::start(now, true)
-            }
-        };
         self.stop_reply(now, false, effects);
-        self.listen(utterance, effects);
+        self.listen(Utterance::start(now, true), effects);
     }
 
     pub(super) fn on_voice_end(
@@ -198,13 +171,13 @@ impl Core {
         let utterance = match &mut self.state {
             ConversationState::Listening(utterance) => utterance,
             ConversationState::Ducked(barge_in) => barge_in.utterance_mut(),
-            ConversationState::Speaking => {
+            // A backchannel between clauses leaves the core Thinking, and a cue in its final
+            // transcript still interrupts there.
+            ConversationState::Speaking | ConversationState::Thinking => {
                 self.late_cue(now, text, is_final, effects);
                 return;
             }
-            ConversationState::Idle | ConversationState::Thinking | ConversationState::Muted => {
-                return;
-            }
+            ConversationState::Idle | ConversationState::Muted => return,
         };
         utterance.transcript(text, is_final);
         let caption = UiEvent::Caption {
@@ -328,16 +301,9 @@ impl Core {
                 String::new()
             }
         };
-        // Words cut off by mute were the user's next words: they can cancel a proposed change,
-        // never confirm one (I9).
-        if !abandoned.trim().is_empty() && matches!(self.gate, ChangeGate::Awaiting { .. }) {
-            self.gate = ChangeGate::Closed;
-            self.context.notice(
-                "The user muted the microphone mid-sentence, so the proposed change was \
-                 cancelled. Nothing was changed."
-                    .to_owned(),
-            );
-        }
+        // Muting is not a yes: a change waiting for one is cancelled (I9), one not yet asked
+        // about is dropped with the reply.
+        self.close_change_gate(GateClosed::Mute);
         if !abandoned.trim().is_empty() {
             self.close_proposal_on_mute();
         }
@@ -386,13 +352,14 @@ impl Core {
             self.user.context = context;
             return;
         }
+        // Any utterance answers an open change gate first: it runs on a yes, or closes.
+        self.resolve_gate(&text, began, effects);
         // Keeping a proposal, the memory controls, "close that" and "open settings" are answered
         // by the core itself; what the user was told so far waits for their next real question.
         if self.resolve_proposal(&text, began, effects) {
             self.user.context = context;
             return;
         }
-        self.resolve_gate(&text, began, effects);
         self.cancel_by_voice(&text, effects);
         if self.memory_control(&text, effects) || self.open_settings_by_voice(&text, effects) {
             self.user.context = context;
@@ -438,49 +405,6 @@ impl Core {
             "{} task {} was cancelled because the user asked to stop it. Confirm in three words \
              or fewer.",
             crate::engine::text::harness_kind_name(&kind),
-            task.0
-        ));
-    }
-
-    /// I9: only this utterance can confirm the proposed change, and only with a plain yes. Words
-    /// the user was already saying when the change was proposed answer something else: the gate
-    /// waits for the next ones.
-    fn resolve_gate(&mut self, text: &str, began: SessionTime, effects: &mut Vec<Effect>) {
-        if let ChangeGate::Awaiting { opened_at, .. } = &self.gate
-            && *opened_at > began
-        {
-            return;
-        }
-        let ChangeGate::Awaiting {
-            instruction,
-            branch,
-            ..
-        } = std::mem::replace(&mut self.gate, ChangeGate::Closed)
-        else {
-            return;
-        };
-        if !cues::is_affirmative(text) {
-            self.context.notice(
-                "The user did not say yes, so the proposed change was cancelled. Nothing was \
-                 changed."
-                    .to_owned(),
-            );
-            return;
-        }
-        let kind = HarnessKind::Change {
-            branch: branch.clone(),
-        };
-        let task = self.start_task(kind.clone());
-        effects.push(Effect::RunHarness {
-            task,
-            spec: HarnessTask {
-                kind,
-                brief: instruction,
-            },
-        });
-        self.context.notice(format!(
-            "The user said yes. Change task {} is running on branch {branch}; its result arrives \
-             as a system message.",
             task.0
         ));
     }

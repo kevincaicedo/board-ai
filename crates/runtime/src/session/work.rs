@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use boardai_core::harness::{HarnessEvent, HarnessFailure, HarnessTask};
 use boardai_core::ids::{TaskId, ToolCallId};
@@ -19,7 +20,7 @@ use super::inbox::Inbox;
 use super::ports::{StoreRead, StoreSink};
 use crate::cancel::CancelToken;
 use crate::harness::HarnessPool;
-use crate::limits::{SESSION_HARNESS_TASKS_MAX, SESSION_TOOL_TASKS_MAX};
+use crate::limits::{SESSION_HARNESS_TASKS_MAX, SESSION_TOOL_TASKS_MAX, SESSION_TOOL_TIMEOUT_MS};
 use crate::tools::RepoTools;
 
 /// What a running task is, so its bookkeeping is released when it ends, however it ends.
@@ -89,8 +90,14 @@ impl Work {
             | ToolCall::AddTask { .. } => return Some(not_run_here(id)),
         };
         let inbox = inbox.clone();
+        let bound = Duration::from_millis(SESSION_TOOL_TIMEOUT_MS);
         let handle = self.tasks.spawn(async move {
-            let output = output.await;
+            let output = tokio::time::timeout(bound, output)
+                .await
+                .unwrap_or_else(|_elapsed| ToolOutput::Failed {
+                    kind: ToolFailure::Unavailable,
+                    message: format!("timed out after {SESSION_TOOL_TIMEOUT_MS} ms"),
+                });
             // A closed session needs no answer.
             let _ = inbox.send(Input::ToolResult { id, output }).await;
         });
@@ -181,5 +188,85 @@ fn harness_failed(task: TaskId, reason: HarnessFailure, detail: String) -> Input
     Input::Harness {
         task,
         event: HarnessEvent::Failed { reason, detail },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use boardai_core::effect::{ForgetScope, LogRecord};
+    use boardai_core::ids::{CaptureId, ToolCallId};
+    use boardai_core::input::Input;
+    use boardai_core::memory::MemoryWrite;
+    use boardai_core::protocol::UiEvent;
+    use boardai_core::time::SessionTime;
+    use boardai_core::tools::{ToolCall, ToolFailure, ToolOutput};
+    use futures_util::future::BoxFuture;
+
+    use super::Work;
+    use crate::limits::SESSION_TOOL_TIMEOUT_MS;
+    use crate::session::SessionChannels;
+    use crate::session::inbox::Envelope;
+    use crate::session::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
+    use crate::tools::RepoTools;
+
+    /// A store whose reads never answer, like a read stuck on a FIFO or a hung volume.
+    struct StuckReads;
+
+    impl StoreSink for StuckReads {
+        fn input(&self, _at: SessionTime, _input: &Input) {}
+        fn ui_event(&self, _at: SessionTime, _event: &UiEvent) {}
+        fn log(&self, _at: SessionTime, _record: &LogRecord) {}
+        fn remember(&self, _at: SessionTime, _memory: &MemoryWrite) {}
+        fn forget(&self, _at: SessionTime, _scope: ForgetScope) {}
+        fn accept_proposal(&self, _at: SessionTime, _capture: CaptureId) {}
+        fn read(&self, _read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+            Box::pin(std::future::pending())
+        }
+        fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+            Box::pin(std::future::ready(SessionOpened::default()))
+        }
+        fn finish_session(&self, _close: SessionClose) -> BoxFuture<'static, ()> {
+            Box::pin(std::future::ready(()))
+        }
+        fn flush(&self) -> BoxFuture<'static, ()> {
+            Box::pin(std::future::ready(()))
+        }
+    }
+
+    /// Review (low): a read that never returns held the tool round, and so the turn, forever.
+    #[tokio::test(start_paused = true)]
+    async fn a_tool_that_never_answers_is_answered_with_a_timeout() {
+        let mut channels = SessionChannels::new();
+        let mut work = Work::new(RepoTools::default(), None);
+        let store: Arc<dyn StoreSink> = Arc::new(StuckReads);
+        let Some(id) = ToolCallId::parse("toolu_0") else {
+            panic!("a valid id");
+        };
+        let call = ToolCall::Recall {
+            query: "kafka".to_owned(),
+        };
+        assert!(work.run_tool(id, call, &store, &channels.inbox).is_none());
+        let wait = Duration::from_millis(SESSION_TOOL_TIMEOUT_MS + 1_000);
+        let answer = tokio::time::timeout(wait, channels.receiver.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(
+            matches!(
+                answer,
+                Some(Envelope::Input(Input::ToolResult {
+                    output: ToolOutput::Failed {
+                        kind: ToolFailure::Unavailable,
+                        ..
+                    },
+                    ..
+                }))
+            ),
+            "{answer:?}"
+        );
+        work.shutdown().await;
     }
 }

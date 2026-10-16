@@ -230,10 +230,11 @@ async fn tool_results_and_harness_failures_reach_the_talker() {
             .any(|text| text.starts_with("<result>Nothing in this session's memory")),
         "{second:#?}"
     );
-    // The failure came back before the next request, so that request carries it.
-    let reported = requests[2].messages().iter().any(|message| {
-        matches!(message, Message::System { text } if text.contains("no coding harness is installed"))
-    });
+    // The failure came back before the next request, so that request carries it, fenced as
+    // untrusted task output in a user turn (never a system message).
+    let reported = user_texts(requests[2].messages())
+        .iter()
+        .any(|text| text.contains("no coding harness is installed") && text.contains("untrusted"));
     assert!(reported, "the harness failure is reported to the talker");
     assert_eq!(requests.len(), 3);
 }

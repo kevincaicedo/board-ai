@@ -34,6 +34,7 @@ mod virtual_voice;
 mod work;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use boardai_core::CoreConfig;
 use boardai_core::input::Input;
@@ -68,6 +69,7 @@ use crate::bridge::{BridgeHandle, UiSink};
 use crate::cancel::CancelToken;
 use crate::clock::TokioClock;
 use crate::harness::HarnessPool;
+use crate::limits::SESSION_CLOSE_TIMEOUT_MS;
 use crate::llm::LlmProvider;
 use crate::tools::RepoTools;
 
@@ -121,6 +123,7 @@ pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
             store: parts.store,
             bridge: BridgeHandle::spawn(parts.ui),
             listening,
+            closing: closing.clone(),
         },
     );
     let receivers = Receivers {
@@ -151,13 +154,24 @@ impl SessionHandle {
     }
 
     /// Closes the session: cancels the talker, harness tasks, tools, timers and the voice,
-    /// sends the last UI events and flushes the store.
-    pub async fn close(self) -> SessionStats {
+    /// sends the last UI events and flushes the store, within `SESSION_CLOSE_TIMEOUT_MS`. Each
+    /// step is bounded on its own; past the whole bound the session task is aborted, so
+    /// quitting returns whatever is stuck.
+    pub async fn close(mut self) -> SessionStats {
         self.closing.cancel();
-        match self.task.await {
-            Ok(stats) => stats,
-            Err(error) => {
+        let bound = Duration::from_millis(SESSION_CLOSE_TIMEOUT_MS);
+        match tokio::time::timeout(bound, &mut self.task).await {
+            Ok(Ok(stats)) => stats,
+            Ok(Err(error)) => {
                 tracing::error!(%error, "the session task ended abnormally");
+                SessionStats::default()
+            }
+            Err(_elapsed) => {
+                tracing::error!(
+                    "the session did not close within {SESSION_CLOSE_TIMEOUT_MS} ms; it was \
+                     stopped"
+                );
+                self.task.abort();
                 SessionStats::default()
             }
         }

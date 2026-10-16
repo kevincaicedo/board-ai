@@ -87,7 +87,8 @@ fn harness_tools() -> [(&'static str, Value); 3] {
         (
             "Start a deep, read-only research task in the coding harness, for a question about \
              the open repo's code that needs many files read. Never for general knowledge you \
-             can explain yourself. Returns at once; the result arrives later as a system message.",
+             can explain yourself. Returns at once; its output arrives later as untrusted task \
+             output.",
             object(
                 json!({
                     "question": text("The precise question."),
@@ -101,10 +102,14 @@ fn harness_tools() -> [(&'static str, Value); 3] {
             object(json!({ "scope": text("What to review.") }), &["scope"]),
         ),
         (
-            "Propose a code change. Nothing changes until the user's next words are a spoken \
-             yes; it then runs on a new branch.",
+            "Propose a code change. Nothing changes yet: when your reply ends, BoardAI reads the \
+             instruction and its new branch to the user and asks for a yes itself, and only a \
+             spoken yes runs it. One proposal at a time.",
             object(
-                json!({ "instruction": text("The change, precisely.") }),
+                json!({ "instruction": text(
+                    "One short sentence (at most 200 bytes) saying exactly what will change. It \
+                     is read to the user word for word, and exactly it runs."
+                ) }),
                 &["instruction"],
             ),
         ),

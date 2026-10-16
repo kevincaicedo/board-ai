@@ -8,8 +8,8 @@ use std::time::Duration;
 use boardai_core::history::Message;
 use boardai_core::protocol::{MicAction, UiCommand, UiEvent};
 
-use super::{ScriptedTalker, close, idle_after_speaking, run_until, start};
-use crate::limits::SESSION_IDLE_TIMEOUT_MS;
+use super::{ScriptedTalker, close, idle_after_speaking, run_until, start, start_with_store};
+use crate::limits::{SESSION_IDLE_TIMEOUT_MS, SESSION_START_TIMEOUT_MS};
 use crate::session::say_typed;
 
 fn session_starts(events: &[UiEvent]) -> usize {
@@ -130,4 +130,78 @@ async fn a_muted_session_rests_and_wakes_only_on_unmute() {
         recorder.lifecycle(),
         vec!["start", "digest", "start", "discard"]
     );
+}
+
+/// How long closing may take once the store's session start hangs: nothing else is waited on,
+/// so it is far inside `SESSION_CLOSE_TIMEOUT_MS`.
+const CLOSE_WHILE_OPENING_MAX_MS: u64 = 1_000;
+
+/// Review finding 12: a store whose session start never answers (a hung network or external
+/// volume, a stalled fsync) made quitting hang forever. The orchestrator awaited the start with
+/// no bound and saw the close only at its loop, and the app blocks on `close` at exit.
+#[tokio::test(start_paused = true)]
+async fn closing_is_bounded_while_the_session_is_opening() {
+    let talker = Arc::new(ScriptedTalker::default());
+    let harness = start_with_store(talker, false, Some(0));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let bound = Duration::from_millis(CLOSE_WHILE_OPENING_MAX_MS);
+    let closed = tokio::time::timeout(bound, close(harness)).await;
+    let Ok((stats, recorder, _)) = closed else {
+        panic!("close() did not return: quitting hangs");
+    };
+    assert_eq!(stats.sessions, 0, "no session opened");
+    assert_eq!(
+        recorder.lifecycle(),
+        vec!["start"],
+        "a session the store never opened is never ended there"
+    );
+}
+
+/// The same while waking after an idle rest: the first words open a new session, and its start
+/// hangs.
+#[tokio::test(start_paused = true)]
+async fn closing_is_bounded_while_a_new_session_opens() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    let harness = start_with_store(Arc::clone(&talker), false, Some(1));
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    past_the_idle_timeout().await;
+    assert!(say_typed(&link, "where were we").await.is_ok());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let bound = Duration::from_millis(CLOSE_WHILE_OPENING_MAX_MS);
+    let closed = tokio::time::timeout(bound, close(harness)).await;
+    let Ok((stats, recorder, _)) = closed else {
+        panic!("close() did not return: quitting hangs");
+    };
+    assert_eq!(stats.sessions, 1);
+    assert_eq!(recorder.lifecycle(), vec!["start", "digest", "start"]);
+}
+
+/// A start the store doesn't answer in time still opens the session, without its context and
+/// unrecorded: the user can talk, and the session is never ended in the store.
+#[tokio::test(start_paused = true)]
+async fn a_session_whose_start_stalls_still_opens() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    let harness = start_with_store(Arc::clone(&talker), false, Some(0));
+    tokio::time::sleep(Duration::from_millis(SESSION_START_TIMEOUT_MS + 100)).await;
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    let first = talker
+        .requests()
+        .first()
+        .map(|conversation| conversation.messages().to_vec())
+        .unwrap_or_default();
+    let context = first.iter().any(|message| {
+        matches!(message, Message::System { text } if text.contains("Where you left off"))
+    });
+    assert!(!context, "no context from a store that didn't answer");
+    let (stats, recorder, _) = close(harness).await;
+    assert_eq!(stats.sessions, 1);
+    assert_eq!(recorder.lifecycle(), vec!["start"]);
 }

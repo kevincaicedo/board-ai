@@ -10,10 +10,10 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::board::summary::summary;
 use crate::conversation::cues::CancelTarget;
 use crate::effect::{Dropped, Effect, LogRecord, Milestone, TalkRequest};
-use crate::engine::listen::ChangeGate;
+use crate::engine::gate::GateClosed;
 use crate::engine::ops::{Anchor, QueuedOp};
 use crate::engine::text::{
-    REFUSAL_LINE, TOOL_ROUNDS_LINE, branch_for, failure_line, harness_report, invalid_call,
+    CALL_NOT_RUN, REFUSAL_LINE, TOOL_ROUNDS_LINE, failure_line, harness_report, invalid_call,
     render_output, started_text,
 };
 use crate::engine::{Core, milestone};
@@ -187,8 +187,12 @@ impl Core {
                 text: sections.join("\n\n"),
             });
         }
+        // Harness output can quote repo text: it never gets a system message's authority. It
+        // goes in a user turn, fenced as untrusted data (LLD §9).
         for report in self.context.reports.drain(..) {
-            self.conversation.push(Message::System { text: report });
+            self.conversation.push(Message::User {
+                parts: vec![UserPart::Text { text: report }],
+            });
         }
     }
 
@@ -255,11 +259,17 @@ impl Core {
         let has_calls = !stream.calls.is_empty();
         self.take_outputs(index, out, effects);
         self.notice_dropped_ops(index);
+        // A proposed change is asked about only when the reply ends normally; a refusal or a
+        // failure ends the reply with a problem line, and the proposal is dropped with it.
         match stop {
             StopReason::ToolUse if has_calls => self.maybe_tool_round(now, effects),
-            StopReason::EndTurn | StopReason::ToolUse => self.finish_stream(index),
+            StopReason::EndTurn | StopReason::ToolUse => {
+                self.finish_stream(index);
+                self.ask_change(effects);
+            }
             StopReason::MaxTokens => {
                 self.finish_stream(index);
+                self.ask_change(effects);
                 self.context.notice(
                     "Your last reply hit its length limit and stopped at the end of its last \
                      clause; that is where the user stopped hearing it."
@@ -291,6 +301,10 @@ impl Core {
         }
     }
 
+    /// Commits stream `index`, and right after it a result for each of its calls: the answer
+    /// that came in, or an error for a call it stopped before using. A `tool_use` without its
+    /// result in the next message makes every later request invalid, and the history can't be
+    /// edited (review finding 1).
     fn commit_stream(&mut self, index: usize) {
         let Some(stream) = self
             .reply
@@ -302,6 +316,7 @@ impl Core {
         if stream.committed || (stream.raw.is_none() && stream.calls.is_empty()) {
             return;
         }
+        let calls: Vec<ToolCallId> = stream.calls.iter().map(|call| call.id.clone()).collect();
         let mut parts = Vec::new();
         if !stream.narration.written().is_empty() {
             parts.push(AssistantPart::Text {
@@ -326,6 +341,30 @@ impl Core {
         {
             stream.committed = true;
         }
+        if !calls.is_empty() {
+            let results = self.take_results(&calls);
+            self.conversation.push(Message::User { parts: results });
+        }
+    }
+
+    /// The results for `calls`, in call order. Answers still on their way are ignored when they
+    /// arrive: their slots are gone.
+    fn take_results(&mut self, calls: &[ToolCallId]) -> Vec<UserPart> {
+        let mut slots = self
+            .reply
+            .as_mut()
+            .map(|reply| std::mem::take(&mut reply.tools))
+            .unwrap_or_default();
+        calls
+            .iter()
+            .map(|id| {
+                slots
+                    .iter_mut()
+                    .find(|slot| slot.id == *id && slot.result.is_some())
+                    .and_then(|slot| slot.result.take())
+                    .unwrap_or_else(|| error_result(id, CALL_NOT_RUN.to_owned()))
+            })
+            .collect()
     }
 
     fn notice_dropped_ops(&mut self, index: usize) {
@@ -497,19 +536,11 @@ impl Core {
                 self.run_read_only(HarnessKind::Review, scope.clone(), effects)
             }
             ToolCall::ProposeChange { instruction } => {
-                let branch = branch_for(instruction);
-                let text = format!(
-                    "Nothing has changed yet. In one or two sentences, tell the user what you \
-                     will change and that it goes on a new branch, {branch}, then ask for a yes. \
-                     The change runs only if their next words are a yes."
-                );
-                self.gate = ChangeGate::Awaiting {
-                    instruction: instruction.clone(),
-                    branch,
-                    opened_at: now,
-                };
-                self.yield_proposal_to_change();
-                text
+                let stream = self
+                    .reply
+                    .as_ref()
+                    .map_or(0, |reply| reply.streams.len().saturating_sub(1));
+                return Some(self.propose_change(id, instruction, stream));
             }
             ToolCall::Remember {
                 kind,
@@ -606,15 +637,8 @@ impl Core {
         let Some(reply) = self.reply.as_mut() else {
             return;
         };
-        let results: Vec<UserPart> = reply
-            .tools
-            .drain(..)
-            .filter_map(|slot| slot.result)
-            .collect();
         reply.rounds += 1;
-        let out_of_rounds = reply.rounds >= TOOL_ROUNDS_PER_TURN_MAX;
-        self.conversation.push(Message::User { parts: results });
-        if out_of_rounds {
+        if reply.rounds >= TOOL_ROUNDS_PER_TURN_MAX {
             if let Some(reply) = self.reply.as_mut() {
                 reply.done = true;
             }
@@ -656,6 +680,9 @@ impl Core {
             && self.reply.is_none()
             && self.stop.is_none();
         if idle && !self.context.reports.is_empty() {
+            // The report turn asks its own questions: a yes to one of them must not answer
+            // BoardAI's question about a change (I9).
+            self.close_change_gate(GateClosed::Report);
             self.marks = crate::engine::TurnMarks::default();
             self.turn_question = None;
             self.state = crate::conversation::ConversationState::Thinking;
