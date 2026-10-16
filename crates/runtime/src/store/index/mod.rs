@@ -9,13 +9,14 @@ mod ingest;
 pub(crate) mod query;
 mod scan;
 mod schema;
+pub(crate) mod views;
 
 use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub(crate) use ingest::{Unit, index_unit};
+pub(crate) use ingest::{UNTITLED as UNTITLED_SESSION, Unit, index_unit};
 pub use scan::ScanReport;
 pub(crate) use scan::{rebuild, reconcile, seed_counters};
 pub use schema::SchemaState;

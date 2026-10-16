@@ -20,6 +20,7 @@ use super::digest::{
 };
 use super::error::StoreError;
 use super::ids::{IdCounters, ItemKind, SessionId};
+use super::index::views::sessions_without_digest;
 use super::index::{Unit, index_unit};
 use super::log::{EventLogWriter, LogEntry, summarize_log};
 use super::redact::{redact_json_text, redact_text};
@@ -30,7 +31,7 @@ use super::vault::{
     BOARD_FILE, DIGEST_FILE, EVENTS_FILE, SESSIONS, Vault, VaultPath, write_atomic,
 };
 use super::views::SessionInfo;
-use crate::limits::VAULT_ITEM_MAX_BYTES;
+use crate::limits::{RECOVERED_SESSIONS_MAX, VAULT_ITEM_MAX_BYTES};
 
 pub(crate) struct StoreState {
     pub vault: Vault,
@@ -315,6 +316,43 @@ impl StoreState {
                 tracing::warn!(error = %error.kind(), "the session folder keeps its first name");
                 None
             }
+        }
+    }
+
+    /// Sessions a crash or a kill left without a digest get the minimal one when the store
+    /// opens, so every session in the library has one (LLD §3.6). At most
+    /// [`RECOVERED_SESSIONS_MAX`] per open, oldest first; one that fails is logged and tried
+    /// again at the next open.
+    pub(crate) fn recover_interrupted(&mut self) {
+        let found = match sessions_without_digest(&self.index, RECOVERED_SESSIONS_MAX) {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(%error, "sessions without a digest could not be listed");
+                return;
+            }
+        };
+        for (id, folder, started, duration_ms) in found {
+            let Some(id) = SessionId::parse(&id) else {
+                continue;
+            };
+            let started = WallTime::parse_rfc3339(&started).unwrap_or_else(|| self.clock.now());
+            self.slot = SessionSlot::Ended(Box::new(Session {
+                id,
+                folder,
+                started,
+                title_hint: None,
+                log: None,
+                duration_ms,
+                captures: Vec::new(),
+                created_files: Vec::new(),
+                records: Vec::new(),
+                proposals: Vec::new(),
+                digest: None,
+            }));
+            if let Err(error) = self.ensure_digest() {
+                tracing::warn!(%error, "an interrupted session is still without a digest");
+            }
+            self.slot = SessionSlot::Idle;
         }
     }
 

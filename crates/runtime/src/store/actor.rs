@@ -25,11 +25,15 @@ use tokio::time::{Instant, MissedTickBehavior};
 use super::digest::Digest;
 use super::error::StoreError;
 use super::ids::ItemId;
+use super::ids::SessionId;
 use super::index::{ScanReport, rebuild, seed_counters};
 use super::log::LogEntry;
 use super::read::Reader;
 use super::state::{SessionEnded, StoreState};
-use super::views::{Forgotten, Library, NowList, Remembered, SessionInfo, SessionView};
+use super::views::{
+    Forgotten, Library, LibraryEntry, MemoryView, NowList, Remembered, SessionInfo, SessionView,
+};
+use boardai_core::views::NoteRow;
 
 pub(crate) type Reply<T> = oneshot::Sender<Result<T, StoreError>>;
 
@@ -92,6 +96,20 @@ pub(crate) enum ReadRequest {
     },
     Recap {
         reply: Reply<Option<String>>,
+    },
+    FindSession {
+        query: String,
+        reply: Reply<LibraryEntry>,
+    },
+    MemoryView {
+        reply: Reply<MemoryView>,
+    },
+    Notes {
+        reply: Reply<Vec<NoteRow>>,
+    },
+    SessionLog {
+        id: SessionId,
+        reply: Reply<String>,
     },
 }
 
@@ -251,6 +269,18 @@ fn serve_read(reader: &Reader, request: ReadRequest) {
         }
         ReadRequest::Recap { reply } => {
             let _ = reply.send(reader.recap());
+        }
+        ReadRequest::FindSession { query, reply } => {
+            let _ = reply.send(reader.find_card(&query));
+        }
+        ReadRequest::MemoryView { reply } => {
+            let _ = reply.send(reader.memory_view());
+        }
+        ReadRequest::Notes { reply } => {
+            let _ = reply.send(reader.recent_notes());
+        }
+        ReadRequest::SessionLog { id, reply } => {
+            let _ = reply.send(reader.session_log(&id));
         }
     }
 }

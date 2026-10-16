@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         .invoke_handler(tauri::generate_handler![
             commands::connect,
             commands::command,
+            commands::session_log,
             #[cfg(debug_assertions)]
             dev::dev_say,
         ])

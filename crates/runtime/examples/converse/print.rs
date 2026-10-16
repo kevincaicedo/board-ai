@@ -8,7 +8,8 @@
 
 use std::sync::Mutex;
 
-use boardai_core::effect::{Dropped, LogRecord, Milestone};
+use boardai_core::effect::{Dropped, ForgetScope, LogRecord, Milestone};
+use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::narration::quality::{NarrationQuality, assess};
@@ -17,7 +18,7 @@ use boardai_core::protocol::{DrawOp, OrbState, Speaker, Surface, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::logging::bound;
-use boardai_runtime::session::{MemoryStore, StoreSink};
+use boardai_runtime::session::{MemoryStore, SessionClose, SessionOpened, StoreRead, StoreSink};
 use futures_util::future::BoxFuture;
 
 /// Characters of a tool call or result printed; the rest is cut.
@@ -236,6 +237,9 @@ impl Printer {
             UiEvent::Suggestion { text } => {
                 line(at, "suggest", text.as_deref().unwrap_or("(cleared)"));
             }
+            UiEvent::SessionStart { .. } | UiEvent::ViewShow { .. } | UiEvent::ViewDismiss => {
+                print_session_event(at, event);
+            }
             UiEvent::Orb { state, .. } => {
                 if self.verbose {
                     line(at, "orb", &format!("{state:?}"));
@@ -340,16 +344,41 @@ impl StoreSink for Printer {
         self.memory.remember(at, memory);
     }
 
-    fn recall(&self, query: String) -> BoxFuture<'static, ToolOutput> {
-        self.memory.recall(query)
+    fn forget(&self, at: SessionTime, scope: ForgetScope) {
+        line(at, "memory", &format!("forget {scope:?}"));
+        self.memory.forget(at, scope);
     }
 
-    fn open_session(&self, id: String) -> BoxFuture<'static, ToolOutput> {
-        self.memory.open_session(id)
+    fn accept_proposal(&self, at: SessionTime, capture: CaptureId) {
+        line(at, "memory", &format!("keep proposal {}", capture.0));
+        self.memory.accept_proposal(at, capture);
+    }
+
+    fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+        self.memory.read(read)
+    }
+
+    fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        self.memory.start_session()
+    }
+
+    fn finish_session(&self, close: SessionClose) -> BoxFuture<'static, ()> {
+        self.memory.finish_session(close)
     }
 
     fn flush(&self) -> BoxFuture<'static, ()> {
         self.memory.flush()
+    }
+}
+
+/// A session starting, or a view opening or closing.
+fn print_session_event(at: SessionTime, event: &UiEvent) {
+    if let UiEvent::SessionStart { session } = event {
+        line(at, "session", session.as_deref().unwrap_or("(memory off)"));
+    } else if let UiEvent::ViewShow { view, .. } = event {
+        line(at, "view", &format!("{:?}", view.kind()));
+    } else if let UiEvent::ViewDismiss = event {
+        line(at, "view", "closed");
     }
 }
 
@@ -507,5 +536,6 @@ fn first_line(output: &ToolOutput) -> String {
         ToolOutput::Started { task } => format!("started task {}", task.0),
         ToolOutput::Text { text } => text.lines().next().unwrap_or_default().to_owned(),
         ToolOutput::Failed { kind, message } => format!("failed ({kind:?}): {message}"),
+        ToolOutput::View { view, .. } => format!("view {:?}", view.kind()),
     }
 }

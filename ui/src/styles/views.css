@@ -1,0 +1,281 @@
+/* The views summoned by voice, transcribed from the design canvas: 8 · Library, 9 · Brain (the
+   Now list), Brain · memories and notes, and the recall example. Only tokens here; time-driven
+   values (arrival, departure, the live board stepping back) are written by the frame loop. */
+
+/* Stacking: views sit over the canvas, its thread and surfaces; the orb, the captions, the
+   captured chips and the controls stay on top of them. */
+
+.board-shell {
+  position: absolute;
+  inset: 0;
+}
+
+.views {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.orb-host,
+.captions,
+.chip,
+.brain-edge,
+.brain-edge-glow,
+.mic,
+.replay,
+.perf {
+  z-index: 2;
+}
+
+.view-frame {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+
+.view-frame-local-replay {
+  display: block;
+}
+
+/* Library */
+
+.view-library {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-soft);
+  pointer-events: auto;
+}
+
+.library-scroll {
+  position: absolute;
+  inset: 0 0 calc(var(--caption-bottom) + 40px);
+  box-sizing: border-box;
+  padding: var(--library-title-top) var(--library-left) 24px;
+  overflow-y: auto;
+}
+
+.library-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: calc(
+    var(--library-grid-top) -
+    var(--library-title-top) -
+    var(--type-library-title-line) -
+    10px -
+    var(--type-library-hint-line)
+  );
+}
+
+.library-title {
+  margin: 0;
+  font-size: var(--type-library-title);
+  line-height: var(--type-library-title-line);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+
+.library-hint,
+.library-empty,
+.library-more {
+  margin: 0;
+  font-size: var(--type-library-hint);
+  line-height: var(--type-library-hint-line);
+  color: var(--ink-3);
+}
+
+.library-more {
+  margin-top: 28px;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--library-gap);
+}
+
+.library-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--library-card-info-gap);
+}
+
+.library-cover {
+  position: relative;
+  height: var(--library-card-height);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--grey-100);
+  box-shadow: var(--shadow-surface);
+}
+
+.library-cover-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 120px;
+  background: linear-gradient(var(--cover-fade-clear), var(--cover-fade));
+}
+
+.library-controls {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.library-card-title {
+  font-size: var(--type-card-name);
+  line-height: var(--type-card-name-line);
+}
+
+.library-card-meta {
+  font-size: var(--type-card-meta);
+  line-height: var(--type-card-meta-line);
+  color: var(--ink-3);
+}
+
+/* Cover art (cover.ts): a porcelain ground, pastel shapes out of focus, a soft light */
+
+.cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.cover-stop-top {
+  stop-color: var(--bg-soft);
+}
+
+.cover-stop-bottom {
+  stop-color: var(--grey-200);
+}
+
+.cover-light-in {
+  stop-color: var(--bg);
+  stop-opacity: 0.35;
+}
+
+.cover-light-out {
+  stop-color: var(--bg);
+  stop-opacity: 0;
+}
+
+.cover-blob {
+  opacity: 0.95;
+}
+
+.cover-shade {
+  fill: var(--grey-300);
+  opacity: 0.8;
+}
+
+.cover-sky {
+  fill: var(--sketch-sky);
+}
+
+.cover-lilac {
+  fill: var(--sketch-lilac);
+}
+
+.cover-mint {
+  fill: var(--sketch-mint);
+}
+
+.cover-blush {
+  fill: var(--sketch-blush);
+}
+
+.cover-porcelain {
+  fill: var(--bg);
+}
+
+.sketch {
+  display: block;
+}
+
+.sketch-box {
+  fill-opacity: 0.75;
+  stroke: var(--ink);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+/* Round controls and the thin progress track (the references' play, mute and progress) */
+
+.card-control {
+  width: var(--size-control);
+  height: var(--size-control);
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--bg);
+  box-shadow: var(--shadow-card-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.card-control:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+
+.glyph-play {
+  fill: var(--signal);
+}
+
+.glyph-sound path,
+.glyph-close path {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.glyph-sound .glyph-sound-body {
+  fill: var(--ink);
+  stroke: none;
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 5px;
+  border-radius: 3px;
+}
+
+.track-on-cover {
+  background: var(--control-track);
+}
+
+.track-on-glass {
+  background: var(--grey-100);
+}
+
+.track-fill {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  max-width: calc(100% - 2px);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--signal);
+}

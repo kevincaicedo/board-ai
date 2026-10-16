@@ -62,7 +62,7 @@ export function Captions() {
   if (current === null) {
     return null;
   }
-  const max = tokens.captionMaxLetters;
+  const max = runtime.captionLetters;
   const now = captionText(current.text, max);
   const before =
     previous === null

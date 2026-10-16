@@ -9,18 +9,25 @@
 //   2. Per command:        invoke("command", { command: UiCommand })
 //      Fire and forget; a rejection is counted, never retried (a stale pointer target or mic
 //      toggle is worse than a dropped one).
+//   3. For a replay:       invoke("session_log", { id }) → string
+//      A past session's events.jsonl by id (bounded by the shell); a rejection is counted and
+//      the replay says it couldn't open.
 //
 // Both payloads are the serde JSON of the types in crates/core/src/protocol.rs. Batches are
 // parsed again here (protocol/parse.ts) so a mismatched build drops events instead of crashing.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import { parseUiBatch } from "../protocol/parse.ts";
-import { type BatchSink, SessionClock, type Transport } from "./transport.ts";
+import { type BatchSink, isSessionId, SessionClock, type Transport } from "./transport.ts";
 
 /** The two Tauri calls the transport needs, injectable so tests don't need a webview. */
 export interface TauriBridge {
-  invoke(command: "connect" | "command", args: Record<string, unknown>): Promise<unknown>;
+  invoke(
+    command: "connect" | "command" | "session_log",
+    args: Record<string, unknown>,
+  ): Promise<unknown>;
   /** Creates the channel object passed to `connect`; `onMessage` gets each batch. */
   channel(onMessage: (message: unknown) => void): unknown;
 }
@@ -46,6 +53,9 @@ export class TauriTransport implements Transport {
   malformedBatches = 0;
   skippedEvents = 0;
   failedCommands = 0;
+  failedSessionLogs = 0;
+  /** Sessions that started after the first one (idle timeouts): each reset the stage. */
+  sessionsStarted = 0;
 
   constructor(bridge: TauriBridge, pageNow: () => number) {
     this.#bridge = bridge;
@@ -68,6 +78,23 @@ export class TauriTransport implements Transport {
     return this.#clock.now(pageNowMs);
   }
 
+  async sessionLog(id: string): Promise<string | null> {
+    if (!isSessionId(id)) {
+      this.failedSessionLogs += 1;
+      return null;
+    }
+    try {
+      const text = await this.#bridge.invoke("session_log", { id });
+      if (typeof text === "string") {
+        return text;
+      }
+    } catch {
+      // Unknown id, unreadable or too large: the replay says it couldn't open.
+    }
+    this.failedSessionLogs += 1;
+    return null;
+  }
+
   close(): void {
     this.#sink = null;
   }
@@ -79,7 +106,27 @@ export class TauriTransport implements Transport {
       return;
     }
     this.skippedEvents += parsed.skipped;
-    this.#clock.observe(parsed.batch.at, this.#pageNow());
-    this.#sink?.batch(parsed.batch);
+    const { at, events } = parsed.batch;
+    // A new session restarts session time: what came before it in the batch belongs to the old
+    // session, then the stage and the clock start over.
+    let begin = 0;
+    events.forEach((event, index) => {
+      if (event.type !== "SessionStart") {
+        return;
+      }
+      if (index > begin) {
+        this.#deliver({ at, events: events.slice(begin, index) });
+      }
+      this.#clock.reset();
+      this.#sink?.reset();
+      this.sessionsStarted += 1;
+      begin = index;
+    });
+    this.#deliver(begin === 0 ? parsed.batch : { at, events: events.slice(begin) });
+  }
+
+  #deliver(batch: UiBatch): void {
+    this.#clock.observe(batch.at, this.#pageNow());
+    this.#sink?.batch(batch);
   }
 }

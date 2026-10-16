@@ -236,7 +236,7 @@ fn remember_and_add_task_go_through_the_memory_policy() {
         ScriptedReply::says("Noted.")
             .calls(
                 "remember",
-                r#"{"kind":"inferred","text":"Prefers Go examples"}"#,
+                r#"{"kind":"inferred","text":"Prefers Go examples","about":"you"}"#,
             )
             .calls("add_task", r#"{"title":"Check our TTLs","project":"api"}"#),
     );

@@ -208,17 +208,39 @@ pub fn talker_from_settings(
     secrets: &dyn SecretStore,
     clock: Arc<dyn Clock>,
 ) -> Result<Arc<dyn LlmProvider>, TalkerSetupError> {
+    provider_from_settings(settings, &talker_config(settings), secrets, clock)
+}
+
+/// The scribe the settings describe (`[scribe]`): the store's fixed digest prompt with the
+/// settings' model, effort and output budget (D-017). Blocks like [`talker_from_settings`].
+pub fn scribe_from_settings(
+    settings: &LlmSettings,
+    secrets: &dyn SecretStore,
+    clock: Arc<dyn Clock>,
+) -> Result<Arc<dyn LlmProvider>, TalkerSetupError> {
+    let mut config = crate::store::scribe_config();
+    config.model.clone_from(&settings.model);
+    config.effort = settings.effort;
+    config.max_tokens = settings.max_tokens;
+    provider_from_settings(settings, &config, secrets, clock)
+}
+
+fn provider_from_settings(
+    settings: &LlmSettings,
+    config: &TalkerConfig,
+    secrets: &dyn SecretStore,
+    clock: Arc<dyn Clock>,
+) -> Result<Arc<dyn LlmProvider>, TalkerSetupError> {
     let secret = settings
         .secret
         .as_ref()
         .map(|name| secrets.get(name))
         .transpose()
         .map_err(TalkerSetupError::Secret)?;
-    let config = talker_config(settings);
     let provider: Arc<dyn LlmProvider> = match settings.kind {
         LlmKind::Anthropic => {
             let Some(api_key) = secret else {
-                let detail = "the Anthropic talker has no secret set".to_owned();
+                let detail = "the Anthropic provider has no secret set".to_owned();
                 let error = ProviderError::NotConfigured { detail };
                 return Err(TalkerSetupError::Provider(error));
             };
@@ -228,7 +250,7 @@ pub fn talker_from_settings(
                 clock,
                 policy: None,
             };
-            Arc::new(AnthropicProvider::new(&config, options).map_err(TalkerSetupError::Provider)?)
+            Arc::new(AnthropicProvider::new(config, options).map_err(TalkerSetupError::Provider)?)
         }
         LlmKind::OpenAiCompatible => {
             let options = OpenAiOptions {
@@ -241,7 +263,7 @@ pub fn talker_from_settings(
                 policy: None,
             };
             Arc::new(
-                OpenAiCompatibleProvider::new(&config, options)
+                OpenAiCompatibleProvider::new(config, options)
                     .map_err(TalkerSetupError::Provider)?,
             )
         }

@@ -68,7 +68,11 @@ pub fn run_blocking(roots: &RepoRoots, call: &ToolCall) -> Result<ToolOutput, To
         | ToolCall::Remember { .. }
         | ToolCall::AddTask { .. }
         | ToolCall::Recall { .. }
-        | ToolCall::OpenSession { .. } => Err(ToolError::new(
+        | ToolCall::OpenSession { .. }
+        | ToolCall::ShowLibrary
+        | ToolCall::ShowTasks { .. }
+        | ToolCall::ShowMemory
+        | ToolCall::PlaySession { .. } => Err(ToolError::new(
             ToolFailure::InvalidInput,
             "not a repo tool; the orchestrator routes it elsewhere",
         )),

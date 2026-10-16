@@ -8,10 +8,12 @@
 
 mod camera;
 mod listen;
+mod memory;
 mod ops;
 mod reply;
 mod stop;
 pub mod text;
+pub mod views;
 
 use std::collections::BTreeSet;
 
@@ -27,11 +29,13 @@ use crate::protocol::{OrbState, PointerTarget, UiCommand, UiEvent};
 use crate::surfaces::Surfaces;
 use crate::thread::Thread;
 use crate::time::SessionTime;
+use crate::views::ViewKind;
 use crate::voice::Voice;
 use text::SYNTHESIS_FAILED_DETAIL;
 
 use camera::Cameras;
 use listen::{ChangeGate, UserSide};
+use memory::Memory;
 use ops::OpQueue;
 use reply::{ContextTracker, Reply};
 use stop::PendingStop;
@@ -115,6 +119,10 @@ pub struct Core {
     push_to_talk_held: bool,
     backchannel_at: Option<SessionTime>,
     next_task: u32,
+    /// What this session captured, the memory controls' state, and a proposal awaiting a yes.
+    memory: Memory,
+    /// The view on screen, if any (LLD §3.7).
+    view: Option<ViewKind>,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -148,6 +156,8 @@ impl Core {
             push_to_talk_held: false,
             backchannel_at: None,
             next_task: 0,
+            memory: Memory::default(),
+            view: None,
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }
@@ -176,6 +186,7 @@ impl Core {
 
     /// The only way state changes. Same inputs at the same times → same effects.
     pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>) {
+        let first = effects.len();
         match input {
             Input::VoiceStart => self.on_voice_start(now, effects),
             Input::VoiceEnd { voiced_ms } => self.on_voice_end(now, voiced_ms, effects),
@@ -183,7 +194,7 @@ impl Core {
                 self.on_transcript(now, &text, is_final, effects);
             }
             Input::TalkerDelta { text } => self.on_talker_delta(now, &text, effects),
-            Input::TalkerToolCall { invocation } => self.on_tool_call(invocation, effects),
+            Input::TalkerToolCall { invocation } => self.on_tool_call(now, invocation, effects),
             Input::TalkerDone { stop, raw } => self.on_talker_done(now, stop, raw, effects),
             Input::ClauseReady { clause, timings } => {
                 if self.voice.ready(clause, timings) && self.state == ConversationState::Thinking {
@@ -212,9 +223,11 @@ impl Core {
             }
             Input::Command(UiCommand::Mic { action }) => self.on_mic(now, action, effects),
             Input::Command(UiCommand::Stop) => self.on_stop(now, effects),
+            Input::Command(UiCommand::CloseView) => self.close_view(effects),
             Input::Tick => self.on_tick(now, effects),
         }
         self.after_step(now, effects);
+        self.yield_view(first, effects);
     }
 
     /// The append-only conversation (I3), for the store and the session digest.
@@ -236,6 +249,12 @@ impl Core {
     #[must_use]
     pub fn thread(&self) -> &Thread {
         &self.thread
+    }
+
+    /// Whether the user said "don't remember this session" (I10).
+    #[must_use]
+    pub fn is_off_record(&self) -> bool {
+        self.memory.is_off_record()
     }
 
     /// A layer as an `.excalidraw` document.

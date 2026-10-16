@@ -7,6 +7,8 @@ import type { BatchSink, Transport } from "./transport.ts";
 export class FakeTransport implements Transport {
   readonly kind = "fake";
   readonly sent: UiCommand[] = [];
+  /** Session logs a test makes available to `sessionLog`, by id. */
+  readonly logs = new Map<string, string>();
   /** The session time the next frame renders at. */
   time = 0;
   #sink: BatchSink | null = null;
@@ -37,6 +39,10 @@ export class FakeTransport implements Transport {
 
   sessionTime(_pageNowMs: number): number {
     return this.time;
+  }
+
+  async sessionLog(id: string): Promise<string | null> {
+    return this.logs.get(id) ?? null;
   }
 
   close(): void {

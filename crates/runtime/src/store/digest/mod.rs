@@ -8,6 +8,7 @@ mod scribe;
 use serde::{Deserialize, Serialize};
 
 pub(crate) use document::{DigestDocument, ParsedDigest, ProposalLine, parse_digest};
+pub(crate) use scribe::digest_within;
 pub use scribe::{
     SCRIBE_SYSTEM_PROMPT, SessionMaterial, TranscriptLine, digest_with_scribe, fallback_digest,
     scribe_config,

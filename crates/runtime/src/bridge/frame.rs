@@ -46,9 +46,14 @@ impl Frame {
         self.live == 0
     }
 
-    /// Adds one step's events. A batch that reaches the cap is pushed to `full` at once.
+    /// Adds one step's events. A batch that reaches the cap is pushed to `full` at once. A new
+    /// session never shares a batch with the last one: its time starts again from zero, so the
+    /// held batch goes first, under its own stamp.
     pub(crate) fn push(&mut self, at: SessionTime, events: Vec<UiEvent>, full: &mut Vec<UiBatch>) {
         for event in events {
+            if matches!(event, UiEvent::SessionStart { .. }) {
+                full.extend(self.take());
+            }
             self.at = Some(self.at.map_or(at, |earlier| earlier.max(at)));
             self.add(event);
             if self.live >= BRIDGE_BATCH_EVENTS_MAX {
@@ -96,7 +101,10 @@ impl Frame {
             | UiEvent::SurfaceDismiss { .. }
             | UiEvent::Chip { .. }
             | UiEvent::Problem { .. }
-            | UiEvent::Suggestion { .. } => key,
+            | UiEvent::Suggestion { .. }
+            | UiEvent::SessionStart { .. }
+            | UiEvent::ViewShow { .. }
+            | UiEvent::ViewDismiss => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -124,7 +132,10 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::SurfaceDismiss { .. }
         | UiEvent::Chip { .. }
         | UiEvent::Problem { .. }
-        | UiEvent::Suggestion { .. } => None,
+        | UiEvent::Suggestion { .. }
+        | UiEvent::SessionStart { .. }
+        | UiEvent::ViewShow { .. }
+        | UiEvent::ViewDismiss => None,
     }
 }
 
@@ -213,6 +224,30 @@ mod tests {
         );
         assert_eq!(frame.counts.coalesced, 2);
         assert!(frame.take().is_none(), "the frame starts empty again");
+    }
+
+    /// A new session's time starts again from zero: it must not take the last session's
+    /// stamp, nor coalesce with its orb.
+    #[test]
+    fn a_new_session_never_shares_a_batch_with_the_last() {
+        let mut frame = Frame::default();
+        let mut full = Vec::new();
+        frame.push(at(1_800_000), vec![orb(OrbState::Idle, 0)], &mut full);
+        let start = UiEvent::SessionStart {
+            session: Some("2026-10-15-150000".to_owned()),
+        };
+        frame.push(
+            at(0),
+            vec![start.clone(), orb(OrbState::Idle, 0)],
+            &mut full,
+        );
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0].at, at(1_800_000));
+        assert_eq!(full[0].events, vec![orb(OrbState::Idle, 0)]);
+        let batch = take(&mut frame);
+        assert_eq!(batch.at, at(0));
+        assert_eq!(batch.events, vec![start, orb(OrbState::Idle, 0)]);
+        assert_eq!(frame.counts.coalesced, 0);
     }
 
     #[test]

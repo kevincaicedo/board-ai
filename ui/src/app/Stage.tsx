@@ -2,6 +2,7 @@
 // surfaces float over it. The canvas and orb are imperative views mounted into hosts here.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Views } from "../views/Views.tsx";
 import { Captions } from "./Captions.tsx";
 import { Chips } from "./Chips.tsx";
 import { Column } from "./Column.tsx";
@@ -58,11 +59,15 @@ export function Stage({
   return (
     <RuntimeContext.Provider value={runtime}>
       <main class="stage" ref={stageRef} aria-label="BoardAI">
-        <div class="board" ref={boardRef} />
+        {/* The shell lets a view soften the board without touching the board's own styles. */}
+        <div class="board-shell">
+          <div class="board" ref={boardRef} />
+        </div>
         <div class="orb-host" ref={orbRef} />
         <Suggestion />
         <ThreadBar />
         <Column />
+        <Views />
         <Chips />
         <Captions />
         <MicButton />

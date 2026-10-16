@@ -5,15 +5,18 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
-use boardai_core::effect::{Gain, LogRecord};
-use boardai_core::ids::ClauseId;
+use boardai_core::effect::{ForgetScope, Gain, LogRecord};
+use boardai_core::ids::{CaptureId, ClauseId};
 use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::UiEvent;
 use boardai_core::time::SessionTime;
-use boardai_core::tools::ToolOutput;
+use boardai_core::tools::{ToolCall, ToolOutput};
 use futures_util::future::BoxFuture;
+
+use crate::cancel::CancelToken;
 
 /// Speech out (LLD §3.1, §3.4): synthesizes clauses and plays them in order.
 ///
@@ -61,9 +64,11 @@ impl fmt::Display for SpeechOutError {
 
 /// The store (LLD §3.6): the only writer of the event log, the vault and the index.
 ///
-/// The record methods run on the orchestrator task for every step, so they must not block:
-/// the store actor queues them and writes on its own time (it flushes every 250 ms). Secret
-/// redaction happens inside the store, at its boundary (LLD §2.8).
+/// The record and memory methods run on the orchestrator task for every step, so they must not
+/// block: the store queues them and writes on its own time (it flushes the log every 250 ms).
+/// Memory writes, forgets and keeps are applied in the order they were sent, so "forget that"
+/// always undoes what the core meant. Secret redaction happens inside the store, at its
+/// boundary (LLD §2.8).
 pub trait StoreSink: Send + Sync {
     /// An input the core stepped, at its session time, for re-simulation.
     fn input(&self, at: SessionTime, input: &Input);
@@ -77,14 +82,101 @@ pub trait StoreSink: Send + Sync {
     /// A memory the policy already decided to keep or propose.
     fn remember(&self, at: SessionTime, memory: &MemoryWrite);
 
-    /// The `recall` tool: memories, notes and digests matching `query`.
-    fn recall(&self, query: String) -> BoxFuture<'static, ToolOutput>;
+    /// "Forget that" (the last capture) or "don't remember this session" (I10).
+    fn forget(&self, at: SessionTime, scope: ForgetScope);
 
-    /// The `open_session` tool: a past session's board.
-    fn open_session(&self, id: String) -> BoxFuture<'static, ToolOutput>;
+    /// "Yes, keep it": keep the memory the core proposed as `capture`.
+    fn accept_proposal(&self, at: SessionTime, capture: CaptureId);
+
+    /// A read the talker asked for (recall, a past board, a view), as its tool output. It
+    /// sees every write sent before it.
+    fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput>;
+
+    /// Opens a session: its log starts. Answers with its id and the context the talker starts
+    /// with (where you left off, what BoardAI keeps about you).
+    fn start_session(&self) -> BoxFuture<'static, SessionOpened>;
+
+    /// Ends the session: its digest, or no trace at all when nobody spoke.
+    fn finish_session(&self, close: SessionClose) -> BoxFuture<'static, ()>;
 
     /// Writes everything queued; the session is closing.
     fn flush(&self) -> BoxFuture<'static, ()>;
+}
+
+/// What the talker's store tools ask for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoreRead {
+    /// `recall`: memories, notes, digests and transcripts matching the words.
+    Recall { query: String },
+    /// `open_session`: a past board, by id or words from its title.
+    PastSession { query: String },
+    /// `show_library`.
+    Library,
+    /// `show_tasks`: open tasks for one project, or all.
+    Tasks { project: Option<String> },
+    /// `show_memory`.
+    Memory,
+    /// `play_session`: a session to replay, by id or words from its title.
+    Replay { query: String },
+}
+
+impl StoreRead {
+    /// The read a store tool call asks for; `None` for every other tool.
+    #[must_use]
+    pub fn of(call: &ToolCall) -> Option<Self> {
+        match call {
+            ToolCall::Recall { query } => Some(Self::Recall {
+                query: query.clone(),
+            }),
+            ToolCall::OpenSession { id } => Some(Self::PastSession { query: id.clone() }),
+            ToolCall::ShowLibrary => Some(Self::Library),
+            ToolCall::ShowTasks { project } => Some(Self::Tasks {
+                project: project
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned),
+            }),
+            ToolCall::ShowMemory => Some(Self::Memory),
+            ToolCall::PlaySession { id } => Some(Self::Replay { query: id.clone() }),
+            ToolCall::ReadFile { .. }
+            | ToolCall::SearchCode { .. }
+            | ToolCall::ListDir { .. }
+            | ToolCall::Research { .. }
+            | ToolCall::Review { .. }
+            | ToolCall::ProposeChange { .. }
+            | ToolCall::Remember { .. }
+            | ToolCall::AddTask { .. } => None,
+        }
+    }
+}
+
+/// A session the store opened.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SessionOpened {
+    /// The store's id for it; `None` when memory is off (the vault couldn't be used).
+    pub session: Option<String>,
+    /// For the talker's first request: the last session's recap and what BoardAI keeps about
+    /// the user, bounded by `SESSION_CONTEXT_MAX_BYTES`.
+    pub context: Option<String>,
+    /// The idle line under the orb, from the last session's title ("Pick up Raft log
+    /// compaction where we left off?"), within the core's `SUGGESTION_MAX_BYTES`.
+    pub suggestion: Option<String>,
+}
+
+/// How a session ends.
+#[derive(Clone, Debug)]
+pub enum SessionClose {
+    /// Nobody spoke: it leaves nothing in the vault.
+    Discard,
+    /// Its log is closed and its digest written: the scribe's within `deadline` (or until
+    /// `cancel`), else the minimal one. `board` is the core's `.excalidraw` export.
+    Digest {
+        t_end: SessionTime,
+        board: Option<String>,
+        deadline: Duration,
+        cancel: CancelToken,
+    },
 }
 
 /// A shared store is a store, so a caller can keep a handle on it (the dev loop prints from it).
@@ -105,12 +197,24 @@ impl<S: StoreSink + ?Sized> StoreSink for Arc<S> {
         (**self).remember(at, memory);
     }
 
-    fn recall(&self, query: String) -> BoxFuture<'static, ToolOutput> {
-        (**self).recall(query)
+    fn forget(&self, at: SessionTime, scope: ForgetScope) {
+        (**self).forget(at, scope);
     }
 
-    fn open_session(&self, id: String) -> BoxFuture<'static, ToolOutput> {
-        (**self).open_session(id)
+    fn accept_proposal(&self, at: SessionTime, capture: CaptureId) {
+        (**self).accept_proposal(at, capture);
+    }
+
+    fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+        (**self).read(read)
+    }
+
+    fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        (**self).start_session()
+    }
+
+    fn finish_session(&self, close: SessionClose) -> BoxFuture<'static, ()> {
+        (**self).finish_session(close)
     }
 
     fn flush(&self) -> BoxFuture<'static, ()> {

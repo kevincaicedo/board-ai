@@ -29,6 +29,7 @@ pub mod surfaces;
 pub mod thread;
 pub mod time;
 pub mod tools;
+pub mod views;
 pub mod voice;
 
 pub use engine::{Core, CoreConfig, MicMode};

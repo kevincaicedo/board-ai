@@ -14,7 +14,10 @@ import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import type { ReplayTransport } from "../transport/replay.ts";
 import type { Transport } from "../transport/transport.ts";
+import { type CaptionPlace, captionLetters, orbSpot, placeForView } from "../views/layout.ts";
+import { Replays } from "./replays.ts";
 import { Scene } from "./scene.ts";
+import { type ViewDurations, viewMotion, viewVisible } from "./views.ts";
 
 export type FrameCallback = (at: number) => void;
 
@@ -36,7 +39,13 @@ export class Runtime {
   readonly scene: Scene;
   readonly tokens: Tokens;
   readonly reducedMotion: boolean;
+  /** Replays opened from a card, and how far each was watched (UI navigation, not core state). */
+  readonly replays = new Replays();
+  readonly viewDurations: ViewDurations;
   #callbacks = new Set<FrameCallback>();
+  #stageElement: HTMLElement | null = null;
+  readonly #captionPlace: CaptionPlace = { shift: 0, width: 0 };
+  #lastCaptionPlace = "";
   #board: BoardView | null = null;
   #orb: OrbView | null = null;
   #raf = 0;
@@ -70,6 +79,12 @@ export class Runtime {
     this.scene = new Scene(tokens);
     this.#card = { width: tokens.surfaceWidth, height: tokens.detourCardHeight };
     cardArea(this.#card, tokens, this.#cardArea);
+    this.viewDurations = { sceneMs: tokens.durationSceneMs, standardMs: tokens.durationStandardMs };
+  }
+
+  /** The stage element, once mounted (views write their layout variables on it). */
+  get stageElement(): HTMLElement | null {
+    return this.#stageElement;
   }
 
   /** The session time of the last rendered frame. */
@@ -82,6 +97,7 @@ export class Runtime {
   }
 
   mount(stage: HTMLElement, boardHost: HTMLElement, orbHost: HTMLElement): () => void {
+    this.#stageElement = stage;
     this.#board = new BoardView(this.scene.board, this.scene.presence, boardHost, {
       tokens: this.tokens,
       card: this.#card,
@@ -180,6 +196,7 @@ export class Runtime {
     }
     this.#board?.render(at, this.#stageArea, this.#cardArea, this.#anchors);
     orbPlacement(scene.board, scene.presence, at, this.#anchors, this.#placement);
+    this.#placeForViews(at);
     const freezeAt = scene.presence.lastFreezeAt(at);
     const acknowledgeAt = scene.presence.lastAcknowledgeAt;
     scene.orb.sample(
@@ -204,6 +221,42 @@ export class Runtime {
       callback(at);
     }
     this.#record(performance.now() - begin);
+  }
+
+  /** Open views move the orb (docked, or beside the panels) and the captions with it. */
+  #placeForViews(at: number): void {
+    const place = this.#captionPlace;
+    place.shift = 0;
+    place.width = this.tokens.captionWidth;
+    for (const entry of this.scene.views.entries.value) {
+      if (!viewVisible(entry, at, this.viewDurations)) {
+        continue;
+      }
+      const motion = viewMotion(entry, at, this.viewDurations);
+      placeForView(
+        orbSpot(entry.view.kind, this.#stage, this.tokens),
+        motion.enter * (1 - motion.exit),
+        this.#stage,
+        this.#anchors.dock,
+        this.tokens,
+        this.#placement,
+        place,
+      );
+    }
+    const key = `${Math.round(place.shift * 10) / 10}|${Math.round(place.width)}`;
+    if (key !== this.#lastCaptionPlace && this.#stageElement !== null) {
+      this.#lastCaptionPlace = key;
+      this.#stageElement.style.setProperty(
+        "--view-caption-shift",
+        `${Math.round(place.shift * 10) / 10}px`,
+      );
+      this.#stageElement.style.setProperty("--view-caption-width", `${Math.round(place.width)}px`);
+    }
+  }
+
+  /** How many letters a caption line may hold now (an open panel leaves the captions less room). */
+  get captionLetters(): number {
+    return captionLetters(this.#captionPlace.width, this.tokens);
   }
 
   /** The orb's live parameters for this frame (the mic ring follows the voice level). */

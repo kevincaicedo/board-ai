@@ -6,7 +6,7 @@ import { FakeTransport } from "./fake.ts";
 import { chaptersOf, parseReplayLog, REPLAY_TAIL_MS } from "./log.ts";
 import { ReplayTransport } from "./replay.ts";
 import { type TauriBridge, TauriTransport } from "./tauri.ts";
-import { type BatchSink, SessionClock } from "./transport.ts";
+import { type BatchSink, isSessionId, SessionClock } from "./transport.ts";
 
 const orb = (state: "Idle" | "Listening" | "Drawing"): UiEvent => ({
   type: "Orb",
@@ -238,4 +238,120 @@ test("the Tauri transport connects once with a channel and counts malformed batc
     { command: { type: "Pointer", target: { kind: "Element", layer: 0, id: "lb" } } },
   ]);
   assert.equal(transport.failedCommands, 1);
+});
+
+function tauri(answer: (command: string, args: Record<string, unknown>) => Promise<unknown>) {
+  const calls: [string, Record<string, unknown>][] = [];
+  let deliver: (message: unknown) => void = () => undefined;
+  const bridge: TauriBridge = {
+    invoke: (command, args) => {
+      calls.push([command, args]);
+      return answer(command, args);
+    },
+    channel: (onMessage) => {
+      deliver = onMessage;
+      return {};
+    },
+  };
+  return { calls, bridge, deliver: (message: unknown) => deliver(message) };
+}
+
+test("a new session resets the stage and the clock, after the old session's events", async () => {
+  const { bridge, deliver } = tauri(async () => undefined);
+  let pageNow = 50_000;
+  const transport = new TauriTransport(bridge, () => pageNow);
+  const sink = new RecordingSink();
+  await transport.connect(sink);
+  deliver({ at: 1_800_000, events: [orb("Listening")] });
+  assert.equal(transport.sessionTime(pageNow), 1_800_000);
+  pageNow = 51_000;
+  deliver({
+    at: 40,
+    events: [{ type: "ViewDismiss" }, { type: "SessionStart", session: "s2" }, orb("Idle")],
+  });
+  // The old session's last event went to the old stage, which was then reset.
+  assert.equal(sink.resets, 1);
+  assert.deepEqual(
+    sink.batches.map((batch) => batch.events.map((event) => event.type)),
+    [["SessionStart", "Orb"]],
+  );
+  assert.equal(transport.sessionsStarted, 1);
+  // Session time restarted: the new session's stamps set the clock, though they are smaller.
+  assert.equal(transport.sessionTime(51_000), 40);
+  pageNow = 51_100;
+  assert.equal(transport.sessionTime(pageNow), 140);
+});
+
+test("a batch without a new session never resets the stage", async () => {
+  const { bridge, deliver } = tauri(async () => undefined);
+  const transport = new TauriTransport(bridge, () => 0);
+  const sink = new RecordingSink();
+  await transport.connect(sink);
+  deliver({ at: 10, events: [orb("Idle"), { type: "ViewDismiss" }] });
+  assert.equal(sink.resets, 0);
+  assert.equal(sink.batches.length, 1);
+});
+
+test("session logs come from the shell by id; failures are counted, never thrown", async () => {
+  const { calls, bridge } = tauri(async (command, args) => {
+    if (command !== "session_log") {
+      return undefined;
+    }
+    if (args.id === "2026-10-12-160200") {
+      return "{}\n";
+    }
+    if (args.id === "2026-10-12-160201") {
+      return 42;
+    }
+    throw new Error("no such session");
+  });
+  const transport = new TauriTransport(bridge, () => 0);
+  assert.equal(await transport.sessionLog("2026-10-12-160200"), "{}\n");
+  assert.equal(await transport.sessionLog("2026-10-12-160201"), null);
+  assert.equal(await transport.sessionLog("2026-01-01-000000"), null);
+  assert.equal(await transport.sessionLog("../../etc/passwd"), null);
+  assert.equal(transport.failedSessionLogs, 3);
+  assert.deepEqual(
+    calls.map(([command, args]) => [command, args.id]),
+    [
+      ["session_log", "2026-10-12-160200"],
+      ["session_log", "2026-10-12-160201"],
+      ["session_log", "2026-01-01-000000"],
+    ],
+    "an id that isn't one never reaches the shell",
+  );
+});
+
+test("replay and fake transports load session logs by id too", async () => {
+  const asked: string[] = [];
+  const replay = new ReplayTransport(parseReplayLog(""), async (id) => {
+    asked.push(id);
+    return id === "a-1" ? "log" : null;
+  });
+  assert.equal(await replay.sessionLog("a-1"), "log");
+  assert.equal(await replay.sessionLog("b-2"), null);
+  assert.equal(await replay.sessionLog("a/../b"), null);
+  assert.deepEqual(asked, ["a-1", "b-2"]);
+  const fake = new FakeTransport();
+  fake.logs.set("s", "text");
+  assert.equal(await fake.sessionLog("s"), "text");
+  assert.equal(await fake.sessionLog("t"), null);
+});
+
+test("session ids are checked before they name a file or reach the shell", () => {
+  for (const good of ["2026-10-15-143210", "2026-10-15-143210-2", "s1", "a.b_c-d"]) {
+    assert.ok(isSessionId(good), good);
+  }
+  for (const bad of ["", "..", "a/b", "a\\b", "-x", ".hidden", "a..b", "x".repeat(97), "é"]) {
+    assert.ok(!isSessionId(bad), bad);
+  }
+});
+
+test("a reset clock takes the next stamp as it comes", () => {
+  const clock = new SessionClock();
+  clock.observe(90_000, 1000);
+  clock.reset();
+  assert.equal(clock.now(2000), 0);
+  clock.observe(10, 2000);
+  assert.equal(clock.now(2500), 510);
 });

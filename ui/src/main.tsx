@@ -4,6 +4,8 @@ import { Stage } from "./app/Stage.tsx";
 import "./styles/tokens.css";
 import "./styles/stage.css";
 import "./styles/canvas.css";
+import "./styles/views.css";
+import "./styles/panels.css";
 import { readTokens } from "./styles/tokens.ts";
 import { parseReplayLog, REPLAY_TAIL_MS, type ReplayLog } from "./transport/log.ts";
 import { ReplayTransport } from "./transport/replay.ts";

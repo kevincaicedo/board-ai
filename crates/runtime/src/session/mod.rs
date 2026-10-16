@@ -4,7 +4,8 @@
 //! Start one in three moves: make the [`SessionChannels`], hand each actor its link (speech in
 //! gets a [`SpeechInLink`], speech out a [`SpeechOutLink`]), then [`spawn`] the session with the
 //! parts. Until the speech stream lands, [`VirtualVoice`] is the speech out and typed text
-//! ([`say_typed`]) is the speech in; until the store lands, [`MemoryStore`] is the store.
+//! ([`say_typed`]) is the speech in. The store is a [`VaultSink`] over the vault, or a
+//! [`MemoryStore`] when the vault can't be used (and in the text dev loop).
 //!
 //! The runtime's obligations to the core (LLD §2.1) are met here: inputs of a cancelled talker
 //! stream never reach it, every `Synthesize` is answered, every `WakeAt` becomes a `Tick`, and
@@ -16,9 +17,11 @@ mod memory_store;
 mod orchestrator;
 mod ports;
 mod script;
+mod store_views;
 mod talker;
 mod timings;
 mod typed;
+mod vault_sink;
 mod virtual_voice;
 mod work;
 
@@ -32,15 +35,17 @@ use tokio::task::JoinHandle;
 pub use inbox::{InboxRefused, SessionChannels, SessionClosed, SpeechInLink, SpeechOutLink};
 pub use memory_store::MemoryStore;
 pub use orchestrator::SessionStats;
-pub use ports::{SpeechOut, SpeechOutError, StoreSink};
+pub use ports::{SessionClose, SessionOpened, SpeechOut, SpeechOutError, StoreRead, StoreSink};
 pub use script::{
     Cue, Observed, Progress, Script, ScriptError, ScriptLine, run_script, wait_for_answer,
 };
 pub use talker::{
-    TalkerSetupError, UnconfiguredTalker, talker_config, talker_from_settings, talker_name,
+    TalkerSetupError, UnconfiguredTalker, scribe_from_settings, talker_config,
+    talker_from_settings, talker_name,
 };
 pub use timings::estimate_timings;
 pub use typed::say_typed;
+pub use vault_sink::VaultSink;
 pub use virtual_voice::{VirtualVoice, VirtualVoiceConfig};
 
 use self::inbox::Inbox;

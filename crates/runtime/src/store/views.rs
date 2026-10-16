@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use boardai_core::protocol::UiEvent;
+use boardai_core::views::{CoverShape, DigestCard, MemoryRow, NoteRow};
 use serde::{Deserialize, Serialize};
 
 use super::ids::{ItemId, SessionId};
@@ -31,6 +32,21 @@ pub struct LibraryEntry {
     /// The board the cover art is rendered from (`sessions/<folder>/board.excalidraw`,
     /// relative to the vault), when the session drew one.
     pub cover: Option<String>,
+    /// The cover's node boxes, read from that board for the newest `LIBRARY_COVERS_MAX`
+    /// sessions; empty for the rest and when nothing was drawn.
+    pub shapes: Vec<CoverShape>,
+}
+
+/// What the memory view shows (PRODUCT §7.4), newest first, each list bounded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryView {
+    /// `memory/about-you.md`.
+    pub about_you: Vec<MemoryRow>,
+    /// `memory/facts.md`.
+    pub systems: Vec<MemoryRow>,
+    pub notes: Vec<NoteRow>,
+    /// The newest session that has a digest.
+    pub latest: Option<DigestCard>,
 }
 
 /// The Now view (PRODUCT §7.5): open tasks, a short list.
@@ -52,6 +68,10 @@ pub struct TaskView {
     pub done: bool,
     pub links: Vec<String>,
     pub session: Option<String>,
+    /// The title of the session it was captured in, when that session is indexed.
+    pub session_title: Option<String>,
+    /// That session's `YYYY-MM-DD`, UTC.
+    pub session_date: Option<String>,
 }
 
 /// What `open_session` returns to bring a past board back (PRODUCT §7.4 recall).

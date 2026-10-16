@@ -10,6 +10,7 @@
 
 mod actor;
 mod board;
+mod cover;
 mod digest;
 mod error;
 mod ids;
@@ -38,6 +39,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use digest::digest_within;
 pub use digest::{
     About, Digest, Entity, EntityKind, FallbackReason, ProposalDraft, Relation, RelationKind,
     SCRIBE_SYSTEM_PROMPT, SessionMaterial, TranscriptLine, WrittenBy, digest_with_scribe,
@@ -52,17 +54,19 @@ pub use state::SessionEnded;
 pub use time::{FakeWallClock, SystemWallClock, WallClock, WallTime};
 pub use vault::{MemoryFile, Vault, VaultPath};
 pub use views::{
-    Forgotten, ForgottenKind, Library, LibraryEntry, MemoryFileName, NowList, Remembered,
-    SessionInfo, SessionView, TaskView,
+    Forgotten, ForgottenKind, Library, LibraryEntry, MemoryFileName, MemoryView, NowList,
+    Remembered, SessionInfo, SessionView, TaskView,
 };
 
 use self::actor::{Message, ReadRequest, Reply};
+pub(crate) use self::index::UNTITLED_SESSION;
 use self::index::{open_reader, open_writer, reconcile, seed_counters};
 use self::read::Reader;
 use self::state::{SessionSlot, StoreState};
 use crate::cancel::CancelToken;
-use crate::limits::{EVENT_LOG_FLUSH_MS, STORE_INBOX_CAPACITY};
+use crate::limits::{EVENT_LOG_FLUSH_MS, SCRIBE_DIGEST_DEADLINE_MS, STORE_INBOX_CAPACITY};
 use crate::llm::LlmProvider;
+use boardai_core::views::NoteRow;
 
 /// Where the store keeps things, and its bounds. Tests shorten the bounds; the app uses
 /// [`StoreConfig::new`].
@@ -240,12 +244,34 @@ impl Store {
         board_export: Option<String>,
         cancel: CancelToken,
     ) -> Result<SessionFinished, StoreError> {
+        let deadline = Duration::from_millis(SCRIBE_DIGEST_DEADLINE_MS);
+        self.finish_session_within(t_end, scribe, board_export, deadline, cancel)
+            .await
+    }
+
+    /// [`Store::finish_session`] with a shorter scribe deadline (quitting can't wait 120 s).
+    /// Past `deadline`, or once `cancel` fires, the minimal digest is written instead.
+    pub async fn finish_session_within(
+        &self,
+        t_end: SessionTime,
+        scribe: Option<&dyn LlmProvider>,
+        board_export: Option<String>,
+        deadline: Duration,
+        cancel: CancelToken,
+    ) -> Result<SessionFinished, StoreError> {
         let material = match self.end_session(t_end).await? {
             SessionEnded::Forgotten => return Ok(SessionFinished::Forgotten),
             SessionEnded::Material(material) => material,
         };
         let digest = match scribe {
-            Some(scribe) => digest_with_scribe(scribe, &material, cancel).await,
+            Some(scribe) => {
+                tokio::select! {
+                    digest = digest_within(scribe, &material, cancel.clone(), deadline) => digest,
+                    () = cancel.cancelled() => {
+                        fallback_digest(&material, FallbackReason::Cancelled)
+                    }
+                }
+            }
             None => fallback_digest(&material, FallbackReason::NoScribe),
         };
         let written_by = digest.written_by.clone();
@@ -324,6 +350,33 @@ impl Store {
             .await
     }
 
+    /// One session as a library card, by id or by words from its title (a replay by voice).
+    pub async fn find_session(&self, query: &str) -> Result<LibraryEntry, StoreError> {
+        let query = query.to_owned();
+        self.request(|reply| Message::Read(ReadRequest::FindSession { query, reply }))
+            .await
+    }
+
+    /// What the memory view shows: kept memories, recent notes and the latest digest.
+    pub async fn memory_view(&self) -> Result<MemoryView, StoreError> {
+        self.request(|reply| Message::Read(ReadRequest::MemoryView { reply }))
+            .await
+    }
+
+    /// The newest notes, with the session each came from.
+    pub async fn recent_notes(&self) -> Result<Vec<NoteRow>, StoreError> {
+        self.request(|reply| Message::Read(ReadRequest::Notes { reply }))
+            .await
+    }
+
+    /// A session's whole `events.jsonl`, for a replay: by exact id, never by path, bounded
+    /// by `SESSION_LOG_READ_MAX_BYTES`.
+    pub async fn session_log(&self, id: &SessionId) -> Result<String, StoreError> {
+        let id = id.clone();
+        self.request(|reply| Message::Read(ReadRequest::SessionLog { id, reply }))
+            .await
+    }
+
     /// Writes the buffered log now.
     pub async fn flush(&self) -> Result<(), StoreError> {
         self.request(|reply| Message::Flush { reply }).await
@@ -358,7 +411,7 @@ fn open_blocking(config: StoreConfig, inbox_dropped: Arc<AtomicU64>) -> Result<O
     let mut ids = ids::IdCounters::default();
     seed_counters(&index, &mut ids)?;
     let reader = Reader::new(open_reader(&config.index_path)?, vault.clone());
-    let state = Box::new(StoreState {
+    let mut state = Box::new(StoreState {
         vault,
         index,
         clock: config.clock,
@@ -366,6 +419,7 @@ fn open_blocking(config: StoreConfig, inbox_dropped: Arc<AtomicU64>) -> Result<O
         slot: SessionSlot::Idle,
         inbox_dropped,
     });
+    state.recover_interrupted();
     Ok((
         state,
         reader,

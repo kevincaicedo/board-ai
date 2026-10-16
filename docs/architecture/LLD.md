@@ -244,6 +244,37 @@ The policy is a pure function from a candidate memory to an action. The table is
 
 Secret redaction runs at the store boundary, so nothing reaches disk unredacted. It matches common key formats (`sk-…`, `ghp_…`, AWS keys, PEM blocks, `password=`), and a planted-secret test proves each pattern.
 
+**What a write carries.** `Effect::Remember(MemoryWrite)` carries three things:
+- the policy's action;
+- a `subject`, `You` or `Systems`, which picks `about-you.md` or `facts.md` so the store never guesses from the words. It is the talker's `about` for stated and inferred memories, and always `You` for learning signals;
+- a `CaptureId`, the core's number for the capture.
+
+The core keeps this session's captures, newest last. It stops at 500 (`CAPTURES_PER_SESSION_MAX`, the store's bound) with a "Not stored" tool result, so the core and the store always agree on what "that" is.
+
+**Memory by voice.** Three controls, plus closing a view, are cue tables in `conversation::cues`.
+- Each is matched against the whole utterance, allowing fillers like "please" or "no".
+- The core answers them itself, in three words or fewer, with no talker request.
+- The talker hears about each in a notice with its next request.
+
+| The user says | When | Effect | BoardAI says |
+|---|---|---|---|
+| "Forget that" (`FORGET_LAST_PHRASES`) | Something was captured this session | `Forget { scope: Last }`: the newest capture is undone (a keep is a capture too) | "Forgotten." |
+| "Don't remember this session" (`FORGET_SESSION_PHRASES`) | Any time | `Forget { scope: Session }` (I10). The session is off the record: `remember` and `add_task` answer "Not stored" and send nothing | "Won't remember this." |
+| "Yes, keep it" (`KEEP_PHRASES` or a plain yes) | A proposal is waiting | `AcceptProposal { capture }` | "Kept." |
+| "Close that" (`CLOSE_VIEW_PHRASES`) | A view is open (§3.7) | `ViewDismiss` and an `Acknowledge` pulse | nothing |
+
+Two cases are left to the talker:
+- "Forget that" with nothing captured, which usually means "never mind".
+- "Forget it", "remove that" and "delete that", which are not cues: they usually mean "never mind", or a box on the board.
+
+**The proposal gate.** An inferred memory is only proposed: it waits in the session digest, and the tool result asks the talker to ask, in a few words, whether to keep it. Like the change gate (I9), only the user's next utterance decides:
+- A keep phrase or a plain yes keeps it.
+- Anything else closes the gate, and the proposal stays in the digest.
+- Words cut off by mute close it.
+- A tool result or repo text never reaches it.
+
+One yes can't answer two questions: a proposal made while a code change awaits its yes opens no gate, and `propose_change` closes an open one. The simulator's checker enforces two rules: a keep comes only after a proposal and the user's keep words, and nothing is remembered after "don't remember this session".
+
 ### 2.9 Invariants
 
 | # | Invariant | Enforced by |
@@ -268,12 +299,12 @@ Secret redaction runs at the store boundary, so nothing reaches disk unredacted.
 |---|---|---|---|
 | **Audio I/O** | CoreAudio's real-time thread | Single-producer, single-consumer rings (`rtrb`): mic in (16 kHz mono f32, 2 s), voice out (24 kHz, 4 s); atomics for samples played and the duck gain | No allocation, locks or system calls in the callback |
 | **Speech in** | two dedicated threads (VAD, Whisper) | Mic ring → orchestrator inbox | Silero VAD on 32 ms windows. Whisper decodes on its own thread, one at a time; a partial is skipped while a decode is busy. |
-| **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, then flushes the store. |
+| **Orchestrator** | tokio task (`runtime::session`) | One bounded inbox (`mpsc`, 1024) | Owns `Core`. Steps each input at the clock's session time, then applies the effects in order. Playback positions arrive on a `watch` (latest wins), never queued. Actors wait for room in the inbox; UI commands can't wait and are dropped and counted when it is full. `WakeAt` deadlines are kept in a set and the earliest becomes one `Tick`. An answer the orchestrator gives itself (a clause the voice refused becomes `SynthesisFailed`, a refused `StopVoice` becomes `VoiceStopped { last: None }`, a tool that can't run) is stepped before it waits again. Closing cancels the talker, tool and harness tasks, deadlines and the voice, ends the session (§3.6), then flushes the store. It also runs the session's life: it opens a session when it starts, rests after `SESSION_IDLE_TIMEOUT_MS` (30 min) without input, and opens a new session on the next words, with a new core and session time from zero. |
 | **Talker** | tokio task | Effects in, inputs out | One stream, tagged with a generation; `CancelTalk` drops it, and the orchestrator drops any of its inputs still in the inbox |
 | **Speech out** | tokio task + one inference thread | `SpeechOut` port; answers through a `SpeechOutLink`. Synthesizes up to 4 clauses (≤ 15 s) ahead | Fills the voice ring and reports timings. Until it lands, `VirtualVoice` stands in: estimated timings, real-time playback, the same reports |
 | **Tools** | blocking pool | | Repo reads and search, bounded (§5) |
 | **Harness** | one subprocess per task | JSON lines on stdout | Cancel: SIGINT, then kill after 3 s |
-| **Store** | tokio task, the only writer | `StoreSink` port: inputs, UI events, logs and memories (non-blocking), `recall` and `open_session`, `flush` | Event log, vault files, SQLite index. Until it lands, `MemoryStore` keeps this session's memories in memory |
+| **Store** | tokio task, the only writer | `StoreSink` port. Non-blocking: inputs, UI events and logs, `remember`, `forget`, `accept_proposal`. Async: `read` (recall, a past board, the views), `start_session`, `finish_session`, `flush` | Event log, vault files, SQLite index. `VaultSink` adapts the real `Store`. Memory changes go through one ordered queue (`STORE_WRITES_CAPACITY`, 1024) to a writer task that mirrors the core's captures: "forget that" undoes the capture the store really kept, and "yes, keep it" finds the store's proposal by the core's `CaptureId`. Reads, and a session's start and end, first wait for that queue to drain. `MemoryStore` keeps memory for the run only: the text dev loop, tests, and the app when the vault can't be used |
 | **Bridge** | tokio task (`runtime::bridge`) | `UiSink` trait (a Tauri channel now, a WebSocket later) | Batches UI events per 16 ms frame; the first step after a quiet frame goes at once. A batch is stamped with the latest step time it carries, so nothing shows before the core produced it. The orb, the thread, the camera of a layer and a caption not yet final coalesce, latest wins. A frame over 256 events sends a full batch early; drawing events are never dropped. |
 
 **Speech in** is anything holding a `SpeechInLink` (voice start, voice end, transcripts). Until the speech stream lands, typed text stands in: `say_typed` gives a line the inputs of a finished utterance, with its voiced length estimated per word, so barge-in rules apply as they would to speech.
@@ -346,10 +377,14 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 | `research { question, depth }` | Starts a harness task and returns at once with a task id. The result arrives later as an appended system message, and the core starts a turn to report it when the conversation is idle. |
 | `review { scope }` | A harness review, read-only |
 | `propose_change { instruction }` | Puts the core into `AwaitingConfirmation` (§3.5) |
-| `remember { kind, text, links }` | Passes through the memory policy |
+| `remember { kind, text, about, links }` | Passes through the memory policy (§2.8). `about` (`you` or `systems`) says who it is about and picks the memory file; an inferred memory is only proposed, and the talker asks whether to keep it |
 | `add_task { title, project, links }` | Adds a task |
 | `recall { query }` | Searches the index for memories, notes and digests |
-| `open_session { id }` | Brings back a past board |
+| `open_session { id }` | Brings back a past board (a session id or words from its title) as a view, drawn at once beside its recap (§3.7) |
+| `show_library {}` | Shows the library of past sessions (§3.7) |
+| `show_tasks { project }` | Shows the Now list: open tasks for one project, or all when `project` is omitted |
+| `show_memory {}` | Shows what BoardAI keeps about the user and their systems, and recent notes |
+| `play_session { id }` | Replays a past session like a film (a session id or words from its title) |
 
 ### 3.4 Speech
 
@@ -418,14 +453,32 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 - **Event log.**
   - One JSON record per line: `{"v":1,"t":1234,"k":…}`. Kinds: `session` (first line: id, start), `ui` (exactly `UiLogLine`, which the UI replays), `input` (`{"input":…}`, a core `Input`, for re-simulation with the same build), `record` (a core `LogRecord`), `dropped` (reason and count) and `end`.
   - Flushed every 250 ms (one `write`, no fsync) and at session end (fsynced), so a crash loses at most 250 ms. A line over 1 MiB (the UI's own limit) is replaced by a counted `dropped` marker, never cut mid-JSON. The reader streams, and skips and counts malformed, oversized and other-version lines.
-- **Sessions.** A session's id is `<date>-<time>` (UTC), kept in the log's first line and the digest's front matter, so renaming the folder after the title breaks no link. At the end the log is closed, the scribe writes the digest from the transcript (final captions), and `digest.md` and `board.excalidraw` are written. A session that ends without one (the app quit, the next session started) gets the minimal digest.
+- **Sessions.** A session's id is `<date>-<time>` (UTC), kept in the log's first line and the digest's front matter, so renaming the folder after the title breaks no link. At the end the log is closed, the scribe writes the digest from the transcript (final captions), and `digest.md` and `board.excalidraw` are written. The board is the core's export of the main layer, written when something was drawn. A session that ends without a digest (the app quit, the next session started) gets the minimal digest.
+- **A session's life.** The orchestrator drives it through the `StoreSink`.
+  - **Start.** A session starts when the app starts. `UiEvent::SessionStart` is its first event. The core starts with a context of at most `SESSION_CONTEXT_MAX_BYTES` (4 KB): the last digest's recap, and the kept memories about you and your systems. `CoreConfig.suggestion` is "Pick up {the last digest's title} where we left off?", the title cut so the line fits the core's 120 bytes; an untitled session gives none.
+  - **Idle.** After `SESSION_IDLE_TIMEOUT_MS` (30 min) with no input, while BoardAI is idle or muted, the session ends. Ticks and playback reports don't count as input. Its digest is written in the background, with the scribe's full deadline. The orchestrator then rests:
+    - Voice, typed words or push-to-talk opens a new session. If the session was muted, only an unmute does, so noise never starts one.
+    - If the last digest is still being written, its scribe is cancelled (the minimal digest is written instead), and the new session waits at most `SESSION_FINISH_CANCEL_WAIT_MS` (1 s) for it.
+  - **Nobody spoke.** A session with no final transcript leaves nothing (`forget_session`), so opening and closing the app adds nothing to the library.
+  - **Quit.** Quitting never hangs:
+    - The scribe gets `SESSION_QUIT_DIGEST_MS` (8 s); after that the minimal digest is written.
+    - Ending the session is bounded by that plus `SESSION_FINISH_WRITE_MS` (2 s).
+    - The store's shutdown is bounded by `STORE_SHUTDOWN_TIMEOUT_MS` (3 s).
+    - Whatever didn't finish gets the minimal digest at shutdown, or at the next start.
+  - **Crash.** The log is flushed every 250 ms. When the store opens, sessions the index holds without a digest get the minimal digest, titled from their first question: at most `RECOVERED_SESSIONS_MAX` (16), oldest first.
 - **Scribe.** Asks for one fixed JSON shape (title, summary, diagrams, open questions, proposed memories, entities, relations), parsed strictly with bounded lists. A provider failure, timeout (120 s), refusal or junk gives the minimal digest: a title (hint or first question), a transcript-derived summary line, and the captured items. It never creates tasks or kept memories.
-- **Memory writes.** The policy's action is carried out per kind: stated and learning memories to `about-you.md` or `facts.md` by subject, notes to `notes/`, tasks to `projects/` (`inbox` without a project), session records into the digest; `Propose` waits in the digest until `accept_proposal`. Raw audio, secrets and `Never` are refused. Each write is a capture: "forget that" undoes the last; "don't remember this session" (I10) undoes all of them, removes files the session created, deletes the session folder and its index rows, and drops the rest of the session.
+- **Memory writes.** The policy's action is carried out per kind: stated and learning memories to `about-you.md` or `facts.md` by the write's `subject` (§2.8), notes to `notes/`, tasks to `projects/` (`inbox` without a project), session records into the digest; `Propose` waits in the digest until `accept_proposal`. Raw audio, secrets and `Never` are refused. Each write is a capture: "forget that" undoes the last; "don't remember this session" (I10) undoes all of them, removes files the session created, deletes the session folder and its index rows, and drops the rest of the session.
 - **Vault writes.** Write a temporary file, fsync, rename, fsync the folder. Slugs are lowercase ASCII words, at most 60 bytes, with `-2`, `-3`… on collision. The vault path is validated at startup (absolute, a folder, not `/` or your home folder, writable), and temporary files a crash left are removed.
 - **Index.** `index.sqlite` lives in the app data folder; bundled SQLite with FTS5.
   - Tables for sessions, notes, tasks, memories, proposals, entities and relations (`mentioned_in` added for every entity of a digest), plus full-text search over notes, digests, memories, tasks and transcripts.
   - A `files` table holds each file's modification time, size and hash (FNV-1a); every row names its file, and a changed file re-indexes its unit (a session folder, a note, a project, a memory file).
   - A full rebuild is one scan of the vault. The schema is versioned in `user_version` with ordered migrations; an index from a newer build, or a damaged file, is deleted and rebuilt.
+- **Reads for the views** (§3.7), on the read connection:
+  - **Library.** Sessions, newest first. The newest `LIBRARY_COVERS_MAX` (24) get a cover: up to `COVER_SHAPES_MAX` (24) node boxes read from `board.excalidraw`.
+  - **Now list.** Each task is joined to its session's title and date, and the newest `RECENT_NOTES_MAX` (4) notes come with it.
+  - **Memory view.** The newest `MEMORY_VIEW_ITEMS_MAX` (12) memories from each file, the newest notes, and the latest digest as a card, with its notes, tasks and open questions counted.
+  - **Past sessions.** `open_session` gives the final board, at most `PAST_BOARD_OPS_MAX` (1024) ops. `find_session` resolves a replay by id or by title words.
+  - **Replays.** `session_log(id)` reads a session's `events.jsonl` by its exact id, never a path, and at most `SESSION_LOG_READ_MAX_BYTES` (32 MiB).
 - **Replay audio.** BoardAI's voice will be stored as Opus in Phase 1. Your voice is never stored; replays show your words as captions.
 
 ### 3.7 Protocol (core ↔ UI)
@@ -435,13 +488,25 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - `OpStart { layer, op, budget_ms }`, `Freeze { layer }`, `Resume { layer, budget_ms }`
   - `LayerPush { layer, title, question }`, `LayerPop { layer }`, `Camera { layer, frame, focus }`: the frame is in world units (§2.5 camera follow); `question` is the detour card's subtitle (§2.6)
   - `SurfaceShow { surface }`, `SurfaceUpdate { id, update }`, `SurfaceDismiss { id }`, `Chip { kind, text }`
-  - `Problem { spoken, detail }`, `Suggestion { text }` (the idle line under the orb; `None` clears it), `Library { … }`, `Brain { … }`
+  - `Problem { spoken, detail }`, `Suggestion { text }` (the idle line under the orb; `None` clears it)
+  - `SessionStart { session }`: always the first event of a session. The UI starts from an empty stage, and its clock follows the new session's time, which starts again from zero. The bridge never puts it in a batch with the previous session's events.
+  - `ViewShow { view, today }` and `ViewDismiss`; the view types are in `core::views`.
 - **Draw ops:** `Node { id, op, shape, label, rect, stack, fill }` with `fill` one of `Lilac`, `Sky`, `Mint`, `Blush` or none; `Edge`, `Annotate`, `Strike` (rewrites above the old label, D-032), `Trace`. Groups are drawn solid and light with the label above (D-032).
 - **Surfaces:** `Code { path, first_line, lines, highlight }`; `Compare { options, criteria, title }`, whose options are columns and criteria rows; `Recap { bullets }`. Updates: `Highlight { line }`; `Cell { row, col, mark }` with `row` indexing criteria and `col` options; `Mark { line, columns, mark }`, a pen mark on a code line, with `columns` the `[begin, end)` characters (Unicode scalar values) it covers.
-- **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `Stop` (Esc, §2.2), `OpenLibrary`, `OpenBrain`, `ReplaySeek { ms }`, `SaveSettings { … }`.
+- **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `Stop` (Esc, §2.2), `CloseView` (Esc while a view is open, §3.7 views). To come: `ReplaySeek { ms }`, `SaveSettings { … }`.
 - **Evolving it.** Variants and fields are only ever added at the end. A field added later is an `Option`, and a log line written before it (no such key) reads as `None` on both sides, so old sessions still replay.
+- **Views by voice.** One view is open at a time; a new one replaces it.
+  - **Opening.** The talker opens a view with a tool: `show_library`, `show_tasks { project? }`, `show_memory`, `open_session { id }` (a past board) or `play_session { id }` (a replay). The runtime reads the view from the store and answers with `ToolOutput::View`. The core shows it and gives the talker a short description, at most `VIEW_TALKER_ITEMS_MAX` items per list, so it can say "Three things. The TTL check is from today."
+  - **The views:**
+    - `Library`: session cards with their cover shapes.
+    - `Tasks`: the Now list and recent notes.
+    - `Memory`: about you, about your systems, notes, and the latest digest.
+    - `PastSession`: a past session's final board, layer by layer, with its recap.
+    - `Replay`: a session card; the UI loads its log.
+  - **Closing.** A view closes on "close that" (§2.8), on Esc (`CloseView`), or just before the live stage is used again (a stroke, a detour or a card). A view never hides what is being explained.
+  - **A past board is a picture.** It is drawn at once over the live board and never merged into the core's board (law 1). The talker can't draw on it; to continue, it redraws on the live board, which closes the view.
 - **Types** are defined in `core::protocol` and exported to `ui/src/protocol/generated/` by ts-rs. A stale export fails `just check`.
-- **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. The app's capabilities allow only these two commands; debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
+- **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. `invoke("session_log", { id })` returns a past session's `events.jsonl` for a replay. The id is parsed as a `SessionId` at the boundary, and the store finds the file through the index, so no path ever comes from the UI. The app's capabilities allow only these three commands; debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
 
 ### 3.8 Settings and secrets
 
@@ -487,7 +552,22 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 - **Orb.** A port of the design's orb component: five blurred gradient blobs, plus the listening dot field. Its state targets are eased exponentially from the last change, evaluated in closed form so a seek lands on the same frame. `Freeze` plays the interrupted contraction and `Acknowledge` a small pulse. It pauses when the window is hidden.
 - **Animation clock.** Every animated value is a function of session time. Live, the clock follows the session time stamped on each event batch: it jumps forward when a batch is ahead of it and never runs backwards, so strokes start where the core scheduled them. In replay, the playhead is the clock.
 - **Transport.** The Tauri transport calls `invoke("connect", { events: Channel<UiBatch> })` once, then `invoke("command", { command })` per `UiCommand`. Batches are parsed again at this boundary; malformed events are dropped and counted.
-- **Replay mode.** `?replay=<url>` plays an `events.jsonl` with no backend; `&t=<ms>` opens it paused at that time (for screenshots), `&speed=` and `&controls=0` are options. Outside Tauri with no `?replay`, the demo plays. Malformed lines are skipped and counted; a line from before a protocol field existed reads it as null. It drives UI development and side-by-side checks against the design canvas. The fixtures in `ui/public/fixtures/` are written by `ui/src/replay/` and a test fails while one is stale: `demo.events.jsonl` is the canvas's frames 1→7 (the idle suggestion, fills, the detour's question and frame 5's underline included; its camera frame is the board area at 1440×900, kept equal to the tokens by a test), and `primitives.events.jsonl` covers the remaining ops and surfaces.
+- **Replay mode.** `?replay=<url>` plays an `events.jsonl` with no backend; `&t=<ms>` opens it paused at that time (for screenshots), `&speed=` and `&controls=0` are options. Outside Tauri with no `?replay`, the demo plays. Malformed lines are skipped and counted; a line from before a protocol field existed reads it as null. It drives UI development and side-by-side checks against the design canvas. The fixtures in `ui/public/fixtures/` are written by `ui/src/replay/`, and a test fails while one is stale:
+  - `demo.events.jsonl` is the canvas's frames 1→7 (the idle suggestion, fills, the detour's question and frame 5's underline included; its camera frame is the board area at 1440×900, kept equal to the tokens by a test).
+  - `primitives.events.jsonl` covers the remaining ops and surfaces.
+  - `views.events.jsonl` walks through a session start, the library, the Now list, memory, a past board, "close that" and a replay.
+  - `sessions/<id>.events.jsonl` are the logs that library cards replay outside Tauri.
+- **Views** (`ui/src/views/`, from the frames 8 · Library, 9 · Brain, Brain · memories and notes, and the recall example):
+  - **State.** The open view lives in the session store with its enter and exit times, so it animates as a function of session time. Panels slide in from the right (56 px, a 14 px blur, 900 ms); the rest rise out of a blur.
+  - **Library.** A full-stage page on `bg-soft`, with cards:
+    - The cover draws the session's node boxes as soft pastel shapes (the D-031 tones), blurred on a porcelain gradient, and is the same every time for a given session.
+    - Play replays the session. Mute only toggles its glyph, because no voice audio is stored yet.
+    - Progress shows how far the session was replayed in this run.
+  - **Tasks and Memory.** Frosted panels on the right. The conversing orb and the captions move into the space beside them.
+  - **PastSession.** The past board is drawn at once, with no pacing, in its own layer over the softened live board. Beside it: the "From your brain" card with the recap, and a "Session replay" card.
+  - **Replay.** A full-stage overlay that plays the log from `Transport.sessionLog(id)` on its own `ReplayTransport` and scene. The live orb and captions stay on top. Its playhead is its own, not the outer session's time: the one exception to D-029.
+  - **Esc.** It first leaves a replay started from a card, then sends `CloseView` when a core view is open, and otherwise sends `Stop` (§2.2).
+  - **SessionStart.** The Tauri transport delivers the events before it, resets its clock and the scene, then delivers the rest.
 - **Tokens and fonts.** TypeScript reads its numeric tokens from `tokens.css` at boot and fails on a missing one. Geist, Geist Mono and Excalifont are bundled (latin subsets, OFL), since the CSP allows no remote fonts.
 - **Budgets.** At most 4 ms of script per frame. One SVG path per stroke and one per hachure fill.
 
@@ -529,6 +609,16 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Recall answer | 8 hits / 4 KB | runtime::store | The rest are counted as "N more" |
 | Library / Now | 500 sessions / 12 tasks | runtime::store | The rest are counted |
 | Scribe | 48 KB transcript, 64 KB answer, 120 s | runtime::store | Transcript keeps its start and end; past the others, the minimal digest |
+| Library covers | 24 sessions × 24 node boxes | runtime::store | Older cards get the plain porcelain cover; later nodes are left out of the picture |
+| Memory view / recent notes | 12 per memory file / 4 | runtime::store | Older items stay in the vault, out of the view |
+| Past board | 1,024 ops | runtime::session | The rest are counted in `ops_left_out` and not shown |
+| Replayed session log | 32 MiB | runtime::store | `session_log` refuses it with `Limit`; the UI says it can't replay it |
+| Sessions recovered at open | 16 | runtime::store | Oldest first; the rest get their minimal digest at the next open |
+| Memory writes waiting | 1,024 | runtime::session | The write is dropped and logged as an error |
+| Session context | 4 KiB | runtime::session | Later lines are left out |
+| Session idle | 30 min | runtime::session | The session ends with its digest; the next words (an unmute, if muted) start a new one |
+| Quitting | 8 s scribe + 2 s writes; store shutdown 3 s | runtime::session, app | Past the scribe's share, the minimal digest; past the rest, quitting goes on and the next start writes it |
+| Waiting for a finishing digest | 1 s | runtime::session | Its scribe is cancelled (the minimal digest) and the new session starts |
 
 The core's own limits live in `boardai_core::limits` (the rows above marked core are there too):
 
@@ -561,6 +651,8 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 | Late cue after a backchannel | 600 ms | core::conversation | Later finals are ignored |
 | `StopVoice` answer | 500 ms | core::engine | The last reported playback position defines the heard prefix |
 | Orb drawing linger | 800 ms | core::engine | The orb returns to Speaking |
+| Captures per session | 500 | core::engine | `remember` and `add_task` answer "Not stored" and send nothing, so the core and the store agree on what "that" is |
+| View items the talker reads | 8 per list (24 board labels) | core::engine | The rest are counted: "N more on screen" |
 
 ## 6. Errors
 

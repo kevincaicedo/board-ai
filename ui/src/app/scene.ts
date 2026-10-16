@@ -10,6 +10,7 @@ import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import type { BatchSink } from "../transport/transport.ts";
 import { SessionStore } from "./session.ts";
+import { ViewStore } from "./views.ts";
 
 /** Session time a popped detour layer is kept after its exit, then dropped. */
 const POPPED_LAYER_KEEP_MS = 5_000;
@@ -19,6 +20,8 @@ export class Scene implements BatchSink {
   readonly presence: Presence;
   readonly orb = new OrbDynamics();
   readonly store: SessionStore;
+  /** The view summoned by voice (library, Now list, memory, a past board, a replay). */
+  readonly views = new ViewStore();
   /** Bumped on reset, so views know to drop what they built. */
   generation = 0;
   readonly #lead: LeadDecision;
@@ -42,6 +45,7 @@ export class Scene implements BatchSink {
     this.presence.reset();
     this.orb.reset();
     this.store.reset();
+    this.views.reset();
     this.generation += 1;
   }
 
@@ -72,6 +76,15 @@ export class Scene implements BatchSink {
       case "LayerPop":
         this.board.apply(event, at, this.#lead);
         break;
+      case "ViewShow":
+        this.views.show(event.view, event.today, at);
+        break;
+      case "ViewDismiss":
+        this.views.dismiss(at);
+        break;
+      // A new session's stage is reset by the transport before this event arrives (a replay
+      // starts with it at time zero, on an empty stage already).
+      case "SessionStart":
       case "Caption":
       case "Thread":
       case "SurfaceShow":

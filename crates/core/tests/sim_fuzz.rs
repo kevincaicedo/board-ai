@@ -76,6 +76,16 @@ const QUESTIONS: &[&str] = &[
     "and then what happens",
     "so the leader and",
     "remember that we use Kafka",
+    "show me my sessions",
+];
+
+/// Memory controls and view closing, which the core answers itself.
+const CONTROLS: &[&str] = &[
+    "forget that",
+    "don't remember this session",
+    "yes, keep it",
+    "keep it",
+    "close that",
 ];
 
 const CUES: &[&str] = &[
@@ -106,7 +116,12 @@ fn reply(rng: &mut Rng) -> ScriptedReply {
             )
         }
         2 | 8 => reply = reply.calls("propose_change", r#"{"instruction":"add jitter"}"#),
-        3 => reply = reply.calls("remember", r#"{"kind":"stated","text":"we use Kafka"}"#),
+        3 => {
+            reply = reply.calls(
+                "remember",
+                r#"{"kind":"stated","text":"we use Kafka","about":"systems"}"#,
+            );
+        }
         4 => reply = reply.calls("read_file", r#"{"path":""}"#),
         5 => reply = reply.stops(StopReason::Refusal),
         6 => {
@@ -218,6 +233,16 @@ const PATHS: &[(&str, Reached)] = &[
         "skipped clause",
         |effect| matches!(effect, Effect::Ui(UiEvent::Problem { detail, .. }) if detail == SYNTHESIS_FAILED_DETAIL),
     ),
+    ("forget", |effect| matches!(effect, Effect::Forget { .. })),
+    ("keep", |effect| {
+        matches!(effect, Effect::AcceptProposal { .. })
+    }),
+    ("view", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::ViewShow { .. }))
+    }),
+    ("view closed", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::ViewDismiss))
+    }),
 ];
 
 /// Clauses whose synthesis fails, about one in [`FAILED_CLAUSE_ONE_IN`], from their own generator
@@ -256,8 +281,23 @@ impl Coverage {
     }
 }
 
+/// Memory tool calls added to some replies, from their own generator so the rest of each seed's
+/// talker and user behaviour stays what it was.
+fn add_memory_calls(reply: ScriptedReply, memory: &mut Rng) -> ScriptedReply {
+    match memory.below(16) {
+        0 => reply.calls(
+            "remember",
+            r#"{"kind":"inferred","text":"likes a slower pace","about":"you"}"#,
+        ),
+        1 => reply.calls("show_library", "{}"),
+        2 => reply.calls("add_task", r#"{"title":"check the TTLs"}"#),
+        _ => reply,
+    }
+}
+
 fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    let mut memory = Rng(seed.wrapping_mul(0xbf58_476d_1ce4_e5b9) | 1);
     let mut sim = Sim::new(CoreConfig {
         mic,
         suggestion: Some("Pick up where we left off?".to_owned()),
@@ -267,13 +307,19 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     sim.talker.first_token_ms = 100 + rng.below(1_500);
     sim.harness.run_ms = 1_000 + rng.below(10_000);
     for _ in 0..40 {
-        sim.talker.push(reply(&mut rng));
+        let reply = add_memory_calls(reply(&mut rng), &mut memory);
+        sim.talker.push(reply);
     }
     fail_some_clauses(&mut sim, seed);
     let mut last_pointer_ms = 0;
     sim.user_says(0, "walk me through the request path");
     for _ in 0..30 {
-        let quiet = act(&mut sim, &mut rng, &mut last_pointer_ms);
+        let quiet = if memory.below(6) == 0 {
+            let now = sim.now().as_ms();
+            saying(&mut sim, now, memory.pick(CONTROLS))
+        } else {
+            act(&mut sim, &mut rng, &mut last_pointer_ms)
+        };
         let until = sim.now().as_ms() + quiet.max(100 + rng.below(4_000));
         sim.run_until(until);
     }
@@ -314,6 +360,10 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "change",
         "dropped",
         "skipped clause",
+        "forget",
+        "keep",
+        "view",
+        "view closed",
     ]);
 }
 

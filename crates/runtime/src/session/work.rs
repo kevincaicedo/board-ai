@@ -16,7 +16,7 @@ use futures_util::future::BoxFuture;
 use tokio::task::{Id, JoinSet};
 
 use super::inbox::Inbox;
-use super::ports::StoreSink;
+use super::ports::{StoreRead, StoreSink};
 use crate::cancel::CancelToken;
 use crate::harness::HarnessPool;
 use crate::limits::{SESSION_HARNESS_TASKS_MAX, SESSION_TOOL_TASKS_MAX};
@@ -72,17 +72,21 @@ impl Work {
                 let tools = self.tools.clone();
                 Box::pin(async move { tools.run(&call).await })
             }
-            ToolCall::Recall { query } => store.recall(query.clone()),
-            ToolCall::OpenSession { id } => store.open_session(id.clone()),
+            ToolCall::Recall { .. }
+            | ToolCall::OpenSession { .. }
+            | ToolCall::ShowLibrary
+            | ToolCall::ShowTasks { .. }
+            | ToolCall::ShowMemory
+            | ToolCall::PlaySession { .. } => match StoreRead::of(&call) {
+                Some(read) => store.read(read),
+                None => return Some(not_run_here(id)),
+            },
             // The core answers these itself and never sends them as `RunTool`.
             ToolCall::Research { .. }
             | ToolCall::Review { .. }
             | ToolCall::ProposeChange { .. }
             | ToolCall::Remember { .. }
-            | ToolCall::AddTask { .. } => {
-                let message = "this tool is not run by the runtime";
-                return Some(tool_failed(id, ToolFailure::InvalidInput, message));
-            }
+            | ToolCall::AddTask { .. } => return Some(not_run_here(id)),
         };
         let inbox = inbox.clone();
         let handle = self.tasks.spawn(async move {
@@ -156,6 +160,11 @@ impl Work {
         self.harness_running.clear();
         self.running.clear();
     }
+}
+
+fn not_run_here(id: ToolCallId) -> Input {
+    let message = "this tool is not run by the runtime";
+    tool_failed(id, ToolFailure::InvalidInput, message)
 }
 
 fn tool_failed(id: ToolCallId, kind: ToolFailure, message: &str) -> Input {

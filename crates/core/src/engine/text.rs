@@ -16,6 +16,15 @@ pub const REFUSAL_LINE: &str = "I can't help with that one.";
 /// what failed).
 pub const SYNTHESIS_FAILED_DETAIL: &str = "The voice couldn't say this part.";
 
+/// "Forget that" (PRODUCT §7.4): confirmations are three words or fewer.
+pub const FORGOTTEN_LINE: &str = "Forgotten.";
+
+/// "Yes, keep it": a proposed memory is kept.
+pub const KEPT_LINE: &str = "Kept.";
+
+/// "Don't remember this session" (I10).
+pub const OFF_THE_RECORD_LINE: &str = "Won't remember this.";
+
 /// Spoken when a turn runs out of tool rounds.
 pub const TOOL_ROUNDS_LINE: &str = "I got stuck looking things up. Let's try a narrower question.";
 
@@ -87,6 +96,7 @@ pub fn render_output(output: &ToolOutput) -> (String, bool) {
         ToolOutput::Failed { kind, message } => {
             (format!("Error ({}): {message}", failure_name(*kind)), true)
         }
+        ToolOutput::View { view, today } => (super::views::describe(view, today), false),
     }
 }
 
@@ -219,6 +229,18 @@ mod tests {
             message: "no such file".into(),
         };
         assert!(render_output(&failed).1);
+    }
+
+    /// PRODUCT §7.4: BoardAI confirms memory controls in three words or fewer.
+    #[test]
+    fn memory_confirmations_are_three_words_or_fewer() {
+        for line in [
+            super::FORGOTTEN_LINE,
+            super::KEPT_LINE,
+            super::OFF_THE_RECORD_LINE,
+        ] {
+            assert!(line.split_whitespace().count() <= 3, "{line}");
+        }
     }
 
     #[test]

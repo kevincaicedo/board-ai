@@ -13,9 +13,9 @@ use std::time::Duration;
 
 use boardai_core::geometry::Rect;
 use boardai_core::history::{Conversation, Message, UserPart};
-use boardai_core::ids::{ElementId, LayerId, OpId};
+use boardai_core::ids::{CaptureId, ElementId, LayerId, OpId};
 use boardai_core::input::StopReason;
-use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite};
+use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
 use boardai_core::protocol::{DrawOp, NodeShape, Speaker, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
@@ -118,6 +118,7 @@ pub fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
+/// A write about your systems (the core sends who a memory is about; see [`about_you`]).
 pub fn write(kind: MemoryKind, action: MemoryAction, text: &str) -> MemoryWrite {
     MemoryWrite {
         kind,
@@ -125,6 +126,16 @@ pub fn write(kind: MemoryKind, action: MemoryAction, text: &str) -> MemoryWrite 
         text: text.to_owned(),
         links: Vec::new(),
         project: None,
+        subject: Subject::Systems,
+        capture: CaptureId(0),
+    }
+}
+
+/// A write about you.
+pub fn about_you(kind: MemoryKind, action: MemoryAction, text: &str) -> MemoryWrite {
+    MemoryWrite {
+        subject: Subject::You,
+        ..write(kind, action, text)
     }
 }
 
@@ -135,6 +146,8 @@ pub fn task(text: &str, project: Option<&str>, links: &[&str]) -> MemoryWrite {
         text: text.to_owned(),
         links: links.iter().map(|link| (*link).to_owned()).collect(),
         project: project.map(str::to_owned),
+        subject: Subject::You,
+        capture: CaptureId(0),
     }
 }
 
@@ -261,10 +274,23 @@ pub fn good_answer(title: &str) -> String {
     .to_string()
 }
 
-/// Remembers and expects it kept.
+/// Remembers something about your systems and expects it kept.
 pub async fn keep(store: &Store, kind: MemoryKind, action: MemoryAction, text: &str) -> Remembered {
     store
         .remember(write(kind, action, text))
+        .await
+        .expect("remembered")
+}
+
+/// Remembers something about you and expects it kept.
+pub async fn keep_you(
+    store: &Store,
+    kind: MemoryKind,
+    action: MemoryAction,
+    text: &str,
+) -> Remembered {
+    store
+        .remember(about_you(kind, action, text))
         .await
         .expect("remembered")
 }

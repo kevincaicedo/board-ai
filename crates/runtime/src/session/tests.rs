@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use boardai_core::effect::{Gain, LogRecord, Milestone};
+use boardai_core::effect::{ForgetScope, Gain, LogRecord, Milestone};
 use boardai_core::history::{Conversation, ProviderFamily, RawAssistant};
-use boardai_core::ids::ClauseId;
+use boardai_core::ids::{CaptureId, ClauseId};
 use boardai_core::input::{Input, StopReason};
 use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::{OrbState, UiBatch, UiEvent};
@@ -18,7 +18,7 @@ use boardai_core::{CoreConfig, MicMode};
 use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, stream};
 
-use super::ports::{SpeechOut, SpeechOutError, StoreSink};
+use super::ports::{SessionClose, SessionOpened, SpeechOut, SpeechOutError, StoreRead, StoreSink};
 use super::{
     MemoryStore, SessionChannels, SessionHandle, SessionParts, SessionStats, VirtualVoice,
     VirtualVoiceConfig, spawn,
@@ -140,6 +140,8 @@ struct Recorder {
     marks: Mutex<Vec<Milestone>>,
     flushed: Mutex<bool>,
     memory: MemoryStore,
+    /// Sessions opened, and how each one ended (`discard` or `digest`), in order.
+    lifecycle: Mutex<Vec<&'static str>>,
 }
 
 impl Recorder {
@@ -163,6 +165,19 @@ impl Recorder {
         self.marks
             .lock()
             .map(|marks| marks.clone())
+            .unwrap_or_default()
+    }
+
+    fn note(&self, what: &'static str) {
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.push(what);
+        }
+    }
+
+    fn lifecycle(&self) -> Vec<&'static str> {
+        self.lifecycle
+            .lock()
+            .map(|lifecycle| lifecycle.clone())
             .unwrap_or_default()
     }
 
@@ -205,12 +220,33 @@ impl StoreSink for Recorder {
         self.memory.remember(at, memory);
     }
 
-    fn recall(&self, query: String) -> BoxFuture<'static, ToolOutput> {
-        self.memory.recall(query)
+    fn forget(&self, at: SessionTime, scope: ForgetScope) {
+        self.memory.forget(at, scope);
     }
 
-    fn open_session(&self, id: String) -> BoxFuture<'static, ToolOutput> {
-        self.memory.open_session(id)
+    fn accept_proposal(&self, at: SessionTime, capture: CaptureId) {
+        self.memory.accept_proposal(at, capture);
+    }
+
+    fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+        self.memory.read(read)
+    }
+
+    fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        self.note("start");
+        Box::pin(std::future::ready(SessionOpened {
+            session: Some("2026-10-15-143210".to_owned()),
+            context: Some("Where you left off: Raft.".to_owned()),
+            suggestion: Some("Pick up Raft where we left off?".to_owned()),
+        }))
+    }
+
+    fn finish_session(&self, close: SessionClose) -> BoxFuture<'static, ()> {
+        self.note(match close {
+            SessionClose::Discard => "discard",
+            SessionClose::Digest { .. } => "digest",
+        });
+        Box::pin(std::future::ready(()))
     }
 
     fn flush(&self) -> BoxFuture<'static, ()> {
@@ -307,3 +343,4 @@ async fn close(harness: Harness) -> (SessionStats, Arc<Recorder>, Arc<ScriptedTa
 }
 
 mod flow;
+mod lifecycle;

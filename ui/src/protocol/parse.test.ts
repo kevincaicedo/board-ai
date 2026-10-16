@@ -1,7 +1,70 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { UiEvent } from "./generated/UiEvent.ts";
-import { parseLogLine, parseUiBatch, parseUiEvent } from "./parse.ts";
+import type { View } from "./generated/View.ts";
+import { parseLogLine, parseUiBatch, parseUiEvent, parseView } from "./parse.ts";
+
+const CARD = {
+  id: "2026-10-12-160200",
+  title: "Raft · log compaction",
+  date: "2026-10-12",
+  duration_ms: 1_860_000,
+  cover: [{ rect: { x: 0, y: 0, w: 150, h: 64 }, shape: "Service" }],
+} as const;
+
+/** One well-formed example of every view, as the Rust side serializes them. */
+const EVERY_VIEW: View[] = [
+  { kind: "Library", sessions: [{ ...CARD, cover: [...CARD.cover] }], more_sessions: 3 },
+  {
+    kind: "Tasks",
+    project: "Harness",
+    tasks: [
+      {
+        id: "t27",
+        title: "Check Redis TTLs",
+        project: "Harness",
+        from: { id: "2026-10-15-091200", title: "Request path", date: "2026-10-15" },
+      },
+      { id: "projects/inbox.md#4", title: "Hand-written", project: "Inbox", from: null },
+    ],
+    more_tasks: 0,
+    notes: [{ id: "n3", text: "Cache-aside.", date: "", from: null, links: ["service.go:43"] }],
+  },
+  { kind: "Tasks", project: null, tasks: [], more_tasks: 0, notes: [] },
+  {
+    kind: "Memory",
+    about_you: [{ id: "m1", text: "Diagrams before code" }],
+    systems: [{ id: "m2", text: "We use Kafka" }],
+    notes: [],
+    latest: { session: { ...CARD, cover: [] }, notes: 2, tasks: 1, open_questions: 0 },
+  },
+  { kind: "Memory", about_you: [], systems: [], notes: [], latest: null },
+  {
+    kind: "PastSession",
+    session: { ...CARD, cover: [] },
+    recap: "",
+    layers: [
+      {
+        title: null,
+        ops: [
+          {
+            kind: "Node",
+            id: "leader",
+            op: 1,
+            shape: "Service",
+            label: "leader",
+            rect: { x: 120, y: 250, w: 150, h: 64 },
+            stack: 1,
+            fill: null,
+          },
+        ],
+      },
+      { title: "cache-aside", ops: [] },
+    ],
+    ops_left_out: 2,
+  },
+  { kind: "Replay", session: { ...CARD, cover: [] } },
+];
 
 /** One well-formed example of every event, as the Rust side serializes them. */
 const EVERY_EVENT: UiEvent[] = [
@@ -126,6 +189,10 @@ const EVERY_EVENT: UiEvent[] = [
   { type: "Problem", spoken: "I lost the connection.", detail: "timeout" },
   { type: "Suggestion", text: "Pick up Raft log compaction where we left off?" },
   { type: "Suggestion", text: null },
+  { type: "SessionStart", session: "2026-10-15-143210" },
+  { type: "SessionStart", session: null },
+  ...EVERY_VIEW.map((view): UiEvent => ({ type: "ViewShow", view, today: "2026-10-15" })),
+  { type: "ViewDismiss" },
 ];
 
 test("every protocol event round-trips through the parser unchanged", () => {
@@ -161,6 +228,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         label: "x",
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
+        fill: null,
       },
     },
     {
@@ -175,6 +243,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         label: "x",
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
+        fill: null,
       },
     },
     {
@@ -189,6 +258,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         label: "x",
         rect: { x: 0, y: 0, w: 1, h: 1 },
         stack: 1,
+        fill: null,
       },
     },
     {
@@ -203,6 +273,7 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
         label: "x",
         rect: { x: 0, y: 0, w: -1, h: 1 },
         stack: 1,
+        fill: null,
       },
     },
     {
@@ -277,6 +348,7 @@ test("protocol v1 logs still replay: v2's optional fields read a missing key as 
       label: "LB",
       rect: { x: 0, y: 0, w: 160, h: 64 },
       stack: 1,
+      fill: null,
     },
   });
   assert.ok(node?.type === "OpStart" && node.op.kind === "Node" && node.op.fill === null);
@@ -327,4 +399,82 @@ test("log lines: UI lines parse, input lines are set aside, bad lines say why", 
     "missing kind",
     "unknown or malformed event",
   ]);
+});
+
+test("every view round-trips through the parser unchanged", () => {
+  for (const view of EVERY_VIEW) {
+    assert.deepEqual(parseView(JSON.parse(JSON.stringify(view))), view, view.kind);
+  }
+});
+
+test("malformed views and session events are rejected, never thrown", () => {
+  const show = (view: unknown, today: unknown = "2026-10-15"): unknown => ({
+    type: "ViewShow",
+    view,
+    today,
+  });
+  const card = { ...CARD, cover: [] };
+  const bad: unknown[] = [
+    { type: "SessionStart" },
+    { type: "SessionStart", session: "" },
+    { type: "SessionStart", session: 7 },
+    show({ kind: "Library", sessions: [], more_sessions: 0 }, ""),
+    show({ kind: "Library", sessions: [], more_sessions: 0 }, "15/10/2026"),
+    { type: "ViewShow", view: { kind: "Library", sessions: [], more_sessions: 0 } },
+    show({ kind: "Gallery" }),
+    show({ kind: "Library", sessions: [{ ...card, id: "" }], more_sessions: 0 }),
+    show({ kind: "Library", sessions: [{ ...card, date: "Oct 12" }], more_sessions: 0 }),
+    show({ kind: "Library", sessions: [{ ...card, duration_ms: -1 }], more_sessions: 0 }),
+    show({
+      kind: "Library",
+      sessions: [{ ...card, cover: [{ rect: { x: 0, y: 0, w: 1, h: 1 }, shape: "Blob" }] }],
+      more_sessions: 0,
+    }),
+    show({ kind: "Library", sessions: [card] }),
+    show({ kind: "Tasks", project: 3, tasks: [], more_tasks: 0, notes: [] }),
+    show({
+      kind: "Tasks",
+      project: null,
+      tasks: [{ id: "t1", title: "x", project: "p" }],
+      more_tasks: 0,
+      notes: [],
+    }),
+    show({
+      kind: "Tasks",
+      project: null,
+      tasks: [],
+      more_tasks: 0,
+      notes: [{ id: "n1", text: "x", date: "", from: null, links: [1] }],
+    }),
+    show({
+      kind: "Memory",
+      about_you: [{ id: "", text: "x" }],
+      systems: [],
+      notes: [],
+      latest: null,
+    }),
+    show({ kind: "Memory", about_you: [], systems: [], notes: [] }),
+    show({
+      kind: "Memory",
+      about_you: [],
+      systems: [],
+      notes: [],
+      latest: { session: card, notes: 1, tasks: 1 },
+    }),
+    show({ kind: "PastSession", session: card, recap: "", layers: [{ ops: [] }], ops_left_out: 0 }),
+    show({
+      kind: "PastSession",
+      session: card,
+      recap: "",
+      layers: [{ title: null, ops: [{ kind: "Node", id: "a b" }] }],
+      ops_left_out: 0,
+    }),
+    show({ kind: "Replay" }),
+    show({ kind: "Replay", session: { ...card, title: 9 } }),
+  ];
+  for (const value of bad) {
+    assert.equal(parseUiEvent(value), null, JSON.stringify(value));
+  }
+  assert.equal(parseView(null), null);
+  assert.equal(parseView({ kind: "__proto__" }), null);
 });

@@ -1,0 +1,132 @@
+{"v":1,"t":0,"k":"ui","event":{"type":"SessionStart","session":"2026-10-15-143210"}}
+{"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":1200,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":1300,"k":"ui","event":{"type":"Caption","who":"User","text":"Show","is_final":false}}
+{"v":1,"t":1532,"k":"ui","event":{"type":"Caption","who":"User","text":"Show me","is_final":false}}
+{"v":1,"t":1698,"k":"ui","event":{"type":"Caption","who":"User","text":"Show me my","is_final":false}}
+{"v":1,"t":1864,"k":"ui","event":{"type":"Caption","who":"User","text":"Show me my sessions.","is_final":false}}
+{"v":1,"t":2488,"k":"ui","event":{"type":"Caption","who":"User","text":"Show me my sessions.","is_final":true}}
+{"v":1,"t":2688,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":3288,"k":"ui","event":{"type":"ViewShow","view":{"kind":"Library","sessions":[{"id":"2026-10-14-091500","title":"Request path · API","date":"2026-10-14","duration_ms":1080000,"cover":[{"rect":{"x":80,"y":292,"w":42,"h":86},"shape":"Actor"},{"rect":{"x":240,"y":296,"w":132,"h":76},"shape":"Service"},{"rect":{"x":480,"y":296,"w":150,"h":76},"shape":"Service"},{"rect":{"x":720,"y":296,"w":132,"h":76},"shape":"Service"},{"rect":{"x":960,"y":280,"w":112,"h":108},"shape":"Db"},{"rect":{"x":960,"y":460,"w":112,"h":108},"shape":"Db"}]},{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12","duration_ms":1860000,"cover":[{"rect":{"x":120,"y":250,"w":150,"h":64},"shape":"Service"},{"rect":{"x":120,"y":400,"w":480,"h":56},"shape":"Queue"},{"rect":{"x":140,"y":560,"w":260,"h":58},"shape":"Service"},{"rect":{"x":600,"y":560,"w":150,"h":58},"shape":"Service"}]},{"id":"2026-10-09-110000","title":"Linux VFS","date":"2026-10-09","duration_ms":1440000,"cover":[{"rect":{"x":260,"y":120,"w":640,"h":130},"shape":"Service"},{"rect":{"x":260,"y":360,"w":640,"h":130},"shape":"Service"},{"rect":{"x":260,"y":600,"w":640,"h":130},"shape":"Service"}]}],"more_sessions":0},"today":"2026-10-15"}}
+{"v":1,"t":3388,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":3388,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here","is_final":false}}
+{"v":1,"t":3620,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are","is_final":false}}
+{"v":1,"t":3819,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your","is_final":false}}
+{"v":1,"t":4051,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last","is_final":false}}
+{"v":1,"t":4283,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three.","is_final":false}}
+{"v":1,"t":4808,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft","is_final":false}}
+{"v":1,"t":5040,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is","is_final":false}}
+{"v":1,"t":5206,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is where","is_final":false}}
+{"v":1,"t":5471,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is where you","is_final":false}}
+{"v":1,"t":5670,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is where you left","is_final":false}}
+{"v":1,"t":5902,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is where you left off.","is_final":false}}
+{"v":1,"t":6361,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Here are your last three. Raft is where you left off.","is_final":true}}
+{"v":1,"t":6711,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":9500,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":9600,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s","is_final":false}}
+{"v":1,"t":9865,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on","is_final":false}}
+{"v":1,"t":10031,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my","is_final":false}}
+{"v":1,"t":10197,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my plate","is_final":false}}
+{"v":1,"t":10462,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my plate for","is_final":false}}
+{"v":1,"t":10661,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my plate for the","is_final":false}}
+{"v":1,"t":10860,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my plate for the harness?","is_final":false}}
+{"v":1,"t":11451,"k":"ui","event":{"type":"Caption","who":"User","text":"What’s on my plate for the harness?","is_final":true}}
+{"v":1,"t":11651,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":12251,"k":"ui","event":{"type":"ViewShow","view":{"kind":"Tasks","project":"Harness","tasks":[{"id":"t27","title":"Check Redis TTLs","project":"Harness","from":{"id":"2026-10-15-091200","title":"Request path · API","date":"2026-10-15"}},{"id":"t28","title":"Read Raft §5.3","project":"Harness","from":{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12"}},{"id":"t24","title":"Spike Tauri audio","project":"Harness","from":null}],"more_tasks":0,"notes":[{"id":"n31","text":"Cache-aside: Redis first, Postgres on a miss, then write back with a 10-minute TTL.","date":"2026-10-15","from":{"id":"2026-10-15-091200","title":"Request path · API","date":"2026-10-15"},"links":["service.go:43"]},{"id":"n22","text":"A snapshot replaces the log up to lastIncludedIndex.","date":"2026-10-12","from":{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12"},"links":[]},{"id":"n17","text":"The dentry cache maps path components to inodes.","date":"2026-10-09","from":{"id":"2026-10-09-110000","title":"Linux VFS","date":"2026-10-09"},"links":[]}]},"today":"2026-10-15"}}
+{"v":1,"t":12351,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":12351,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three","is_final":false}}
+{"v":1,"t":12616,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things.","is_final":false}}
+{"v":1,"t":13174,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The","is_final":false}}
+{"v":1,"t":13373,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL","is_final":false}}
+{"v":1,"t":13572,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL check","is_final":false}}
+{"v":1,"t":13837,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL check is","is_final":false}}
+{"v":1,"t":14003,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL check is from","is_final":false}}
+{"v":1,"t":14235,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL check is from today.","is_final":false}}
+{"v":1,"t":14760,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Three things. The TTL check is from today.","is_final":true}}
+{"v":1,"t":15110,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":17500,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":17600,"k":"ui","event":{"type":"Caption","who":"User","text":"What","is_final":false}}
+{"v":1,"t":17832,"k":"ui","event":{"type":"Caption","who":"User","text":"What do","is_final":false}}
+{"v":1,"t":17998,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you","is_final":false}}
+{"v":1,"t":18197,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember","is_final":false}}
+{"v":1,"t":18561,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember about","is_final":false}}
+{"v":1,"t":18826,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember about how","is_final":false}}
+{"v":1,"t":19025,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember about how I","is_final":false}}
+{"v":1,"t":19158,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember about how I learn?","is_final":false}}
+{"v":1,"t":19683,"k":"ui","event":{"type":"Caption","who":"User","text":"What do you remember about how I learn?","is_final":true}}
+{"v":1,"t":19883,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":20483,"k":"ui","event":{"type":"ViewShow","view":{"kind":"Memory","about_you":[{"id":"m3","text":"Diagrams before code"},{"id":"m4","text":"Examples in Go"},{"id":"m9","text":"Unhurried, check in at boundaries"}],"systems":[{"id":"m11","text":"Claude asks; the harness runs tools"},{"id":"m12","text":"We use Kafka for the event bus"}],"notes":[{"id":"n31","text":"Cache-aside: Redis first, Postgres on a miss, then write back with a 10-minute TTL.","date":"2026-10-14","from":{"id":"2026-10-14-091500","title":"Request path · API","date":"2026-10-14"},"links":["service.go:43"]},{"id":"n32","text":"Flash erases whole blocks, so new data goes to a fresh page and GC cleans up.","date":"2026-10-15","from":{"id":"2026-10-15-120500","title":"SSD flash","date":"2026-10-15"},"links":[]},{"id":"n22","text":"A snapshot replaces the log up to lastIncludedIndex.","date":"2026-10-12","from":{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12"},"links":["Raft §7"]},{"id":"n17","text":"The dentry cache maps path components to inodes.","date":"2026-10-09","from":{"id":"2026-10-09-110000","title":"Linux VFS","date":"2026-10-09"},"links":["fs/dcache.c"]}],"latest":{"session":{"id":"2026-10-15-091200","title":"Request path · API","date":"2026-10-15","duration_ms":1320000,"cover":[{"rect":{"x":240,"y":296,"w":132,"h":76},"shape":"Service"},{"rect":{"x":480,"y":296,"w":150,"h":76},"shape":"Service"},{"rect":{"x":720,"y":296,"w":132,"h":76},"shape":"Service"},{"rect":{"x":960,"y":280,"w":112,"h":108},"shape":"Db"}]},"notes":2,"tasks":1,"open_questions":1}},"today":"2026-10-15"}}
+{"v":1,"t":20583,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":20583,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams","is_final":false}}
+{"v":1,"t":20947,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first,","is_final":false}}
+{"v":1,"t":21362,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples","is_final":false}}
+{"v":1,"t":21726,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in","is_final":false}}
+{"v":1,"t":21892,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go,","is_final":false}}
+{"v":1,"t":22208,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go, and","is_final":false}}
+{"v":1,"t":22407,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go, and an","is_final":false}}
+{"v":1,"t":22573,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go, and an unhurried","is_final":false}}
+{"v":1,"t":22970,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go, and an unhurried pace.","is_final":false}}
+{"v":1,"t":23462,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Diagrams first, examples in Go, and an unhurried pace.","is_final":true}}
+{"v":1,"t":23812,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":26500,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":26600,"k":"ui","event":{"type":"Caption","who":"User","text":"What","is_final":false}}
+{"v":1,"t":26832,"k":"ui","event":{"type":"Caption","who":"User","text":"What did","is_final":false}}
+{"v":1,"t":27031,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we","is_final":false}}
+{"v":1,"t":27197,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we say","is_final":false}}
+{"v":1,"t":27396,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we say about","is_final":false}}
+{"v":1,"t":27661,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we say about Raft","is_final":false}}
+{"v":1,"t":27893,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we say about Raft snapshots?","is_final":false}}
+{"v":1,"t":28550,"k":"ui","event":{"type":"Caption","who":"User","text":"What did we say about Raft snapshots?","is_final":true}}
+{"v":1,"t":28750,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":29350,"k":"ui","event":{"type":"ViewShow","view":{"kind":"PastSession","session":{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12","duration_ms":1860000,"cover":[]},"recap":"A snapshot replaces the log up to lastIncludedIndex. A follower that falls too far behind gets the snapshot instead of old entries.","layers":[{"title":null,"ops":[{"kind":"Node","id":"leader","op":1,"shape":"Service","label":"leader","rect":{"x":120,"y":250,"w":150,"h":64},"stack":1,"fill":null},{"kind":"Node","id":"log","op":2,"shape":"Queue","label":"log","rect":{"x":120,"y":400,"w":480,"h":56},"stack":1,"fill":null},{"kind":"Annotate","id":"snapshot-mark","op":3,"target":"log","mark":"Underline","rect":{"x":120,"y":400,"w":296,"h":56},"text":"snapshot"},{"kind":"Edge","id":"log>snap","op":4,"from":"log","to":"snap","path":{"start":{"x":268,"y":498},"control":null,"end":{"x":268,"y":552}},"label":null,"style":"Solid"},{"kind":"Node","id":"snap","op":5,"shape":"Service","label":"lastIncludedIndex 5","rect":{"x":140,"y":560,"w":260,"h":58},"stack":1,"fill":null},{"kind":"Node","id":"follower","op":6,"shape":"Service","label":"follower","rect":{"x":600,"y":560,"w":150,"h":58},"stack":1,"fill":null},{"kind":"Edge","id":"snap>follower","op":7,"from":"snap","to":"follower","path":{"start":{"x":408,"y":589},"control":null,"end":{"x":590,"y":589}},"label":"InstallSnapshot","style":"Solid"}]}],"ops_left_out":0},"today":"2026-10-15"}}
+{"v":1,"t":29450,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":29450,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On","is_final":false}}
+{"v":1,"t":29616,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October","is_final":false}}
+{"v":1,"t":29947,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October 12.","is_final":false}}
+{"v":1,"t":30373,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October 12. Here’s","is_final":false}}
+{"v":1,"t":30638,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October 12. Here’s the","is_final":false}}
+{"v":1,"t":30837,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October 12. Here’s the board.","is_final":false}}
+{"v":1,"t":31362,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"On October 12. Here’s the board.","is_final":true}}
+{"v":1,"t":31512,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A","is_final":false}}
+{"v":1,"t":31645,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot","is_final":false}}
+{"v":1,"t":32009,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces","is_final":false}}
+{"v":1,"t":32373,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the","is_final":false}}
+{"v":1,"t":32572,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log","is_final":false}}
+{"v":1,"t":32771,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up","is_final":false}}
+{"v":1,"t":32937,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to","is_final":false}}
+{"v":1,"t":33103,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex,","is_final":false}}
+{"v":1,"t":33914,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and","is_final":false}}
+{"v":1,"t":34113,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a","is_final":false}}
+{"v":1,"t":34246,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower","is_final":false}}
+{"v":1,"t":34610,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that","is_final":false}}
+{"v":1,"t":34842,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls","is_final":false}}
+{"v":1,"t":35107,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind","is_final":false}}
+{"v":1,"t":35405,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind gets","is_final":false}}
+{"v":1,"t":35637,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind gets the","is_final":false}}
+{"v":1,"t":35836,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind gets the snapshot","is_final":false}}
+{"v":1,"t":36200,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind gets the snapshot instead.","is_final":false}}
+{"v":1,"t":36791,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A snapshot replaces the log up to lastIncludedIndex, and a follower that falls behind gets the snapshot instead.","is_final":true}}
+{"v":1,"t":37141,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":38500,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":38600,"k":"ui","event":{"type":"Caption","who":"User","text":"Close","is_final":false}}
+{"v":1,"t":38865,"k":"ui","event":{"type":"Caption","who":"User","text":"Close that.","is_final":false}}
+{"v":1,"t":39357,"k":"ui","event":{"type":"Caption","who":"User","text":"Close that.","is_final":true}}
+{"v":1,"t":39757,"k":"ui","event":{"type":"ViewDismiss"}}
+{"v":1,"t":39757,"k":"ui","event":{"type":"Acknowledge"}}
+{"v":1,"t":39857,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":42000,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":42100,"k":"ui","event":{"type":"Caption","who":"User","text":"Play","is_final":false}}
+{"v":1,"t":42332,"k":"ui","event":{"type":"Caption","who":"User","text":"Play the","is_final":false}}
+{"v":1,"t":42531,"k":"ui","event":{"type":"Caption","who":"User","text":"Play the Raft","is_final":false}}
+{"v":1,"t":42763,"k":"ui","event":{"type":"Caption","who":"User","text":"Play the Raft one.","is_final":false}}
+{"v":1,"t":43222,"k":"ui","event":{"type":"Caption","who":"User","text":"Play the Raft one.","is_final":true}}
+{"v":1,"t":43422,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":44022,"k":"ui","event":{"type":"ViewShow","view":{"kind":"Replay","session":{"id":"2026-10-12-160200","title":"Raft · log compaction","date":"2026-10-12","duration_ms":1860000,"cover":[{"rect":{"x":120,"y":250,"w":150,"h":64},"shape":"Service"},{"rect":{"x":120,"y":400,"w":480,"h":56},"shape":"Queue"},{"rect":{"x":140,"y":560,"w":260,"h":58},"shape":"Service"},{"rect":{"x":600,"y":560,"w":150,"h":58},"shape":"Service"}]}},"today":"2026-10-15"}}
+{"v":1,"t":44122,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}
+{"v":1,"t":44122,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing","is_final":false}}
+{"v":1,"t":44453,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing it","is_final":false}}
+{"v":1,"t":44619,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing it from","is_final":false}}
+{"v":1,"t":44851,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing it from the","is_final":false}}
+{"v":1,"t":45050,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing it from the start.","is_final":false}}
+{"v":1,"t":45575,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Playing it from the start.","is_final":true}}
+{"v":1,"t":45925,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}

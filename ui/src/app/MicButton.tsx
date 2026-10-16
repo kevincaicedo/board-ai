@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef } from "preact/hooks";
 import { ramp, round1, round2 } from "../canvas/math.ts";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
 import { keyDownCommand } from "./keys.ts";
+import { escapeAction } from "./replays.ts";
 
 function editable(target: EventTarget | null): boolean {
   return (
@@ -43,15 +44,25 @@ export function MicButton() {
   useEffect(() => {
     let talking = false;
     const down = (event: KeyboardEvent): void => {
-      const command = keyDownCommand(
-        {
-          code: event.code,
-          repeat: event.repeat,
-          modified: event.metaKey || event.ctrlKey || event.altKey,
-          editable: editable(event.target),
-        },
-        { muted, replay: runtime.replay !== null },
+      const closing = escapeAction(
+        runtime.replays.local.value !== null,
+        runtime.scene.views.open !== null,
       );
+      const key = {
+        code: event.code,
+        repeat: event.repeat,
+        modified: event.metaKey || event.ctrlKey || event.altKey,
+        editable: editable(event.target),
+      };
+      const context = { muted, replay: runtime.replay !== null, escape: closing };
+      const command = keyDownCommand(key, context);
+      if (event.code === "Escape" && closing === "close-replay" && command === null) {
+        if (!key.repeat && !key.modified && !key.editable) {
+          event.preventDefault();
+          runtime.replays.close();
+        }
+        return;
+      }
       if (command === null) {
         return;
       }

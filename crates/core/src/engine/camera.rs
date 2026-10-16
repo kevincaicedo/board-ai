@@ -116,7 +116,10 @@ mod tests {
             | UiEvent::SurfaceDismiss { .. }
             | UiEvent::Chip { .. }
             | UiEvent::Problem { .. }
-            | UiEvent::Suggestion { .. } => None,
+            | UiEvent::Suggestion { .. }
+            | UiEvent::SessionStart { .. }
+            | UiEvent::ViewShow { .. }
+            | UiEvent::ViewDismiss => None,
         }
     }
 

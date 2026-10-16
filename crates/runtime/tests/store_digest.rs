@@ -212,7 +212,7 @@ async fn without_a_scribe_or_a_transcript_the_session_is_still_kept() {
     let (store, task_handle, _) = test.open().await;
     store.start_session(None).await.expect("starts");
     store
-        .remember(store_support::write(
+        .remember(store_support::about_you(
             MemoryKind::Inferred,
             MemoryAction::Propose,
             "Likes short answers",

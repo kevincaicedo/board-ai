@@ -412,9 +412,10 @@
 
 .captions {
   position: absolute;
-  left: 50%;
+  /* An open panel moves the captions with the orb into the space beside it (views.css). */
+  left: calc(50% + var(--view-caption-shift, 0px));
   top: calc(100% - var(--caption-bottom));
-  width: min(var(--caption-width), calc(100% - 64px));
+  width: min(var(--view-caption-width, var(--caption-width)), calc(100% - 64px));
   transform: translateX(-50%);
   pointer-events: none;
 }

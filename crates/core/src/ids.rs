@@ -37,6 +37,14 @@ pub struct TaskId(pub u32);
 #[ts(export)]
 pub struct SurfaceId(pub u32);
 
+/// Something the session captured (a memory, note, task or proposal), numbered by the core in
+/// the order it sent them to the store, so "yes, keep it" can name the proposal it keeps.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct CaptureId(pub u32);
+
 /// A board layer: 0 is the main board, and each open detour adds one (LLD §2.5).
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS,

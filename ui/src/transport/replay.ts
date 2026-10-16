@@ -4,9 +4,22 @@
 
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import type { Chapter, ReplayLog } from "./log.ts";
-import type { BatchSink, Transport } from "./transport.ts";
+import { type BatchSink, isSessionId, type Transport } from "./transport.ts";
 
 export const REPLAY_SPEEDS = [0.5, 1, 1.5, 2] as const;
+
+/** Loads a past session's log by id (already checked to be an id); `null` when it can't. */
+export type SessionLogLoader = (id: string) => Promise<string | null>;
+
+/** Outside Tauri, past sessions are fixtures served with the app (`npm run dev`). */
+export const fixtureSessionLog: SessionLogLoader = async (id) => {
+  try {
+    const response = await fetch(`/fixtures/sessions/${id}.events.jsonl`);
+    return response.ok ? await response.text() : null;
+  } catch {
+    return null;
+  }
+};
 export type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];
 
 export interface ReplayState {
@@ -30,8 +43,11 @@ export class ReplayTransport implements Transport {
   /** Commands have nowhere to go in a replay; they are counted for the dev overlay. */
   ignoredCommands = 0;
 
-  constructor(log: ReplayLog) {
+  readonly #sessionLogs: SessionLogLoader;
+
+  constructor(log: ReplayLog, sessionLogs: SessionLogLoader = fixtureSessionLog) {
     this.log = log;
+    this.#sessionLogs = sessionLogs;
   }
 
   async connect(sink: BatchSink): Promise<void> {
@@ -40,6 +56,10 @@ export class ReplayTransport implements Transport {
 
   send(_command: UiCommand): void {
     this.ignoredCommands += 1;
+  }
+
+  async sessionLog(id: string): Promise<string | null> {
+    return isSessionId(id) ? this.#sessionLogs(id) : null;
   }
 
   close(): void {

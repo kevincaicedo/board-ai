@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::harness::HarnessTask;
 use crate::history::Message;
-use crate::ids::{ClauseId, TaskId, ToolCallId};
+use crate::ids::{CaptureId, ClauseId, TaskId, ToolCallId};
 use crate::memory::MemoryWrite;
 use crate::protocol::UiEvent;
 use crate::time::SessionTime;
@@ -50,6 +50,27 @@ pub enum Effect {
     WakeAt {
         at: SessionTime,
     },
+    /// "Forget that" or "don't remember this session" (PRODUCT §7.4, I10). The core has
+    /// already said so out loud; the store undoes it.
+    Forget {
+        scope: ForgetScope,
+    },
+    /// "Yes, keep it": keep a memory that was only proposed. Only the user's own next words
+    /// cause this, never a tool result or repo text (the same rule as I9).
+    AcceptProposal {
+        capture: CaptureId,
+    },
+}
+
+/// What "forget" covers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForgetScope {
+    /// The last thing this session captured (the last `Remember` or `AcceptProposal` not yet
+    /// forgotten).
+    Last,
+    /// The whole session: nothing of it stays in the vault, and nothing more is written.
+    Session,
 }
 
 /// The voice's gain, from 0 (silent) to 1 (full).

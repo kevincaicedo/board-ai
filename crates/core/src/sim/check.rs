@@ -4,14 +4,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::conversation::{ConversationState, cues};
-use crate::effect::{Effect, Gain};
+use crate::effect::{Effect, ForgetScope, Gain};
 use crate::engine::Core;
 use crate::geometry::Rect;
 use crate::harness::HarnessKind;
 use crate::history::{AssistantPart, Message};
-use crate::ids::{ElementId, LayerId, OpId};
+use crate::ids::{CaptureId, ElementId, LayerId, OpId};
 use crate::input::Input;
 use crate::limits::{BARGE_IN_DECISION_MS, DETOUR_DEPTH_MAX};
+use crate::memory::{MemoryAction, MemoryWrite};
 use crate::protocol::{DrawOp, EdgePath, NodeShape, UiEvent};
 use crate::sim::speech::FakeSpeech;
 use crate::time::SessionTime;
@@ -27,8 +28,15 @@ pub struct Checker {
     started_ops: BTreeSet<OpId>,
     layer_pushes: usize,
     layer_pops: usize,
-    change_proposed: bool,
-    user_finals: String,
+    /// When a code change was proposed and not yet run.
+    change_proposed: Option<SessionTime>,
+    /// Memories proposed and not yet kept, by capture, with when they were proposed.
+    proposals: BTreeMap<CaptureId, SessionTime>,
+    /// The user said "don't remember this session".
+    off_record: bool,
+    /// The user's final words since the last talker request, with when each utterance began:
+    /// a gate is answered only by words begun after it opened (I9).
+    user_finals: Vec<(SessionTime, String)>,
     /// Where `user_finals` stood when the voice ducked: a backchannel decided after that was
     /// never an utterance (LLD §2.2), so its words are taken back out.
     ducked_at: Option<usize>,
@@ -57,7 +65,7 @@ impl Checker {
     }
 
     /// Called before the core steps with `input`.
-    pub fn on_input(&mut self, input: &Input, core: &Core) {
+    pub fn on_input(&mut self, now: SessionTime, input: &Input, core: &Core) {
         match input {
             Input::Transcript {
                 text,
@@ -65,19 +73,22 @@ impl Checker {
             } => {
                 // Only words the core was listening to count; speech while muted or ignored by
                 // push-to-talk was never an utterance.
-                let listening = matches!(
-                    core.state(),
-                    ConversationState::Listening(_) | ConversationState::Ducked(_)
-                );
-                if listening {
-                    self.user_finals.push(' ');
-                    self.user_finals.push_str(text);
+                let began = match core.state() {
+                    ConversationState::Listening(utterance) => Some(utterance.started_at()),
+                    ConversationState::Ducked(barge_in) => Some(barge_in.utterance().started_at()),
+                    ConversationState::Idle
+                    | ConversationState::Thinking
+                    | ConversationState::Speaking
+                    | ConversationState::Muted => None,
+                };
+                if let Some(began) = began {
+                    self.user_finals.push((began, text.clone()));
                 }
             }
             Input::TalkerDone { .. } => self.talk_in_flight = false,
             Input::TalkerToolCall { invocation } => {
                 if matches!(invocation.call, Ok(ToolCall::ProposeChange { .. })) {
-                    self.change_proposed = true;
+                    self.change_proposed = Some(now);
                 }
             }
             Input::VoiceStart
@@ -133,15 +144,17 @@ impl Checker {
             // I9: a change runs only after a proposal and a spoken yes.
             Effect::RunHarness { spec, .. } => {
                 if let HarnessKind::Change { .. } = spec.kind {
-                    let yes = cues::is_affirmative(&self.user_finals);
-                    if !self.change_proposed || !yes {
-                        let finals = self.user_finals.clone();
+                    let yes = self
+                        .change_proposed
+                        .is_some_and(|at| cues::is_affirmative(&self.finals_since(at)));
+                    if !yes {
+                        let finals = self.finals_since(SessionTime::ZERO);
                         self.violate(
                             now,
                             format!("I9: change ran without a yes (heard {finals:?})"),
                         );
                     }
-                    self.change_proposed = false;
+                    self.change_proposed = None;
                 }
             }
             Effect::Ui(UiEvent::Acknowledge) => {
@@ -150,13 +163,69 @@ impl Checker {
                 }
             }
             Effect::Ui(event) => self.on_ui(now, event, core, speech),
+            Effect::Remember(write) => self.on_remember(now, write),
+            Effect::AcceptProposal { capture } => self.on_accept(now, *capture),
+            Effect::Forget { scope } => {
+                if *scope == ForgetScope::Session {
+                    self.off_record = true;
+                    self.proposals.clear();
+                }
+            }
             Effect::Synthesize { .. }
             | Effect::RunTool { .. }
             | Effect::CancelHarness { .. }
             | Effect::Log(_)
-            | Effect::Remember(_)
             | Effect::WakeAt { .. } => {}
         }
+    }
+
+    /// I10 (core side): after "don't remember this session", nothing goes to the store.
+    fn on_remember(&mut self, now: SessionTime, write: &MemoryWrite) {
+        if self.off_record {
+            let text = write.text.clone();
+            self.violate(
+                now,
+                format!("I10: remembered {text:?} after going off the record"),
+            );
+        }
+        if write.action == MemoryAction::Propose {
+            self.proposals.insert(write.capture, now);
+        }
+    }
+
+    /// The proposal gate (I9's rule for memory): a proposal is kept only after the user's own
+    /// words said to keep it.
+    fn on_accept(&mut self, now: SessionTime, capture: CaptureId) {
+        if self.off_record {
+            self.violate(
+                now,
+                "I10: a proposal was kept after going off the record".into(),
+            );
+        }
+        let keep = self
+            .proposals
+            .remove(&capture)
+            .is_some_and(|at| cues::is_keep(&self.finals_since(at)));
+        if !keep {
+            let finals = self.finals_since(SessionTime::ZERO);
+            self.violate(
+                now,
+                format!(
+                    "I9: proposal {} kept without the user's keep (heard {finals:?})",
+                    capture.0
+                ),
+            );
+        }
+    }
+
+    /// The user's words since the last talker request, from utterances begun at or after `at`.
+    fn finals_since(&self, at: SessionTime) -> String {
+        self.user_finals
+            .iter()
+            .filter(|(began, _)| *began >= at)
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     fn on_ui(&mut self, now: SessionTime, event: &UiEvent, core: &Core, speech: &FakeSpeech) {
@@ -186,7 +255,10 @@ impl Checker {
             | UiEvent::SurfaceDismiss { .. }
             | UiEvent::Chip { .. }
             | UiEvent::Problem { .. }
-            | UiEvent::Suggestion { .. } => {}
+            | UiEvent::Suggestion { .. }
+            | UiEvent::SessionStart { .. }
+            | UiEvent::ViewShow { .. }
+            | UiEvent::ViewDismiss => {}
         }
     }
 

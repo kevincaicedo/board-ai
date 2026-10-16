@@ -207,6 +207,9 @@ export class SessionStore {
       case "Freeze":
       case "Resume":
       case "Camera":
+      case "SessionStart":
+      case "ViewShow":
+      case "ViewDismiss":
         break;
     }
   }

@@ -11,6 +11,7 @@ use ts_rs::TS;
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId, SurfaceId};
 use crate::time::SessionTime;
+use crate::views::View;
 
 /// Every UI event produced while handling one step, in order, stamped with the step's time.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -124,6 +125,22 @@ pub enum UiEvent {
     Suggestion {
         text: Option<String>,
     },
+    /// A new session began (the app started, or the first words after an idle timeout ended
+    /// the last one). Always the first event of a session: the UI starts from an empty stage,
+    /// and session time starts again from zero. `session` is the store's id for it; `None`
+    /// when memory is off.
+    SessionStart {
+        session: Option<String>,
+    },
+    /// Show a view summoned by voice (LLD §3.7). One view is open at a time; a new one
+    /// replaces it. `today` (`YYYY-MM-DD`, UTC) is the day it was read, so "today" labels
+    /// replay the same later.
+    ViewShow {
+        view: View,
+        today: String,
+    },
+    /// The open view goes away: by voice, by Esc, or because the board draws again.
+    ViewDismiss,
 }
 
 /// The orb states on the design canvas (frame 10a).
@@ -320,7 +337,7 @@ pub enum ChipKind {
     Source,
 }
 
-/// Commands from the UI. Pointing and the mic go to the core; the rest are runtime views.
+/// Commands from the UI. Pointing, the mic and closing a view go to the core.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type")]
 #[ts(export)]
@@ -335,6 +352,8 @@ pub enum UiCommand {
     /// Esc (PRODUCT §8.9): BoardAI stops at once, like a confirmed interruption with no words.
     /// The stroke in flight freezes, what was heard is committed, and the floor goes idle.
     Stop,
+    /// Esc: close the open view.
+    CloseView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

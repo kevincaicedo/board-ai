@@ -159,6 +159,9 @@ export function chaptersOf(batches: readonly UiBatch[]): Chapter[] {
         case "SurfaceUpdate":
         case "SurfaceDismiss":
         case "Problem":
+        case "SessionStart":
+        case "ViewShow":
+        case "ViewDismiss":
           break;
       }
     }

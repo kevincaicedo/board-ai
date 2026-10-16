@@ -72,7 +72,9 @@ impl SpeechOutCommand {
             | Effect::Ui(_)
             | Effect::Log(_)
             | Effect::Remember(_)
-            | Effect::WakeAt { .. } => None,
+            | Effect::WakeAt { .. }
+            | Effect::Forget { .. }
+            | Effect::AcceptProposal { .. } => None,
         }
     }
 }

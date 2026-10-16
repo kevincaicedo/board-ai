@@ -182,6 +182,7 @@ pub(crate) fn library(connection: &Connection) -> Result<Library, StoreError> {
             started,
             duration_ms: u64::try_from(duration_ms).unwrap_or(0),
             cover,
+            shapes: Vec::new(),
         });
     }
     let more_sessions = u64::try_from(total)
@@ -203,15 +204,19 @@ pub(crate) fn now_list(
         .and_then(slugify)
         .and_then(|slug| VaultPath::project(&slug))
         .map(|path| path.to_string());
-    let filter = "done = 0 AND (?1 IS NULL OR project = ?1 COLLATE NOCASE OR path = ?2)";
+    let filter = "tasks.done = 0 AND (?1 IS NULL OR tasks.project = ?1 COLLATE NOCASE \
+                  OR tasks.path = ?2)";
     let total: i64 = connection.query_row(
         &format!("SELECT count(*) FROM tasks WHERE {filter}"),
         params![project, project_path],
         |row| row.get(0),
     )?;
     let mut statement = connection.prepare(&format!(
-        "SELECT id, title, project, done, links, session FROM tasks WHERE {filter}
-         ORDER BY project COLLATE NOCASE, path, position LIMIT ?3"
+        "SELECT tasks.id, tasks.title, tasks.project, tasks.done, tasks.links, tasks.session,
+                sessions.title, sessions.started
+         FROM tasks LEFT JOIN sessions ON sessions.id = tasks.session
+         WHERE {filter}
+         ORDER BY tasks.project COLLATE NOCASE, tasks.path, tasks.position LIMIT ?3"
     ))?;
     let rows = statement.query_map(
         params![
@@ -227,6 +232,10 @@ pub(crate) fn now_list(
                 done: row.get(3)?,
                 links: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or_default(),
                 session: row.get(5)?,
+                session_title: row.get(6)?,
+                session_date: row
+                    .get::<_, Option<String>>(7)?
+                    .and_then(|started| started.get(..10).map(str::to_owned)),
             })
         },
     )?;

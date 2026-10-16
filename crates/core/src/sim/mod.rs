@@ -126,7 +126,9 @@ impl Sim {
             | Effect::CancelHarness { .. }
             | Effect::Log(_)
             | Effect::Remember(_)
-            | Effect::WakeAt { .. } => None,
+            | Effect::WakeAt { .. }
+            | Effect::Forget { .. }
+            | Effect::AcceptProposal { .. } => None,
         })
     }
 
@@ -250,7 +252,7 @@ impl Sim {
 
     /// Steps the core with one input and applies what it asks for.
     fn feed(&mut self, input: Input) {
-        self.checker.on_input(&input, &self.core);
+        self.checker.on_input(self.now, &input, &self.core);
         self.trace.push((self.now, Entry::Input(input.clone())));
         let mut effects = Vec::new();
         self.core.step(self.now, input, &mut effects);
@@ -306,8 +308,13 @@ impl Sim {
                 self.schedule(now.plus_ms(delay), Event::Input(input));
             }
             Effect::WakeAt { at } => self.schedule((*at).max(now), Event::Input(Input::Tick)),
-            Effect::Ui(_) | Effect::Log(_) | Effect::Remember(_) | Effect::CancelHarness { .. } => {
-            }
+            // The store's side of memory is tested in the runtime, against a real vault.
+            Effect::Ui(_)
+            | Effect::Log(_)
+            | Effect::Remember(_)
+            | Effect::CancelHarness { .. }
+            | Effect::Forget { .. }
+            | Effect::AcceptProposal { .. } => {}
         }
     }
 

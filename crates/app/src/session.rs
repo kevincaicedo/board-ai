@@ -1,13 +1,19 @@
 //! Starting and closing the conversation session on Tauri's async runtime.
 //!
 //! At startup: `settings.toml` from the app's config folder (defaults when it is absent), the
-//! talker from those settings with its key from the Keychain, the repo tools and harness for
-//! the configured code roots, the virtual voice until real speech lands, and no mic yet. A
-//! talker that can't be built still starts the session: every question then gets the spoken
-//! "No talker model is set up yet." (LLD §6).
+//! store over the vault (`~/BoardAI` by default) with its index in the app's data folder, the
+//! talker and the scribe from those settings with their keys from the Keychain, the repo tools
+//! and harness for the configured code roots, the virtual voice until real speech lands, and no
+//! mic yet. A talker that can't be built still starts the session: every question then gets
+//! the spoken "No talker model is set up yet." (LLD §6). A vault that can't be used still
+//! starts it too, with memory kept for this run only.
+//!
+//! Quitting closes the session (its digest within `SESSION_QUIT_DIGEST_MS`), then the store
+//! (within `STORE_SHUTDOWN_TIMEOUT_MS`), so quitting never hangs.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use boardai_core::{CoreConfig, MicMode};
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
@@ -15,23 +21,38 @@ use boardai_runtime::harness::{
     ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, HarnessPool, HarnessTimeouts, PiConfig,
     PiHarness, discover_from_environment,
 };
+use boardai_runtime::limits::STORE_SHUTDOWN_TIMEOUT_MS;
 use boardai_runtime::llm::LlmProvider;
 use boardai_runtime::session::{
     MemoryStore, SessionChannels, SessionHandle, SessionParts, StoreSink, UnconfiguredTalker,
-    VirtualVoice, VirtualVoiceConfig, talker_from_settings, talker_name,
+    VaultSink, VirtualVoice, VirtualVoiceConfig, scribe_from_settings, talker_from_settings,
+    talker_name,
 };
 use boardai_runtime::settings::{self, HarnessChoice, Settings};
+use boardai_runtime::store::{Store, StoreConfig, StoreTask, SystemWallClock};
 use boardai_runtime::tools::{RepoRoots, RepoTools};
 use tauri::{AppHandle, Manager};
 
 use crate::secrets::KeychainSecrets;
 use crate::sink::TauriSink;
 
-/// What the commands reach: the UI sink and, once started, the session.
+/// The index file in the app's data folder; the vault is the source of truth (D-012).
+const INDEX_FILE: &str = "index.sqlite";
+
+/// What the commands reach: the UI sink, the session once started, and the store.
 pub struct AppState {
     pub sink: Arc<TauriSink>,
     // Held only to read or swap the handle, never across an await.
     pub session: Mutex<Option<SessionHandle>>,
+    /// The store while it is open. Replays read session logs through it; quitting stops it.
+    // Held only to clone or take the handle, never across an await.
+    pub store: Mutex<Option<OpenStore>>,
+}
+
+/// The store's handle and its actor task.
+pub struct OpenStore {
+    pub store: Store,
+    task: StoreTask,
 }
 
 impl AppState {
@@ -39,6 +60,7 @@ impl AppState {
         Self {
             sink: Arc::new(TauriSink::new()),
             session: Mutex::new(None),
+            store: Mutex::new(None),
         }
     }
 }
@@ -48,9 +70,26 @@ pub fn start(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
+        let settings = load_settings(&app);
+        let opened = open_store(&app, &settings).await;
+        let store: Arc<dyn StoreSink> = match &opened {
+            Some(open) => {
+                let scribe = scribe(&settings).await;
+                Arc::new(VaultSink::new(
+                    open.store.clone(),
+                    scribe,
+                    Arc::new(SystemWallClock),
+                ))
+            }
+            None => Arc::new(MemoryStore::new()),
+        };
+        match state.store.lock() {
+            Ok(mut slot) => *slot = opened,
+            Err(_) => tracing::error!("the store slot is poisoned; replays are unavailable"),
+        }
         let channels = SessionChannels::new();
-        let (store, progress) = crate::dev::observe(MemoryStore::new());
-        let parts = parts(&app, &channels, store, Arc::clone(&state.sink)).await;
+        let (store, progress) = crate::dev::observe(store);
+        let parts = parts(&settings, &channels, store, Arc::clone(&state.sink)).await;
         let session = boardai_runtime::session::spawn(channels, parts);
         let link = session.speech_in();
         match state.session.lock() {
@@ -62,26 +101,69 @@ pub fn start(app: &AppHandle) {
     });
 }
 
-/// Closes the session (talker, tasks, timers, voice) and flushes the store.
+/// Closes the session (talker, tasks, timers, voice; its digest within the quit budget), then
+/// the store.
 pub fn close(app: &AppHandle) {
     let state = app.state::<AppState>();
     let session = state.session.lock().ok().and_then(|mut slot| slot.take());
     if let Some(session) = session {
         let stats = tauri::async_runtime::block_on(session.close());
-        tracing::info!(steps = stats.steps, "session closed");
+        tracing::info!(
+            steps = stats.steps,
+            sessions = stats.sessions,
+            "session closed"
+        );
+    }
+    let store = state.store.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(OpenStore { store, task }) = store {
+        let bound = Duration::from_millis(STORE_SHUTDOWN_TIMEOUT_MS);
+        let stopped = tauri::async_runtime::block_on(async move {
+            tokio::time::timeout(bound, async move {
+                let closed = store.shutdown().await;
+                let joined = task.join().await;
+                closed.and(joined)
+            })
+            .await
+        });
+        match stopped {
+            Ok(Ok(())) => tracing::info!("store closed"),
+            Ok(Err(error)) => tracing::warn!(%error, "the store did not close cleanly"),
+            Err(_) => tracing::warn!("the store did not close in time"),
+        }
+    }
+}
+
+/// The store over the settings' vault, with its index in the app's data folder. `None` (memory
+/// for this run only) when either can't be used; the reason is logged without quoting paths.
+async fn open_store(app: &AppHandle, settings: &Settings) -> Option<OpenStore> {
+    let index = match app.path().app_data_dir() {
+        Ok(folder) => folder.join(INDEX_FILE),
+        Err(error) => {
+            tracing::error!(%error, "no app data folder for the index; memory is off");
+            return None;
+        }
+    };
+    match Store::open(StoreConfig::new(settings.vault.clone(), index)).await {
+        Ok((store, task, opened)) => {
+            tracing::info!(index = ?opened.index, scan = ?opened.scan, "store opened");
+            Some(OpenStore { store, task })
+        }
+        Err(error) => {
+            tracing::error!(%error, "the vault can't be used; memory is kept for this run only");
+            None
+        }
     }
 }
 
 async fn parts(
-    app: &AppHandle,
+    settings: &Settings,
     channels: &SessionChannels,
     store: Arc<dyn StoreSink>,
     ui: Arc<TauriSink>,
 ) -> SessionParts {
-    let settings = load_settings(app);
-    let talker = talker(&settings).await;
+    let talker = talker(settings).await;
     let opened = repo_tools(&settings.code_roots);
-    let harness = harness(&settings, opened.folders.first());
+    let harness = harness(settings, opened.folders.first());
     let voice = VirtualVoice::spawn(channels.speech_out(), VirtualVoiceConfig::default());
     SessionParts {
         core: CoreConfig {
@@ -144,6 +226,28 @@ async fn talker(settings: &Settings) -> Arc<dyn LlmProvider> {
             Arc::new(UnconfiguredTalker::new(
                 "the talker could not be built".to_owned(),
             ))
+        }
+    }
+}
+
+/// The configured scribe; `None` gives every session the minimal digest. The Keychain read may
+/// block.
+async fn scribe(settings: &Settings) -> Option<Arc<dyn LlmProvider>> {
+    let llm = settings.scribe.clone();
+    let built = tauri::async_runtime::spawn_blocking(move || {
+        let clock = Arc::new(MonotonicClock::start());
+        scribe_from_settings(&llm, &KeychainSecrets, clock)
+    })
+    .await;
+    match built {
+        Ok(Ok(scribe)) => Some(scribe),
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "no scribe; sessions get the minimal digest");
+            None
+        }
+        Err(error) => {
+            tracing::error!(%error, "building the scribe failed");
+            None
         }
     }
 }

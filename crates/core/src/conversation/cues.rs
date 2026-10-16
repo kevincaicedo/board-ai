@@ -102,17 +102,93 @@ pub const QUESTION_LEAD_INS: &[&str] = &[
     "hey", "but",
 ];
 
+/// "Forget that" (PRODUCT §7.4): the whole utterance, so "forget that, tell me about Kafka"
+/// stays a question for the talker. Board words ("remove that", "delete that") are not here:
+/// they can mean a box on the board; nor is "forget it", which usually means "never mind".
+pub const FORGET_LAST_PHRASES: &[&str] = &[
+    "forget that",
+    "forget that one",
+    "forget the last one",
+    "forget the last thing",
+    "don't remember that",
+    "do not remember that",
+    "don't keep that",
+    "do not keep that",
+    "don't save that",
+    "do not save that",
+];
+
+/// "Don't remember this session" (PRODUCT §7.4, I10), as a whole utterance.
+pub const FORGET_SESSION_PHRASES: &[&str] = &[
+    "don't remember this session",
+    "do not remember this session",
+    "don't remember any of this",
+    "do not remember any of this",
+    "forget this session",
+    "forget this whole session",
+    "forget this entire session",
+    "don't save this session",
+    "do not save this session",
+    "don't keep this session",
+    "do not keep this session",
+    "don't record this session",
+    "do not record this session",
+    "this session is off the record",
+    "this is off the record",
+    "keep this off the record",
+    "off the record",
+];
+
+/// Keeping a proposed memory ("yes, keep it"): these, or a plain yes (`AFFIRMATIVES`).
+pub const KEEP_PHRASES: &[&str] = &[
+    "keep it",
+    "keep that",
+    "keep that one",
+    "keep this",
+    "remember it",
+    "remember that",
+    "save it",
+    "save that",
+    "please do",
+];
+
+/// Closing the open view by voice, as a whole utterance.
+pub const CLOSE_VIEW_PHRASES: &[&str] = &[
+    "close it",
+    "close that",
+    "close this",
+    "close the library",
+    "close the list",
+    "close the view",
+    "hide it",
+    "hide that",
+    "hide this",
+    "go back",
+    "back to the board",
+    "never mind",
+    "that's all",
+    "done",
+];
+
+/// Words allowed around a memory control or a close without changing it ("no, forget that").
+pub const CONTROL_FILLERS: &[&str] = &[
+    "please", "ok", "okay", "oh", "just", "actually", "hey", "no", "yes", "yeah", "now", "and",
+    "thanks", "thank", "you",
+];
+
 /// Abbreviations whose period does not end a sentence, so a clause is not cut after them.
 pub const ABBREVIATIONS: &[&str] = &[
     "e.g.", "i.e.", "etc.", "vs.", "mr.", "mrs.", "dr.", "approx.",
 ];
 
-/// Normalized words of an utterance, in order.
+/// Normalized words of an utterance, in order. A typographic apostrophe becomes `'`, as
+/// speech-to-text writes either.
 #[must_use]
 pub fn words(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|word| {
             word.trim_matches(|ch: char| !ch.is_alphanumeric())
+                .replace('’', "'")
                 .to_lowercase()
         })
         .filter(|word| !word.is_empty())
@@ -158,12 +234,18 @@ pub fn has_interruption_cue(text: &str) -> bool {
 /// True when every word belongs to a phrase of `table` or to `fillers`, and at least one phrase
 /// matched. Longer phrases are tried first so "got it" is not read as "got" + "it".
 fn made_of(text: &str, table: &[&str], fillers: &[&str]) -> bool {
+    made_of_any(text, &[table], fillers)
+}
+
+/// [`made_of`] over several tables at once.
+fn made_of_any(text: &str, tables: &[&[&str]], fillers: &[&str]) -> bool {
     let words = words(text);
     let mut index = 0;
     let mut phrases = 0;
     while index < words.len() {
-        let longest = table
+        let longest = tables
             .iter()
+            .flat_map(|table| table.iter())
             .filter_map(|phrase| phrase_at(&words, index, phrase, false))
             .max();
         if let Some(length) = longest {
@@ -238,6 +320,38 @@ fn skip_marks(text: &str) -> &str {
     text.trim_start_matches(|ch: char| !ch.is_alphanumeric())
 }
 
+/// A memory control the user said, as a whole utterance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryCue {
+    ForgetLast,
+    ForgetSession,
+}
+
+/// "Forget that" or "don't remember this session", or neither. The session phrase is tried
+/// first: it is the longer, stronger request.
+#[must_use]
+pub fn memory_cue(text: &str) -> Option<MemoryCue> {
+    if made_of(text, FORGET_SESSION_PHRASES, CONTROL_FILLERS) {
+        Some(MemoryCue::ForgetSession)
+    } else if made_of(text, FORGET_LAST_PHRASES, CONTROL_FILLERS) {
+        Some(MemoryCue::ForgetLast)
+    } else {
+        None
+    }
+}
+
+/// The proposal gate's test: "keep it", or a plain yes, and nothing else.
+#[must_use]
+pub fn is_keep(text: &str) -> bool {
+    made_of_any(text, &[KEEP_PHRASES, AFFIRMATIVES], CONTROL_FILLERS)
+}
+
+/// "Close that" while a view is open.
+#[must_use]
+pub fn is_close_view(text: &str) -> bool {
+    made_of(text, CLOSE_VIEW_PHRASES, CONTROL_FILLERS)
+}
+
 /// The utterance sounds unfinished: it ends on a continuation word or a trailing-off mark.
 #[must_use]
 pub fn ends_unfinished(text: &str) -> bool {
@@ -265,9 +379,11 @@ pub fn is_abbreviation(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AFFIRMATIVES, BACKCHANNELS, CONTINUATION_ENDINGS, CONTINUATION_WORDS, CancelTarget,
-        HARNESS_CANCELS, INTERRUPTION_CUES, QUESTION_LEAD_INS, ends_unfinished, harness_cancel,
-        has_interruption_cue, is_affirmative, is_backchannel, without_lead_in, word_count,
+        AFFIRMATIVES, BACKCHANNELS, CLOSE_VIEW_PHRASES, CONTINUATION_ENDINGS, CONTINUATION_WORDS,
+        CancelTarget, FORGET_LAST_PHRASES, FORGET_SESSION_PHRASES, HARNESS_CANCELS,
+        INTERRUPTION_CUES, KEEP_PHRASES, MemoryCue, QUESTION_LEAD_INS, ends_unfinished,
+        harness_cancel, has_interruption_cue, is_affirmative, is_backchannel, is_close_view,
+        is_keep, memory_cue, without_lead_in, word_count,
     };
 
     #[test]
@@ -367,6 +483,72 @@ mod tests {
         assert_eq!(without_lead_in("Wait."), "");
         assert_eq!(without_lead_in("Why Redis?"), "Why Redis?");
         assert_eq!(without_lead_in("Sorting is slow?"), "Sorting is slow?");
+    }
+
+    #[test]
+    fn every_memory_control_is_recognized_whole_and_only_whole() {
+        for phrase in FORGET_LAST_PHRASES {
+            assert_eq!(memory_cue(phrase), Some(MemoryCue::ForgetLast), "{phrase}");
+            let noisy = format!("No, {}, please.", phrase.to_uppercase());
+            assert_eq!(memory_cue(&noisy), Some(MemoryCue::ForgetLast), "{noisy}");
+            let more = format!("{phrase} and tell me about Kafka");
+            assert_eq!(memory_cue(&more), None, "{more}");
+        }
+        for phrase in FORGET_SESSION_PHRASES {
+            assert_eq!(
+                memory_cue(phrase),
+                Some(MemoryCue::ForgetSession),
+                "{phrase}"
+            );
+            let more = format!("{phrase} except the Redis part");
+            assert_eq!(memory_cue(&more), None, "{more}");
+        }
+        assert_eq!(
+            memory_cue("Don’t remember this session."),
+            Some(MemoryCue::ForgetSession)
+        );
+        for other in [
+            "",
+            "forget",
+            "remove that",
+            "delete that",
+            "what did we forget",
+        ] {
+            assert_eq!(memory_cue(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn keeping_takes_a_keep_phrase_or_a_plain_yes() {
+        for phrase in KEEP_PHRASES.iter().chain(AFFIRMATIVES) {
+            assert!(is_keep(phrase), "{phrase}");
+            assert!(is_keep(&format!("yes, {phrase}, thanks")), "{phrase}");
+        }
+        for other in [
+            "",
+            "no",
+            "don't keep it",
+            "keep going",
+            "yes but explain Raft",
+        ] {
+            assert!(!is_keep(other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn closing_a_view_is_a_whole_utterance() {
+        for phrase in CLOSE_VIEW_PHRASES {
+            assert!(is_close_view(phrase), "{phrase}");
+            assert!(
+                is_close_view(&format!("okay, {phrase}, thanks")),
+                "{phrase}"
+            );
+            assert!(
+                !is_close_view(&format!("{phrase} and open Raft")),
+                "{phrase}"
+            );
+        }
+        assert!(!is_close_view("close the deal with Redis"));
     }
 
     #[test]

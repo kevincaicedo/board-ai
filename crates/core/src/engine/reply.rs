@@ -22,17 +22,14 @@ use crate::history::{AssistantPart, Message, RawAssistant, UserPart};
 use crate::ids::{ClauseId, OpId, TaskId, ToolCallId};
 use crate::input::StopReason;
 use crate::limits::{
-    HARNESS_REPORTS_MAX, LABEL_MAX_BYTES, RESPONSE_TEXT_MAX_BYTES, TALKER_NOTICES_MAX,
-    TOOL_CALLS_PER_RESPONSE_MAX, TOOL_ROUNDS_PER_TURN_MAX,
+    HARNESS_REPORTS_MAX, RESPONSE_TEXT_MAX_BYTES, TALKER_NOTICES_MAX, TOOL_CALLS_PER_RESPONSE_MAX,
+    TOOL_ROUNDS_PER_TURN_MAX,
 };
-use crate::memory::{MemoryAction, MemoryKind, MemoryWrite};
-use crate::memory_policy;
 use crate::narration::speakable::Speakable;
-use crate::narration::tags::bounded;
 use crate::narration::{ClauseOrigin, NarrationOutput, NarrationStream, StreamAnchor};
 use crate::protocol::{ChipKind, UiEvent};
 use crate::time::SessionTime;
-use crate::tools::{RememberKind, ToolCall, ToolInvocation, ToolOutput};
+use crate::tools::{ToolCall, ToolInvocation, ToolOutput};
 use crate::voice::ClauseSource;
 
 /// One talker stream: its narration, its tool calls, and whether it is in the history yet.
@@ -71,6 +68,17 @@ pub(super) struct Reply {
     rounds: usize,
     /// The talker has nothing more to say this turn.
     pub done: bool,
+}
+
+impl Reply {
+    /// A reply the core speaks itself, with no talker stream: done from the start, so the turn
+    /// ends once its line has played.
+    pub(super) fn spoken_by_core() -> Self {
+        Self {
+            done: true,
+            ..Self::default()
+        }
+    }
 }
 
 /// What the talker was last told about the board and thread, plus notices and harness results
@@ -428,7 +436,12 @@ impl Core {
         self.queue.push(QueuedOp::new(id, op.op, anchor));
     }
 
-    pub(super) fn on_tool_call(&mut self, invocation: ToolInvocation, effects: &mut Vec<Effect>) {
+    pub(super) fn on_tool_call(
+        &mut self,
+        now: SessionTime,
+        invocation: ToolInvocation,
+        effects: &mut Vec<Effect>,
+    ) {
         let Some(reply) = self.reply.as_mut().filter(|reply| reply.in_flight) else {
             return;
         };
@@ -442,7 +455,7 @@ impl Core {
                 "Error: too many tool calls in one reply.".to_owned(),
             )),
             (Err(error), false) => Some(error_result(&invocation.id, invalid_call(error))),
-            (Ok(call), false) => self.dispatch_tool(&invocation.id, call, effects),
+            (Ok(call), false) => self.dispatch_tool(now, &invocation.id, call, effects),
         };
         if let Some(reply) = self.reply.as_mut() {
             reply.tools.push(ToolSlot {
@@ -455,6 +468,7 @@ impl Core {
     /// Runs a tool call; returns the result now when the core answers it itself.
     fn dispatch_tool(
         &mut self,
+        now: SessionTime,
         id: &ToolCallId,
         call: &ToolCall,
         effects: &mut Vec<Effect>,
@@ -464,7 +478,11 @@ impl Core {
             | ToolCall::SearchCode { .. }
             | ToolCall::ListDir { .. }
             | ToolCall::Recall { .. }
-            | ToolCall::OpenSession { .. } => {
+            | ToolCall::OpenSession { .. }
+            | ToolCall::ShowLibrary
+            | ToolCall::ShowTasks { .. }
+            | ToolCall::ShowMemory
+            | ToolCall::PlaySession { .. } => {
                 effects.push(Effect::RunTool {
                     id: id.clone(),
                     call: call.clone(),
@@ -488,18 +506,22 @@ impl Core {
                 self.gate = ChangeGate::Awaiting {
                     instruction: instruction.clone(),
                     branch,
+                    opened_at: now,
                 };
+                self.yield_proposal_to_change();
                 text
             }
-            ToolCall::Remember { kind, text, links } => self.remember(*kind, text, links, effects),
+            ToolCall::Remember {
+                kind,
+                text,
+                about,
+                links,
+            } => self.remember(now, *kind, text, *about, links, effects),
             ToolCall::AddTask {
                 title,
                 project,
                 links,
-            } => {
-                self.write_memory(MemoryKind::Task, title, links, project.clone(), effects);
-                "Task added.".to_owned()
-            }
+            } => self.add_task(title, project.clone(), links, effects),
         };
         Some(UserPart::ToolResult {
             id: id.clone(),
@@ -527,62 +549,6 @@ impl Core {
         self.next_task = self.next_task.wrapping_add(1);
         self.context.tasks.insert(task, kind);
         task
-    }
-
-    fn remember(
-        &mut self,
-        kind: RememberKind,
-        text: &str,
-        links: &[String],
-        effects: &mut Vec<Effect>,
-    ) -> String {
-        let kind = memory_policy::remember_kind(kind);
-        match self.write_memory(kind, text, links, None, effects) {
-            MemoryAction::Keep => "Remembered.".to_owned(),
-            MemoryAction::Propose => {
-                "Proposed: it goes in the session digest and is kept only if the user says yes."
-                    .to_owned()
-            }
-            MemoryAction::OnRequest => "Saved.".to_owned(),
-            MemoryAction::Never => "Not stored: this kind of thing is never kept.".to_owned(),
-        }
-    }
-
-    /// The memory policy decides; anything not `Never` goes to the store with a chip on screen.
-    fn write_memory(
-        &mut self,
-        kind: MemoryKind,
-        text: &str,
-        links: &[String],
-        project: Option<String>,
-        effects: &mut Vec<Effect>,
-    ) -> MemoryAction {
-        let action = memory_policy::action(kind);
-        if action == MemoryAction::Never {
-            return action;
-        }
-        effects.push(Effect::Remember(MemoryWrite {
-            kind,
-            action,
-            text: text.to_owned(),
-            links: links.to_vec(),
-            project,
-        }));
-        let chip = match kind {
-            MemoryKind::Task => ChipKind::Task,
-            MemoryKind::Note => ChipKind::Note,
-            MemoryKind::SessionRecord
-            | MemoryKind::LearningSignal
-            | MemoryKind::Stated
-            | MemoryKind::Inferred
-            | MemoryKind::RawAudio
-            | MemoryKind::Secret => ChipKind::Memory,
-        };
-        effects.push(Effect::Ui(UiEvent::Chip {
-            kind: chip,
-            text: bounded(text, LABEL_MAX_BYTES),
-        }));
-        action
     }
 
     pub(super) fn on_tool_result(
@@ -614,6 +580,9 @@ impl Core {
         } = &output
         {
             self.surfaces.record_read(path, *first_line, lines);
+        }
+        if let ToolOutput::View { view, today } = output {
+            self.show_view(*view, today, effects);
         }
         self.maybe_tool_round(now, effects);
     }

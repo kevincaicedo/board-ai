@@ -9,7 +9,7 @@ const press = (code: string, extra: Partial<KeyPress> = {}): KeyPress => ({
   editable: false,
   ...extra,
 });
-const live = { muted: false, replay: false };
+const live = { muted: false, replay: false, escape: "none" } as const;
 
 test("Esc stops BoardAI, Space talks, M toggles the mic", () => {
   assert.deepEqual(keyDownCommand(press("Escape"), live), { type: "Stop" });
@@ -34,4 +34,12 @@ test("typing, shortcuts and held keys never control BoardAI; Space belongs to a 
   }
   assert.equal(keyDownCommand(press("Space"), { ...live, replay: true }), null);
   assert.deepEqual(keyDownCommand(press("Escape"), { ...live, replay: true }), { type: "Stop" });
+});
+
+test("Esc closes what is open first: a card's replay, then the view, then it stops BoardAI", () => {
+  const pressEscape = (context: "close-replay" | "close-view" | "none") =>
+    keyDownCommand(press("Escape"), { ...live, escape: context });
+  assert.equal(pressEscape("close-replay"), null, "the UI closes its own replay; nothing is sent");
+  assert.deepEqual(pressEscape("close-view"), { type: "CloseView" });
+  assert.deepEqual(pressEscape("none"), { type: "Stop" });
 });

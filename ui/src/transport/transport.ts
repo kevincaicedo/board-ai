@@ -22,7 +22,22 @@ export interface Transport {
    * frame always renders the events it should.
    */
   sessionTime(pageNowMs: number): number;
+  /**
+   * A past session's `events.jsonl`, by id, for a replay; `null` when it can't be had (an
+   * unknown id, a log too large to replay, no backend). Never throws.
+   */
+  sessionLog(id: string): Promise<string | null>;
   close(): void;
+}
+
+/**
+ * Session ids are `<date>-<time>` with an optional `-n` (the store's `SessionId`). Anything else
+ * is refused before it reaches the shell or a URL, so an id can never name a path.
+ */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$/;
+
+export function isSessionId(id: string): boolean {
+  return SESSION_ID.test(id) && !id.includes("..");
 }
 
 /** Live mapping from page time to session time, following the stamps on each batch (LLD §4). */
@@ -37,6 +52,11 @@ export class SessionClock {
       // starts its strokes slightly in the past and they catch up.
       this.#offsetMs = pageNowMs - at;
     }
+  }
+
+  /** A new session began: its stamps restart near zero, so the next batch sets the clock. */
+  reset(): void {
+    this.#offsetMs = null;
   }
 
   now(pageNowMs: number): number {

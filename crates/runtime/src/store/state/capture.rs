@@ -11,7 +11,7 @@
 //! | Session record | The session's digest |
 //! | Raw audio, secret, or `Never` | Nowhere: refused |
 
-use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite};
+use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
 use rusqlite::OptionalExtension;
 
 use super::{Session, SessionSlot, StoreState, name_error};
@@ -39,34 +39,6 @@ Edit freely; keep the ^ids at the ends of lines.\n\n";
 const FACTS_HEADER: &str = "# Facts\n\nWhat you told BoardAI about your systems. Edit freely; \
 keep the ^ids at the ends of lines.\n\n";
 const INBOX_NAME: &str = "Inbox";
-
-/// Words that make a stated or inferred memory about you rather than your systems.
-const ABOUT_YOU_WORDS: &[&str] = &[
-    "i",
-    "i'm",
-    "i've",
-    "i'd",
-    "me",
-    "my",
-    "mine",
-    "myself",
-    "prefer",
-    "prefers",
-    "preferred",
-    "like",
-    "likes",
-    "learn",
-    "learning",
-    "pace",
-    "slower",
-    "faster",
-    "struggle",
-    "struggled",
-    "struggles",
-    "confused",
-    "explain",
-    "examples",
-];
 
 /// One thing a session wrote, with what is needed to undo it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,20 +131,12 @@ impl Capture {
     }
 }
 
-/// Which memory file a stated or inferred memory goes to. Learning signals are always about
-/// you; otherwise first-person and learning words decide, and the rest is about your systems.
-pub(crate) fn about_for(kind: MemoryKind, text: &str) -> About {
-    if kind == MemoryKind::LearningSignal {
-        return About::You;
-    }
-    let lower = text.to_lowercase();
-    let about_you = lower
-        .split(|character: char| !(character.is_alphanumeric() || character == '\''))
-        .any(|word| ABOUT_YOU_WORDS.contains(&word));
-    if about_you {
-        About::You
-    } else {
-        About::Systems
+/// Which memory file a stated or inferred memory goes to: the subject the core sent (the
+/// talker said who it is about), and learning signals are always about you.
+pub(crate) const fn about_for(write: &MemoryWrite) -> About {
+    match (write.kind, write.subject) {
+        (MemoryKind::LearningSignal, _) | (_, Subject::You) => About::You,
+        (_, Subject::Systems) => About::Systems,
     }
 }
 
@@ -241,7 +205,7 @@ impl StoreState {
                     Ok(Remembered::SessionRecord)
                 }
                 MemoryKind::LearningSignal | MemoryKind::Stated | MemoryKind::Inferred => {
-                    let about = about_for(write.kind, &write.text);
+                    let about = about_for(&write);
                     self.keep_memory(about, &write.text, MemorySource::Direct)
                 }
                 MemoryKind::RawAudio => Err(StoreError::Refused {
@@ -266,7 +230,7 @@ impl StoreState {
     }
 
     fn propose(&mut self, write: &MemoryWrite) -> Remembered {
-        let about = about_for(write.kind, &write.text);
+        let about = about_for(write);
         let id = self.ids.take(ItemKind::Proposal);
         let text = redact_text(&write.text).into_string();
         if let Ok(session) = self.session_mut() {
@@ -681,38 +645,32 @@ fn bounded_links(links: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use boardai_core::memory::MemoryKind;
+    use boardai_core::ids::CaptureId;
+    use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
 
     use super::about_for;
     use crate::store::digest::About;
 
     #[test]
-    fn memories_go_to_the_file_of_their_subject() {
-        for (kind, text, about) in [
-            (MemoryKind::Stated, "I prefer Go examples", About::You),
-            (
-                MemoryKind::Stated,
-                "We use Kafka for the event bus",
-                About::Systems,
-            ),
-            (MemoryKind::Inferred, "Likes a slower pace", About::You),
-            (
-                MemoryKind::Inferred,
-                "Service X uses cache-aside",
-                About::Systems,
-            ),
-            (
-                MemoryKind::LearningSignal,
-                "Covered Raft log matching",
-                About::You,
-            ),
-            (
-                MemoryKind::Stated,
-                "Our cluster has 5 nodes",
-                About::Systems,
-            ),
+    fn memories_go_to_the_file_the_subject_names() {
+        for (kind, subject, about) in [
+            (MemoryKind::Stated, Subject::You, About::You),
+            (MemoryKind::Stated, Subject::Systems, About::Systems),
+            (MemoryKind::Inferred, Subject::You, About::You),
+            (MemoryKind::Inferred, Subject::Systems, About::Systems),
+            (MemoryKind::LearningSignal, Subject::Systems, About::You),
         ] {
-            assert_eq!(about_for(kind, text), about, "{text}");
+            let write = MemoryWrite {
+                kind,
+                action: MemoryAction::Keep,
+                // The words no longer decide: "I prefer" about systems stays about systems.
+                text: "I prefer Kafka".to_owned(),
+                links: Vec::new(),
+                project: None,
+                subject,
+                capture: CaptureId(0),
+            };
+            assert_eq!(about_for(&write), about, "{kind:?} {subject:?}");
         }
     }
 }

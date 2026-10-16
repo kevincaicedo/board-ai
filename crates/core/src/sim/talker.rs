@@ -8,6 +8,7 @@ use crate::history::{ProviderFamily, RawAssistant};
 use crate::ids::ToolCallId;
 use crate::input::{Input, StopReason};
 use crate::tools::{ToolCall, ToolInvocation, ToolOutput};
+use crate::views::{SessionCard, View};
 
 /// One scripted talker response.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +195,25 @@ impl FakeTools {
                 entries: Vec::new(),
                 more_entries: 0,
             },
+            ToolCall::ShowLibrary => view(View::Library {
+                sessions: vec![sample_session()],
+                more_sessions: 0,
+            }),
+            ToolCall::ShowTasks { project } => view(View::Tasks {
+                project: project.clone(),
+                tasks: Vec::new(),
+                more_tasks: 0,
+                notes: Vec::new(),
+            }),
+            ToolCall::ShowMemory => view(View::Memory {
+                about_you: Vec::new(),
+                systems: Vec::new(),
+                notes: Vec::new(),
+                latest: None,
+            }),
+            ToolCall::PlaySession { .. } => view(View::Replay {
+                session: sample_session(),
+            }),
             ToolCall::Research { .. }
             | ToolCall::Review { .. }
             | ToolCall::ProposeChange { .. }
@@ -204,6 +224,28 @@ impl FakeTools {
                 text: "Nothing found.".to_owned(),
             },
         }
+    }
+}
+
+/// The day the simulator's store reads views on.
+pub const SIM_TODAY: &str = "2026-10-15";
+
+fn view(view: View) -> ToolOutput {
+    ToolOutput::View {
+        view: Box::new(view),
+        today: SIM_TODAY.to_owned(),
+    }
+}
+
+/// A past session, as the store would list it.
+#[must_use]
+pub fn sample_session() -> SessionCard {
+    SessionCard {
+        id: "2026-10-12-093000".to_owned(),
+        title: "Raft · log compaction".to_owned(),
+        date: "2026-10-12".to_owned(),
+        duration_ms: 31 * 60_000,
+        cover: Vec::new(),
     }
 }
 
@@ -219,6 +261,10 @@ fn tool_name(call: &ToolCall) -> &'static str {
         ToolCall::AddTask { .. } => "add_task",
         ToolCall::Recall { .. } => "recall",
         ToolCall::OpenSession { .. } => "open_session",
+        ToolCall::ShowLibrary => "show_library",
+        ToolCall::ShowTasks { .. } => "show_tasks",
+        ToolCall::ShowMemory => "show_memory",
+        ToolCall::PlaySession { .. } => "play_session",
     }
 }
 

@@ -14,7 +14,8 @@
 use std::fmt;
 use std::time::Duration;
 
-use boardai_core::effect::{LogRecord, Milestone};
+use boardai_core::effect::{ForgetScope, LogRecord, Milestone};
+use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::{OrbState, UiEvent};
@@ -24,7 +25,7 @@ use futures_util::future::BoxFuture;
 use tokio::sync::watch;
 
 use super::inbox::{SessionClosed, SpeechInLink};
-use super::ports::StoreSink;
+use super::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
 use super::typed::say_typed;
 use crate::limits::{SCRIPT_LINE_MAX_BYTES, SCRIPT_LINES_MAX, SCRIPT_WAIT_MAX_MS};
 
@@ -174,12 +175,24 @@ impl<S: StoreSink> StoreSink for Observed<S> {
         self.inner.remember(at, memory);
     }
 
-    fn recall(&self, query: String) -> BoxFuture<'static, ToolOutput> {
-        self.inner.recall(query)
+    fn forget(&self, at: SessionTime, scope: ForgetScope) {
+        self.inner.forget(at, scope);
     }
 
-    fn open_session(&self, id: String) -> BoxFuture<'static, ToolOutput> {
-        self.inner.open_session(id)
+    fn accept_proposal(&self, at: SessionTime, capture: CaptureId) {
+        self.inner.accept_proposal(at, capture);
+    }
+
+    fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+        self.inner.read(read)
+    }
+
+    fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        self.inner.start_session()
+    }
+
+    fn finish_session(&self, close: SessionClose) -> BoxFuture<'static, ()> {
+        self.inner.finish_session(close)
     }
 
     fn flush(&self) -> BoxFuture<'static, ()> {

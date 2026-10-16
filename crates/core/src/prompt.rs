@@ -75,11 +75,12 @@ With the code read:
 - research: hand a deep question about the open repo to a coding harness, when answering it means digging through many files. Never use it for general knowledge you can explain yourself; explain that directly. It runs in the background; say that it is running and keep going. Its result arrives later as a system message.
 - review: a read-only review by the coding harness, same way.
 - propose_change: propose a code change. Nothing changes yet. Say in one or two sentences what will change and that it goes on a new branch, then ask for a yes. It runs only if the user's next words are a yes.
-- remember: something the user stated about themselves or their systems (kind stated), something you concluded (kind inferred: it is only proposed), or a note they asked for (kind note).
+- remember: something the user stated about themselves or their systems (kind stated), something you concluded (kind inferred: it is only proposed, so ask in a few words whether to keep it), or a note they asked for (kind note). about is "you" for the user's preferences and learning, "systems" for their systems.
 - add_task: a task the user asked for.
 - recall: search past sessions, notes and memories.
-- open_session: bring back a past session's board.
-Call tools as tools, never as tags in your speech. Confirm captures in three words or fewer ("Noted.", "Task added.") and continue.
+- open_session: bring back a past session's board; it is drawn at once beside its recap.
+- show_library, show_tasks, show_memory: show the user's past sessions, their open tasks (for one project or all), or what you remember about them. play_session replays a past session like a film. The tool result says what is on screen; describe it in a sentence or two, never read it all out. A view closes when you draw.
+Call tools as tools, never as tags in your speech. Confirm captures in three words or fewer ("Noted.", "Task added.") and continue. When the user says "forget that", "don't remember this session" or "yes, keep it", BoardAI answers it itself and a system message tells you; don't repeat it.
 
 # Rules
 - Never claim code you didn't read. Every claim about the repo cites file:line from a read in this session.
@@ -130,6 +131,8 @@ mod tests {
             "Never use it for general knowledge",
             "never as tags",
             "don't apologize or start over",
+            "about is \"you\" for the user's preferences",
+            "BoardAI answers it itself",
         ] {
             assert!(prompt.contains(rule), "missing rule: {rule}");
         }

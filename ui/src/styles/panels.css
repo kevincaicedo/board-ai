@@ -1,0 +1,571 @@
+/* The panels, the recall cards and the replay over the stage (9 · Brain, Brain · memories and
+   notes, the recall example). Shared pieces (stacking, controls, cover art) are in views.css. */
+
+/* Panels: the Now list (9 · Brain) and memory (Brain · memories and notes) */
+
+.panel {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-card);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow:
+    var(--shadow-panel),
+    inset 0 0 0 1px var(--glass-edge-strong);
+  overflow: hidden auto;
+  pointer-events: auto;
+}
+
+.panel-tasks {
+  right: var(--panel-right);
+  top: var(--panel-top);
+  bottom: var(--panel-bottom);
+  width: min(var(--panel-width), calc(100% - var(--panel-right) - var(--view-free-min)));
+  padding: 30px 28px;
+  gap: 26px;
+}
+
+.memory-panels {
+  position: absolute;
+  right: var(--panel-memory-right);
+  top: var(--panel-memory-top);
+  bottom: var(--panel-bottom);
+  display: flex;
+  gap: var(--panel-memory-gap);
+  width: calc(
+    2 *
+    min(
+      var(--panel-memory-width),
+      (100% - var(--panel-memory-right) - var(--panel-memory-gap) - var(--view-free-min)) /
+      2
+    ) +
+    var(--panel-memory-gap)
+  );
+}
+
+.panel-memory {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 28px 26px;
+  gap: 22px;
+}
+
+.panel-notes {
+  gap: 16px;
+}
+
+.panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.panel-label {
+  font-size: var(--type-panel-label);
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--type-panel-title);
+  line-height: var(--type-panel-title-line);
+  font-weight: 300;
+  letter-spacing: -0.015em;
+}
+
+.panel-title-memory {
+  font-size: var(--type-panel-memory-title);
+  line-height: var(--type-panel-memory-title-line);
+}
+
+.panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel-memory .panel-section {
+  gap: 8px;
+}
+
+.panel-section-title {
+  font-size: var(--type-panel-label);
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.panel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-rows-notes {
+  gap: 10px;
+}
+
+.panel-empty {
+  margin: 0;
+  font-size: var(--type-note);
+  line-height: var(--type-note-line);
+  color: var(--ink-3);
+}
+
+.panel-foot {
+  margin-top: auto;
+  font-size: var(--type-row-meta);
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-radius: var(--radius-chip);
+  background: var(--glass-row);
+  box-shadow: var(--shadow-row);
+}
+
+.task-circle {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--grey-300);
+}
+
+.task-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-row);
+}
+
+.task-new {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+.row-meta {
+  font-size: var(--type-row-meta);
+  line-height: 16px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.row-more {
+  padding: 0 4px;
+  font-size: var(--type-row-meta);
+  color: var(--ink-3);
+}
+
+.note-row,
+.note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: var(--radius-chip);
+  background: var(--glass-row);
+  box-shadow: var(--shadow-row);
+}
+
+.note-card {
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--glass-row-strong);
+}
+
+.note-text {
+  font-size: var(--type-note);
+  line-height: var(--type-note-line);
+  color: var(--ink);
+}
+
+.note-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.link-chip {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: var(--grey-100);
+  font-size: var(--type-link-chip);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.link-chip-code {
+  font-family: var(--font-code);
+}
+
+.memory-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-chip);
+  background: var(--glass-row-strong);
+  box-shadow: var(--shadow-row);
+}
+
+.memory-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-note);
+  line-height: var(--type-note-line);
+}
+
+.glyph-memory {
+  flex: none;
+  fill: none;
+  stroke-width: 1.4;
+}
+
+.glyph-memory-ink {
+  stroke: var(--ink-2);
+}
+
+.glyph-memory-ink .glyph-memory-dot {
+  fill: var(--ink-2);
+  stroke: none;
+}
+
+.glyph-memory-signal {
+  width: 14px;
+  height: 14px;
+  stroke: var(--signal);
+  stroke-width: 1.5;
+}
+
+.glyph-memory-signal .glyph-memory-dot {
+  fill: var(--signal);
+  stroke: none;
+}
+
+.panel-digest {
+  margin-top: auto;
+}
+
+.digest-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-chip);
+  background: var(--glass-row-strong);
+  box-shadow: var(--shadow-row);
+}
+
+.digest-thumb {
+  width: 76px;
+  height: 56px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+  overflow: hidden;
+}
+
+.digest-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.digest-text .row-meta {
+  white-space: normal;
+}
+
+.digest-title {
+  font-size: var(--type-note);
+  line-height: var(--type-note-line);
+}
+
+/* Recall: a past board at once, "From your brain" and the session replay card */
+
+.view-recall {
+  position: absolute;
+  inset: 0;
+}
+
+.recall-board {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: calc(
+    var(--surface-right) +
+    min(var(--recall-card-width), 50% - var(--surface-right)) +
+    24px
+  );
+}
+
+.recall-cards {
+  position: absolute;
+  top: 0;
+  right: var(--surface-right);
+  width: min(var(--recall-card-width), calc(50% - var(--surface-right)));
+  height: 100%;
+}
+
+.recall-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: var(--radius-card);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow:
+    var(--shadow-surface),
+    inset 0 0 0 1px var(--glass-edge);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.recall-memory {
+  top: var(--recall-memory-top);
+  height: var(--recall-memory-height);
+}
+
+.recall-replay {
+  top: var(--recall-replay-top);
+  height: var(--recall-replay-height);
+}
+
+.recall-head {
+  position: absolute;
+  left: 28px;
+  top: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--type-card-title);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.recall-replay .recall-head {
+  left: 24px;
+  top: 20px;
+  gap: 8px;
+}
+
+.recall-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.recall-head-title {
+  color: var(--ink);
+}
+
+.recall-body {
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  top: 64px;
+  margin: 0;
+  font-size: var(--type-recap);
+  line-height: var(--type-recap-line);
+  font-weight: 300;
+  color: var(--ink);
+}
+
+.recall-chips {
+  position: absolute;
+  left: 28px;
+  bottom: 22px;
+  display: flex;
+  gap: 8px;
+}
+
+.recall-chip {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--glass-chip);
+  box-shadow: var(--shadow-chip-small);
+  font-size: var(--type-small);
+}
+
+.recall-replay-body {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 58px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.recall-thumb {
+  position: relative;
+  width: var(--recall-thumb-width);
+  height: var(--recall-thumb-height);
+  flex: none;
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--grey-100);
+}
+
+.recall-replay-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recall-replay-title {
+  font-size: var(--type-card-name);
+  line-height: var(--type-card-name-line);
+}
+
+.recall-replay-meta {
+  font-size: var(--type-card-title);
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.recall-replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.recall-time {
+  font-size: var(--type-small);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A replay over the live stage: the past session's own board, thread, surfaces and captions */
+
+.replay-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  pointer-events: auto;
+}
+
+.replay-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.replay-orb {
+  display: none;
+}
+
+.replay-bar {
+  position: absolute;
+  left: var(--controls-left);
+  bottom: var(--controls-bottom);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.replay-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The film's captions sit above the live ones, so both can be read when you talk over it. */
+.replay-stage .captions {
+  top: calc(100% - var(--caption-bottom) - var(--replay-caption-lift));
+}
+
+.replay-bar .replay {
+  position: static;
+  opacity: 1;
+}
+
+.replay-bar-title {
+  font-size: var(--type-body);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.replay-bar-sub {
+  font-size: var(--type-card-title);
+  color: var(--ink-3);
+}
+
+.replay-problem,
+.replay-loading {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  margin: 0;
+  transform: translateX(-50%);
+  font-size: var(--type-caption);
+  line-height: var(--type-caption-line);
+  white-space: nowrap;
+}
+
+.replay-problem {
+  color: var(--ink-2);
+}
+
+.replay-loading {
+  color: var(--ink-3);
+}
+
+/* Short windows (down to the 960 × 640 minimum): the canvas's spacing shrinks so the cards and
+   the panels keep clear of the captions. */
+@media (max-height: 760px) {
+  .library-scroll {
+    padding-top: var(--library-compact-top);
+  }
+
+  .library-head {
+    margin-bottom: var(--library-compact-gap);
+  }
+
+  .library-cover {
+    height: var(--library-compact-card-height);
+  }
+
+  .recall-memory {
+    top: var(--recall-compact-top);
+  }
+
+  .recall-replay {
+    top: calc(var(--recall-compact-top) + var(--recall-memory-height) + var(--library-gap));
+  }
+}
+
+/* The app's own replay controls (dev and demo) give way to a session's replay. */
+.stage:has(.replay-overlay) > .replay {
+  display: none;
+}

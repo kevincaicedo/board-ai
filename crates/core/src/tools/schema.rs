@@ -40,7 +40,8 @@ pub fn schemas() -> Vec<ToolSchema> {
     let entries = repo_tools()
         .into_iter()
         .chain(harness_tools())
-        .chain(memory_tools());
+        .chain(memory_tools())
+        .chain(view_tools());
     TOOL_NAMES
         .iter()
         .zip(entries)
@@ -115,14 +116,20 @@ fn memory_tools() -> [(&'static str, Value); 4] {
     [
         (
             "Remember something: what the user stated (kept), what you inferred (only \
-             proposed), or a note they asked for.",
+             proposed; ask whether to keep it), or a note they asked for.",
             object(
                 json!({
                     "kind": { "type": "string", "enum": ["stated", "inferred", "note"] },
                     "text": text("In the user's words where possible."),
+                    "about": {
+                        "type": "string",
+                        "enum": ["you", "systems"],
+                        "description": "Who it is about: the user (preferences, how they \
+                                        learn) or their systems.",
+                    },
                     "links": links(),
                 }),
-                &["kind", "text"],
+                &["kind", "text", "about"],
             ),
         ),
         (
@@ -141,8 +148,39 @@ fn memory_tools() -> [(&'static str, Value); 4] {
             object(json!({ "query": text("What to look for.") }), &["query"]),
         ),
         (
-            "Bring back a past session's board.",
-            object(json!({ "id": text("The session id.") }), &["id"]),
+            "Bring back a past session's board, drawn at once beside its recap.",
+            object(
+                json!({ "id": text("The session id, or words from its title.") }),
+                &["id"],
+            ),
+        ),
+    ]
+}
+
+/// `show_library`, `show_tasks`, `show_memory`, `play_session`.
+fn view_tools() -> [(&'static str, Value); 4] {
+    [
+        (
+            "Show the user's past sessions as a library of cards.",
+            object(json!({}), &[]),
+        ),
+        (
+            "Show the Now list: open tasks for one project, or for all.",
+            object(
+                json!({ "project": text("Project name; omit for every project.") }),
+                &[],
+            ),
+        ),
+        (
+            "Show what you remember about the user and their systems, and recent notes.",
+            object(json!({}), &[]),
+        ),
+        (
+            "Replay a past session like a film.",
+            object(
+                json!({ "id": text("The session id, or words from its title.") }),
+                &["id"],
+            ),
         ),
     ]
 }

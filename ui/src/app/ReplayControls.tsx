@@ -24,7 +24,14 @@ const CHAPTER_NAMES: { readonly [K in ChapterKind]: string } = {
   Resume: "Resume",
 };
 
-export function ReplayControls({ replay }: { replay: ReplayTransport }) {
+export function ReplayControls({
+  replay,
+  keyboard = true,
+}: {
+  replay: ReplayTransport;
+  /** A replay inside the live app leaves Space to push-to-talk. */
+  keyboard?: boolean;
+}) {
   const runtime = useRuntime();
   const [state, setState] = useState(replay.state);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -35,10 +42,17 @@ export function ReplayControls({ replay }: { replay: ReplayTransport }) {
   const write = useMemo(styleWriter, []);
   const { durationMs, chapters } = state;
 
-  useEffect(() => replay.subscribe(() => setState(replay.state)), [replay]);
+  useEffect(() => {
+    // The replay may have started between render and here (a replay opened from a card).
+    setState(replay.state);
+    return replay.subscribe(() => setState(replay.state));
+  }, [replay]);
 
   // In a replay there is no microphone, so Space plays and pauses, like a video.
   useEffect(() => {
+    if (!keyboard) {
+      return;
+    }
     const key = (event: KeyboardEvent): void => {
       if (event.code === "Space" && !event.repeat && event.target === document.body) {
         event.preventDefault();
@@ -47,7 +61,7 @@ export function ReplayControls({ replay }: { replay: ReplayTransport }) {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [replay]);
+  }, [replay, keyboard]);
 
   useFrame((at) => {
     write(progressRef.current, "width", `${round1((100 * at) / durationMs)}%`);

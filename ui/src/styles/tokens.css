@@ -125,6 +125,7 @@
   --duration-suggestion-in: 900ms;
   --duration-suggestion-out: 450ms;
   --duration-code-mark: 500ms;
+  --duration-view-stagger: 100ms;
 
   /* Type (bundled locally: the CSP allows no remote fonts) */
   --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -223,6 +224,74 @@
   --controls-left: 28px;
   --controls-bottom: 30px;
   --scrubber-width: 220px;
+
+  /* Views summoned by voice (8 · Library, 9 · Brain, Brain · memories and notes, recall) */
+  --view-free-min: 360px;
+  --library-left: 96px;
+  --library-title-top: 120px;
+  --library-grid-top: 252px;
+  --library-gap: 24px;
+  --library-card-height: 300px;
+  --library-card-info-gap: 18px;
+  --library-compact-top: 56px;
+  --library-compact-gap: 28px;
+  --library-compact-card-height: 220px;
+  --type-library-title: 44px;
+  --type-library-title-line: 52px;
+  --type-library-hint: 16px;
+  --type-library-hint-line: 24px;
+  --type-card-name: 17px;
+  --type-card-name-line: 24px;
+  --type-card-meta: 14px;
+  --type-card-meta-line: 20px;
+  --cover-fade: rgba(150, 152, 165, 0.32);
+  --cover-fade-clear: rgba(150, 152, 165, 0);
+  --glass-edge-strong: rgba(255, 255, 255, 0.85);
+  --cover-blur: 14px;
+  --control-track: rgba(255, 255, 255, 0.92);
+  --shadow-card-control: 0 8px 24px rgba(20, 20, 40, 0.1);
+  --panel-right: 32px;
+  --panel-top: 32px;
+  --panel-bottom: 112px;
+  --panel-width: 440px;
+  --panel-memory-right: 40px;
+  --panel-memory-top: 40px;
+  --panel-memory-width: 372px;
+  --panel-memory-gap: 16px;
+  --panel-shift-in: 56px;
+  --panel-blur-in: 14px;
+  --shadow-panel: 0 24px 64px rgba(20, 20, 40, 0.09);
+  --glass-row: rgba(255, 255, 255, 0.78);
+  --glass-row-strong: rgba(255, 255, 255, 0.8);
+  --glass-chip: rgba(255, 255, 255, 0.85);
+  --shadow-row: 0 6px 18px rgba(20, 20, 40, 0.04);
+  --shadow-chip-small: 0 4px 12px rgba(20, 20, 40, 0.05);
+  --type-panel-label: 13px;
+  --type-panel-title: 30px;
+  --type-panel-title-line: 36px;
+  --type-panel-memory-title: 28px;
+  --type-panel-memory-title-line: 34px;
+  --type-row: 15px;
+  --type-note: 14px;
+  --type-note-line: 20px;
+  --type-row-meta: 12px;
+  --type-link-chip: 11px;
+  --type-recap: 18px;
+  --type-recap-line: 28px;
+  --view-orb-tasks: 200px;
+  --view-orb-tasks-x: 0.62;
+  --view-orb-memory: 180px;
+  --view-orb-memory-x: 0.547;
+  --recall-card-width: 520px;
+  --recall-memory-top: 112px;
+  --recall-memory-height: 236px;
+  --recall-replay-top: 372px;
+  --recall-replay-height: 210px;
+  --recall-compact-top: 40px;
+  --recall-thumb-width: 168px;
+  --recall-thumb-height: 126px;
+  --recall-board-soften: 4px;
+  --replay-caption-lift: 110px;
 }
 
 html,

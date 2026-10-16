@@ -262,6 +262,32 @@ pub const SCRIBE_RESPONSE_MAX_BYTES: usize = 64 * 1024;
 /// Total time for the scribe's digest; past it the minimal digest is written instead.
 pub const SCRIBE_DIGEST_DEADLINE_MS: u64 = 120_000;
 
+/// Library cards that get cover art (the newest); older cards show the plain porcelain cover.
+/// Each cover reads one `board.excalidraw`, so this bounds the files one library read opens.
+pub const LIBRARY_COVERS_MAX: usize = 24;
+
+/// Node boxes in one cover; later nodes are left out of the picture.
+pub const COVER_SHAPES_MAX: usize = 24;
+
+/// Kept memories per list in the memory view (about you, about your systems), newest first;
+/// older ones stay in the vault and out of the view.
+pub const MEMORY_VIEW_ITEMS_MAX: usize = 12;
+
+/// Notes in the memory view and under the Now list, newest first.
+pub const RECENT_NOTES_MAX: usize = 4;
+
+/// Bytes of a session log read for a replay (the app's `session_log` command); a larger log is
+/// refused with `StoreError::Limit`, and the UI says it can't replay it.
+pub const SESSION_LOG_READ_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// How long quitting waits for the store to close a session still recording (minimal digest)
+/// and stop; past it the app exits anyway, and the next start gives that session its digest.
+pub const STORE_SHUTDOWN_TIMEOUT_MS: u64 = 3_000;
+
+/// Sessions the store gives a minimal digest when it opens (a crash or a kill left them
+/// without one), oldest first; the rest get theirs at the next open.
+pub const RECOVERED_SESSIONS_MAX: usize = 16;
+
 /// Items in one digest list (diagrams, questions, proposals, entities, relations); further
 /// items from the scribe are dropped.
 pub const DIGEST_LIST_ITEMS_MAX: usize = 24;
@@ -301,6 +327,40 @@ pub const SESSION_HARNESS_TASKS_MAX: usize = 16;
 /// How long closing a session waits for the store to flush; past it the session ends anyway
 /// and the store loses at most what it had not written (it flushes every 250 ms on its own).
 pub const SESSION_FLUSH_TIMEOUT_MS: u64 = 2_000;
+
+/// Session time with no input (no voice, no command, no talker or tool activity) after which
+/// the session ends and its digest is written. The next utterance starts a new session, with
+/// this one's recap as context. A session muted for this long ends too, and only an unmute
+/// starts the next one.
+pub const SESSION_IDLE_TIMEOUT_MS: u64 = 30 * 60 * 1_000;
+
+/// The scribe's deadline when the app quits. Past it the minimal digest is written instead, so
+/// quitting never waits on a model (an idle timeout gives the scribe its full
+/// `SCRIBE_DIGEST_DEADLINE_MS`: nobody is waiting then).
+pub const SESSION_QUIT_DIGEST_MS: u64 = 8_000;
+
+/// Beyond the scribe's deadline, the time ending a session may take to close its log and write
+/// its digest and board (local files). Past it closing goes on; the store's shutdown still
+/// writes the minimal digest.
+pub const SESSION_FINISH_WRITE_MS: u64 = 2_000;
+
+/// When the first words after an idle timeout arrive while the last session's digest is still
+/// being written, its scribe is cancelled (the minimal digest is written) and the new session
+/// waits at most this long for it.
+pub const SESSION_FINISH_CANCEL_WAIT_MS: u64 = 1_000;
+
+/// Bytes of the context a session starts with (where you left off, what BoardAI keeps about
+/// you); past it the rest is left out at a line boundary.
+pub const SESSION_CONTEXT_MAX_BYTES: usize = 4 * 1024;
+
+/// Memory writes waiting to reach the store, in order. They are applied one at a time so
+/// "forget that" always undoes the capture the core meant. Past it a write is dropped and
+/// logged as an error (the store would have to be stalled for hundreds of captures).
+pub const STORE_WRITES_CAPACITY: usize = 1_024;
+
+/// Ops of a past board brought back by `open_session`; the rest are counted in
+/// `ops_left_out` and not shown, so the view stays well under the event log's line limit.
+pub const PAST_BOARD_OPS_MAX: usize = 1_024;
 
 /// Voice time per word of a typed utterance, as if spoken: the voiced length the core sees, so
 /// the barge-in rules that count voice time apply as they would to speech.

@@ -57,7 +57,12 @@ pub(super) struct UserSide {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ChangeGate {
     Closed,
-    Awaiting { instruction: String, branch: String },
+    Awaiting {
+        instruction: String,
+        branch: String,
+        /// When it was proposed: only words begun after it can answer it.
+        opened_at: SessionTime,
+    },
 }
 
 impl Core {
@@ -299,6 +304,9 @@ impl Core {
                     .to_owned(),
             );
         }
+        if !abandoned.trim().is_empty() {
+            self.close_proposal_on_mute();
+        }
         self.stop_reply(now, true, effects);
         self.state = ConversationState::Muted;
     }
@@ -329,8 +337,11 @@ impl Core {
             self.settle_stop(None, effects);
         }
         let mut text = utterance.text();
+        // When these words began. Joined earlier words began before anything was proposed.
+        let mut began = utterance.started_at();
         let mut context = std::mem::take(&mut self.user.context);
         if let Some(previous) = self.user.pending.take() {
+            began = SessionTime::ZERO;
             // Nothing of the answer to the previous words was heard: they are one turn.
             text = format!("{} {text}", previous.text).trim().to_owned();
             let mut merged = previous.context;
@@ -341,8 +352,18 @@ impl Core {
             self.user.context = context;
             return;
         }
-        self.resolve_gate(&text, effects);
+        // Keeping a proposal, the memory controls and "close that" are answered by the core
+        // itself; what the user was told so far waits for their next real question.
+        if self.resolve_proposal(&text, began, effects) {
+            self.user.context = context;
+            return;
+        }
+        self.resolve_gate(&text, began, effects);
         self.cancel_by_voice(&text, effects);
+        if self.memory_control(&text, effects) {
+            self.user.context = context;
+            return;
+        }
         self.turn_question = self.question_of(&text, &context);
         let message = self.user_message(&text, &context);
         self.user.pending = Some(PendingUser {
@@ -387,11 +408,19 @@ impl Core {
         ));
     }
 
-    /// I9: only this utterance can confirm the proposed change, and only with a plain yes.
-    fn resolve_gate(&mut self, text: &str, effects: &mut Vec<Effect>) {
+    /// I9: only this utterance can confirm the proposed change, and only with a plain yes. Words
+    /// the user was already saying when the change was proposed answer something else: the gate
+    /// waits for the next ones.
+    fn resolve_gate(&mut self, text: &str, began: SessionTime, effects: &mut Vec<Effect>) {
+        if let ChangeGate::Awaiting { opened_at, .. } = &self.gate
+            && *opened_at > began
+        {
+            return;
+        }
         let ChangeGate::Awaiting {
             instruction,
             branch,
+            ..
         } = std::mem::replace(&mut self.gate, ChangeGate::Closed)
         else {
             return;

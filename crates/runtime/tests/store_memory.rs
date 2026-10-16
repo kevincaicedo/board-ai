@@ -14,8 +14,8 @@ use boardai_runtime::store::{
     StoreError,
 };
 use store_support::{
-    FakeScribe, ScribeAnswer, TestStore, at, caption, close, good_answer, keep, memory_file, node,
-    recall_text, snapshot, task, write,
+    FakeScribe, ScribeAnswer, TestStore, at, caption, close, good_answer, keep, keep_you,
+    memory_file, node, recall_text, snapshot, task, write,
 };
 use support::TempFolder;
 
@@ -44,7 +44,7 @@ async fn memories_go_to_the_file_of_their_subject() {
     let (store, task_handle, _) = test.open().await;
     store.start_session(None).await.expect("starts");
     let fact = keep(&store, Stated, Keep, "We use Kafka for the event bus").await;
-    let preference = keep(&store, Stated, Keep, "I prefer Go examples").await;
+    let preference = keep_you(&store, Stated, Keep, "I prefer Go examples").await;
     let signal = keep(
         &store,
         LearningSignal,
@@ -181,7 +181,8 @@ async fn proposals_are_kept_only_after_a_yes() {
     let test = TestStore::new(&folder.path);
     let (store, task_handle, _) = test.open().await;
     store.start_session(None).await.expect("starts");
-    let Remembered::Proposed { id } = keep(&store, Inferred, Propose, "Likes a slower pace").await
+    let Remembered::Proposed { id } =
+        keep_you(&store, Inferred, Propose, "Likes a slower pace").await
     else {
         panic!("proposed");
     };
@@ -340,7 +341,7 @@ async fn busy_session(store: &Store) {
         ],
     );
     keep(store, Stated, Keep, "Our retries use full jitter").await;
-    keep(store, Stated, Keep, "I prefer diagrams before code").await;
+    keep_you(store, Stated, Keep, "I prefer diagrams before code").await;
     keep(store, Note, OnRequest, "Jitter spreads the herd").await;
     store
         .remember(task(
@@ -355,7 +356,8 @@ async fn busy_session(store: &Store) {
         .await
         .expect("task");
     keep(store, SessionRecord, Keep, "Stopped at circuit breakers").await;
-    let Remembered::Proposed { id } = keep(store, Inferred, Propose, "Likes worked examples").await
+    let Remembered::Proposed { id } =
+        keep_you(store, Inferred, Propose, "Likes worked examples").await
     else {
         panic!("proposed");
     };

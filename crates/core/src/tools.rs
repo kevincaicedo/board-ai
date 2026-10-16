@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{TaskId, ToolCallId};
 use crate::limits::{TOOL_ARGUMENT_MAX_BYTES, TOOL_INPUT_MAX_BYTES};
+use crate::memory::Subject;
+use crate::views::View;
 
 mod schema;
 pub use schema::{ToolSchema, schemas};
@@ -38,6 +40,8 @@ pub enum ToolCall {
     Remember {
         kind: RememberKind,
         text: String,
+        /// Who it is about; it picks the memory file (notes ignore it).
+        about: Subject,
         links: Vec<String>,
     },
     AddTask {
@@ -49,6 +53,18 @@ pub enum ToolCall {
         query: String,
     },
     OpenSession {
+        id: String,
+    },
+    /// Opens the library of past sessions.
+    ShowLibrary,
+    /// Opens the Now list: open tasks for one project, or all.
+    ShowTasks {
+        project: Option<String>,
+    },
+    /// Opens memory: what BoardAI keeps about the user and their systems, and recent notes.
+    ShowMemory,
+    /// Replays a past session like a film. `id` is a session id or words from its title.
+    PlaySession {
         id: String,
     },
 }
@@ -73,7 +89,7 @@ pub enum RememberKind {
 }
 
 /// Every tool name the talker may call, in declaration order.
-pub const TOOL_NAMES: [&str; 10] = [
+pub const TOOL_NAMES: [&str; 14] = [
     "read_file",
     "search_code",
     "list_dir",
@@ -84,6 +100,10 @@ pub const TOOL_NAMES: [&str; 10] = [
     "add_task",
     "recall",
     "open_session",
+    "show_library",
+    "show_tasks",
+    "show_memory",
+    "play_session",
 ];
 
 /// Why a tool call was rejected at the boundary. The talker gets this back as an error result.
@@ -136,7 +156,8 @@ impl ToolCall {
             Self::ProposeChange { instruction } => &[instruction],
             Self::Remember { text, .. } => &[text],
             Self::AddTask { title, .. } => &[title],
-            Self::OpenSession { id } => &[id],
+            Self::OpenSession { id } | Self::PlaySession { id } => &[id],
+            Self::ShowLibrary | Self::ShowTasks { .. } | Self::ShowMemory => &[],
         };
         for argument in required {
             if argument.trim().is_empty() {
@@ -204,17 +225,19 @@ fn declared_fields(name: &str) -> &'static [&'static str] {
         "research" => &["question", "depth"],
         "review" => &["scope"],
         "propose_change" => &["instruction"],
-        "remember" => &["kind", "text", "links"],
+        "remember" => &["kind", "text", "about", "links"],
         "add_task" => &["title", "project", "links"],
         "recall" => &["query"],
-        "open_session" => &["id"],
+        "open_session" | "play_session" => &["id"],
+        "show_tasks" => &["project"],
+        // `show_library`, `show_memory`, and names already refused as unknown.
         _ => &[],
     }
 }
 
 /// What a tool produced, structured so the core can use it (a code card needs the lines) and
 /// render it for the talker.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "output", rename_all = "snake_case")]
 pub enum ToolOutput {
     /// Lines `[first_line, first_line + lines.len())` of a file, 1-based. `more_lines` counts
@@ -244,6 +267,12 @@ pub enum ToolOutput {
     Failed {
         kind: ToolFailure,
         message: String,
+    },
+    /// A view read from the store, for the core to show and describe to the talker. `today`
+    /// (`YYYY-MM-DD`, UTC) is the day it was read. Boxed: views are large, inputs are not.
+    View {
+        view: Box<View>,
+        today: String,
     },
 }
 
@@ -275,6 +304,7 @@ pub enum ToolFailure {
 #[cfg(test)]
 mod tests {
     use super::{InvalidToolInput, RememberKind, ToolCall};
+    use crate::memory::Subject;
 
     #[test]
     fn parses_each_declared_tool() {
@@ -290,14 +320,32 @@ mod tests {
                 end_line: Some(9)
             })
         );
-        let remember = ToolCall::parse("remember", r#"{"kind":"stated","text":"we use Kafka"}"#);
+        let remember = ToolCall::parse(
+            "remember",
+            r#"{"kind":"stated","text":"we use Kafka","about":"systems"}"#,
+        );
         assert_eq!(
             remember,
             Ok(ToolCall::Remember {
                 kind: RememberKind::Stated,
                 text: "we use Kafka".into(),
+                about: Subject::Systems,
                 links: Vec::new()
             })
+        );
+        assert_eq!(
+            ToolCall::parse("show_library", "{}"),
+            Ok(ToolCall::ShowLibrary)
+        );
+        assert_eq!(
+            ToolCall::parse("show_tasks", r#"{"project":"harness"}"#),
+            Ok(ToolCall::ShowTasks {
+                project: Some("harness".into())
+            })
+        );
+        assert_eq!(
+            ToolCall::parse("show_tasks", "{}"),
+            Ok(ToolCall::ShowTasks { project: None })
         );
     }
 
@@ -314,6 +362,10 @@ mod tests {
             ("read_file", "[]"),
             ("read_file", "{"),
             ("research", r#"{"question":"why","depth":"forever"}"#),
+            ("remember", r#"{"kind":"stated","text":"x"}"#),
+            ("remember", r#"{"kind":"stated","text":"x","about":"them"}"#),
+            ("show_library", r#"{"all":true}"#),
+            ("play_session", r#"{"id":"  "}"#),
         ] {
             assert!(
                 matches!(

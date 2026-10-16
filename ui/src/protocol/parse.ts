@@ -7,21 +7,30 @@
 import type { CellMark } from "./generated/CellMark.ts";
 import type { ChipKind } from "./generated/ChipKind.ts";
 import type { ColumnRange } from "./generated/ColumnRange.ts";
+import type { CoverShape } from "./generated/CoverShape.ts";
+import type { DigestCard } from "./generated/DigestCard.ts";
 import type { DrawOp } from "./generated/DrawOp.ts";
 import type { EdgePath } from "./generated/EdgePath.ts";
 import type { Fill } from "./generated/Fill.ts";
 import type { LineStyle } from "./generated/LineStyle.ts";
 import type { Mark } from "./generated/Mark.ts";
+import type { MemoryRow } from "./generated/MemoryRow.ts";
 import type { NodeShape } from "./generated/NodeShape.ts";
+import type { NoteRow } from "./generated/NoteRow.ts";
 import type { OrbState } from "./generated/OrbState.ts";
+import type { PastLayer } from "./generated/PastLayer.ts";
 import type { Point } from "./generated/Point.ts";
 import type { Rect } from "./generated/Rect.ts";
+import type { SessionCard } from "./generated/SessionCard.ts";
+import type { SessionRef } from "./generated/SessionRef.ts";
 import type { Speaker } from "./generated/Speaker.ts";
 import type { Surface } from "./generated/Surface.ts";
 import type { SurfaceUpdate } from "./generated/SurfaceUpdate.ts";
+import type { TaskRow } from "./generated/TaskRow.ts";
 import type { UiBatch } from "./generated/UiBatch.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { UiLogLine } from "./generated/UiLogLine.ts";
+import type { View } from "./generated/View.ts";
 
 type Fields = { readonly [key: string]: unknown };
 
@@ -306,6 +315,138 @@ const SURFACE_UPDATES: Tagged<SurfaceUpdate, "kind"> = {
   },
 };
 
+/** Dates on the wire are `YYYY-MM-DD` (UTC), or empty when unknown. */
+const DATE = /^(\d{4}-\d{2}-\d{2})?$/;
+
+function date(value: unknown): string | null {
+  return typeof value === "string" && DATE.test(value) ? value : null;
+}
+
+/** A non-empty string: ids and titles are never blank. */
+function filled(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function coverShape(value: unknown): CoverShape | null {
+  const f = fields(value);
+  const r = rect(f?.rect);
+  const shape = oneOf(f?.shape, NODE_SHAPES);
+  return r === null || shape === null ? null : { rect: r, shape };
+}
+
+function sessionCard(value: unknown): SessionCard | null {
+  const f = fields(value);
+  const id = filled(f?.id);
+  const title = text(f?.title);
+  const day = date(f?.date);
+  const duration = u32(f?.duration_ms);
+  const cover = list(f?.cover, coverShape);
+  return id === null || title === null || day === null || duration === null || cover === null
+    ? null
+    : { id, title, date: day, duration_ms: duration, cover };
+}
+
+function sessionRef(value: unknown): SessionRef | null {
+  const f = fields(value);
+  const id = filled(f?.id);
+  const title = text(f?.title);
+  const day = date(f?.date);
+  return id === null || title === null || day === null ? null : { id, title, date: day };
+}
+
+function taskRow(value: unknown): TaskRow | null {
+  const f = fields(value);
+  const id = filled(f?.id);
+  const title = text(f?.title);
+  const project = text(f?.project);
+  const from = nullable(f?.from, sessionRef);
+  return id === null || title === null || project === null || from === undefined
+    ? null
+    : { id, title, project, from };
+}
+
+function noteRow(value: unknown): NoteRow | null {
+  const f = fields(value);
+  const id = filled(f?.id);
+  const body = text(f?.text);
+  const day = date(f?.date);
+  const from = nullable(f?.from, sessionRef);
+  const links = list(f?.links, text);
+  return id === null || body === null || day === null || from === undefined || links === null
+    ? null
+    : { id, text: body, date: day, from, links };
+}
+
+function memoryRow(value: unknown): MemoryRow | null {
+  const f = fields(value);
+  const id = filled(f?.id);
+  const body = text(f?.text);
+  return id === null || body === null ? null : { id, text: body };
+}
+
+function digestCard(value: unknown): DigestCard | null {
+  const f = fields(value);
+  const session = sessionCard(f?.session);
+  const notes = u32(f?.notes);
+  const tasks = u32(f?.tasks);
+  const questions = u32(f?.open_questions);
+  return session === null || notes === null || tasks === null || questions === null
+    ? null
+    : { session, notes, tasks, open_questions: questions };
+}
+
+function pastLayer(value: unknown): PastLayer | null {
+  const f = fields(value);
+  const title = nullable(f?.title, text);
+  const ops = list(f?.ops, parseDrawOp);
+  return title === undefined || ops === null ? null : { title, ops };
+}
+
+const VIEWS: Tagged<View, "kind"> = {
+  Library: (f) => {
+    const sessions = list(f.sessions, sessionCard);
+    const more = u32(f.more_sessions);
+    return sessions === null || more === null
+      ? null
+      : { kind: "Library", sessions, more_sessions: more };
+  },
+  Tasks: (f) => {
+    const project = nullable(f.project, text);
+    const tasks = list(f.tasks, taskRow);
+    const more = u32(f.more_tasks);
+    const notes = list(f.notes, noteRow);
+    return project === undefined || tasks === null || more === null || notes === null
+      ? null
+      : { kind: "Tasks", project, tasks, more_tasks: more, notes };
+  },
+  Memory: (f) => {
+    const aboutYou = list(f.about_you, memoryRow);
+    const systems = list(f.systems, memoryRow);
+    const notes = list(f.notes, noteRow);
+    const latest = nullable(f.latest, digestCard);
+    return aboutYou === null || systems === null || notes === null || latest === undefined
+      ? null
+      : { kind: "Memory", about_you: aboutYou, systems, notes, latest };
+  },
+  PastSession: (f) => {
+    const session = sessionCard(f.session);
+    const recap = text(f.recap);
+    const layers = list(f.layers, pastLayer);
+    const leftOut = u32(f.ops_left_out);
+    return session === null || recap === null || layers === null || leftOut === null
+      ? null
+      : { kind: "PastSession", session, recap, layers, ops_left_out: leftOut };
+  },
+  Replay: (f) => {
+    const session = sessionCard(f.session);
+    return session === null ? null : { kind: "Replay", session };
+  },
+};
+
+export function parseView(value: unknown): View | null {
+  return tagged<View>(VIEWS, "kind", value);
+}
+
 const EVENTS: Tagged<UiEvent, "type"> = {
   Orb: (f) => {
     const state = oneOf(f.state, ORB_STATES);
@@ -393,6 +534,18 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const value = nullable(f.text, text);
     return value === undefined ? null : { type: "Suggestion", text: value };
   },
+  SessionStart: (f) => {
+    const session = nullable(f.session, filled);
+    return session === undefined ? null : { type: "SessionStart", session };
+  },
+  ViewShow: (f) => {
+    const view = parseView(f.view);
+    const today = date(f.today);
+    return view === null || today === null || today === ""
+      ? null
+      : { type: "ViewShow", view, today };
+  },
+  ViewDismiss: () => ({ type: "ViewDismiss" }),
 };
 
 export function parseUiEvent(value: unknown): UiEvent | null {

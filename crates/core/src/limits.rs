@@ -176,3 +176,14 @@ pub const ESTIMATED_SPEECH_MS_PER_BYTE: u32 = 65;
 /// The orb stays in its drawing state this long after the last stroke's budget ends, so the nib
 /// doesn't flicker between ops.
 pub const ORB_DRAWING_LINGER_MS: u64 = 800;
+
+// ---- Memory and views (LLD §2.8, §3.7) ----
+
+/// Items one session may capture (memories, notes, tasks, proposals, kept proposals), the same
+/// bound as the store's `SESSION_CAPTURES_MAX`. Past it `remember` and `add_task` answer "Not
+/// stored" and nothing is sent, so the core and the store never disagree on what "that" is.
+pub const CAPTURES_PER_SESSION_MAX: usize = 500;
+
+/// Items per list the talker reads about a view on screen (sessions, tasks, notes, memories);
+/// the rest are counted ("N more on screen"). Past boards list up to three times as many labels.
+pub const VIEW_TALKER_ITEMS_MAX: usize = 8;

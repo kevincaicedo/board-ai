@@ -1,0 +1,117 @@
+// A past session played back like a film (PRODUCT §7.6), over the live stage: its board, thread,
+// surfaces and captions, from its events.jsonl, with the replay controls. It runs on its own
+// runtime and replay transport, so the live session underneath is untouched; the live orb and
+// captions stay on top. Opened by voice (a Replay view) or from a card's play button.
+
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Captions } from "../app/Captions.tsx";
+import { Chips } from "../app/Chips.tsx";
+import { Column } from "../app/Column.tsx";
+import { useRuntime } from "../app/hooks.ts";
+import { ReplayControls } from "../app/ReplayControls.tsx";
+import { Runtime, RuntimeContext } from "../app/runtime.ts";
+import { ThreadBar } from "../app/ThreadBar.tsx";
+import type { SessionCard } from "../protocol/generated/SessionCard.ts";
+import { parseReplayLog } from "../transport/log.ts";
+import { ReplayTransport } from "../transport/replay.ts";
+import { CloseGlyph } from "./parts.tsx";
+
+type Loaded =
+  | { readonly kind: "loading" }
+  | { readonly kind: "failed" }
+  | { readonly kind: "ready"; readonly runtime: Runtime; readonly replay: ReplayTransport };
+
+function ReplayStage({
+  runtime,
+  replay,
+  card,
+}: {
+  runtime: Runtime;
+  replay: ReplayTransport;
+  card: SessionCard;
+}) {
+  const outer = useRuntime();
+  const stageRef = useRef<HTMLDivElement>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const orbRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const board = boardRef.current;
+    const orb = orbRef.current;
+    if (stage === null || board === null || orb === null) {
+      return;
+    }
+    const unmount = runtime.mount(stage, board, orb);
+    replay.play(performance.now());
+    const durationMs = replay.log.durationMs;
+    const stop = runtime.onFrame((at) => outer.replays.record(card.id, at / durationMs));
+    return () => {
+      stop();
+      unmount();
+    };
+  }, [runtime, replay, outer, card.id]);
+  return (
+    <RuntimeContext.Provider value={runtime}>
+      <div class="replay-stage" ref={stageRef}>
+        <div class="board" ref={boardRef} />
+        {/* The live orb is BoardAI's presence; the replayed one is not shown. */}
+        <div class="orb-host replay-orb" ref={orbRef} aria-hidden="true" />
+        <ThreadBar />
+        <Column />
+        <Chips />
+        <Captions />
+      </div>
+    </RuntimeContext.Provider>
+  );
+}
+
+export function ReplayOverlay({ card, onClose }: { card: SessionCard; onClose: () => void }) {
+  const outer = useRuntime();
+  const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
+  useEffect(() => {
+    let current = true;
+    setLoaded({ kind: "loading" });
+    void outer.transport.sessionLog(card.id).then((text) => {
+      if (!current) {
+        return;
+      }
+      const log = text === null ? null : parseReplayLog(text);
+      if (log === null || log.batches.length === 0) {
+        setLoaded({ kind: "failed" });
+        return;
+      }
+      const replay = new ReplayTransport(log);
+      const runtime = new Runtime(replay, replay, outer.tokens, outer.reducedMotion);
+      setLoaded({ kind: "ready", runtime, replay });
+    });
+    return () => {
+      current = false;
+    };
+  }, [outer, card.id]);
+
+  return (
+    <section class="replay-overlay" aria-label={`Replay of ${card.title}`}>
+      {loaded.kind === "ready" ? (
+        <ReplayStage runtime={loaded.runtime} replay={loaded.replay} card={card} />
+      ) : null}
+      <div class="replay-bar">
+        <div class="replay-bar-head">
+          <button type="button" class="card-control" aria-label="Close replay" onClick={onClose}>
+            <CloseGlyph />
+          </button>
+          <span class="replay-bar-title">{card.title}</span>
+          <span class="replay-bar-sub">Replay</span>
+        </div>
+        {loaded.kind === "ready" ? (
+          <RuntimeContext.Provider value={loaded.runtime}>
+            <ReplayControls replay={loaded.replay} keyboard={false} />
+          </RuntimeContext.Provider>
+        ) : null}
+      </div>
+      {loaded.kind === "failed" ? (
+        <p class="replay-problem">I couldn't open that session.</p>
+      ) : null}
+      {loaded.kind === "loading" ? <p class="replay-loading">Opening the session…</p> : null}
+    </section>
+  );
+}

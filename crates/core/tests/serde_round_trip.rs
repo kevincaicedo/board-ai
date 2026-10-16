@@ -6,18 +6,22 @@
     reason = "a broken fixture should fail the test loudly"
 )]
 
-use boardai_core::effect::{Effect, Gain, LogRecord, Milestone, TalkRequest};
+use boardai_core::effect::{Effect, ForgetScope, Gain, LogRecord, Milestone, TalkRequest};
+use boardai_core::geometry::Rect;
 use boardai_core::harness::{HarnessEvent, HarnessKind, HarnessTask};
 use boardai_core::history::{AssistantPart, Message, ProviderFamily, RawAssistant, UserPart};
-use boardai_core::ids::{ClauseId, ElementId, LayerId, TaskId, ToolCallId};
+use boardai_core::ids::{CaptureId, ClauseId, ElementId, LayerId, OpId, TaskId, ToolCallId};
 use boardai_core::input::{
     Input, PlaybackPosition, StopReason, TalkerFailure, TalkerFailureKind, TimingSource,
     WordTiming, WordTimings,
 };
-use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite};
-use boardai_core::protocol::{MicAction, PointerTarget, UiCommand, UiEvent};
+use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
+use boardai_core::protocol::{DrawOp, MicAction, NodeShape, PointerTarget, UiCommand, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::{ToolCall, ToolInvocation, ToolOutput};
+use boardai_core::views::{
+    CoverShape, DigestCard, MemoryRow, NoteRow, PastLayer, SessionCard, SessionRef, TaskRow, View,
+};
 
 fn round_trip<T>(value: &T)
 where
@@ -84,8 +88,119 @@ fn speech_and_command_inputs() -> Vec<Input> {
         Input::Command(UiCommand::Mic {
             action: MicAction::Mute,
         }),
+        Input::Command(UiCommand::CloseView),
         Input::Tick,
     ]
+}
+
+fn card() -> SessionCard {
+    SessionCard {
+        id: "2026-10-12-093000".into(),
+        title: "Raft · log compaction".into(),
+        date: "2026-10-12".into(),
+        duration_ms: 1_860_000,
+        cover: vec![CoverShape {
+            rect: Rect {
+                x: 120,
+                y: 250,
+                w: 150,
+                h: 64,
+            },
+            shape: NodeShape::Service,
+        }],
+    }
+}
+
+/// Every view kind: they travel in tool results (logged as inputs) and in UI events.
+fn views() -> Vec<View> {
+    let from = SessionRef {
+        id: "2026-10-14-180000".into(),
+        title: "Request path · API".into(),
+        date: "2026-10-14".into(),
+    };
+    let note = NoteRow {
+        id: "n4".into(),
+        text: "Cache-aside: Redis first.".into(),
+        date: "2026-10-14".into(),
+        from: Some(from.clone()),
+        links: vec!["service.go:43".into()],
+    };
+    let leader = DrawOp::Node {
+        id: ElementId::parse("leader").expect("valid"),
+        op: OpId(0),
+        shape: NodeShape::Service,
+        label: "leader".into(),
+        rect: Rect {
+            x: 120,
+            y: 250,
+            w: 150,
+            h: 64,
+        },
+        stack: 1,
+        fill: None,
+    };
+    vec![
+        View::Library {
+            sessions: vec![card()],
+            more_sessions: 2,
+        },
+        View::Tasks {
+            project: Some("Harness".into()),
+            tasks: vec![TaskRow {
+                id: "t27".into(),
+                title: "Check Redis TTLs".into(),
+                project: "Harness".into(),
+                from: Some(from),
+            }],
+            more_tasks: 0,
+            notes: vec![note.clone()],
+        },
+        View::Memory {
+            about_you: vec![MemoryRow {
+                id: "m2".into(),
+                text: "Examples in Go".into(),
+            }],
+            systems: Vec::new(),
+            notes: vec![note],
+            latest: Some(DigestCard {
+                session: card(),
+                notes: 2,
+                tasks: 1,
+                open_questions: 1,
+            }),
+        },
+        View::PastSession {
+            session: card(),
+            recap: "A snapshot replaces the log.".into(),
+            layers: vec![PastLayer {
+                title: None,
+                ops: vec![leader],
+            }],
+            ops_left_out: 0,
+        },
+        View::Replay { session: card() },
+    ]
+}
+
+#[test]
+fn every_view_round_trips_in_events_and_tool_results() {
+    for view in views() {
+        round_trip(&UiEvent::ViewShow {
+            view: view.clone(),
+            today: "2026-10-15".into(),
+        });
+        round_trip(&Input::ToolResult {
+            id: tool_id(),
+            output: ToolOutput::View {
+                view: Box::new(view),
+                today: "2026-10-15".into(),
+            },
+        });
+    }
+    round_trip(&UiEvent::ViewDismiss);
+    round_trip(&UiEvent::SessionStart {
+        session: Some("2026-10-15-143210".into()),
+    });
 }
 
 fn talker_and_tool_inputs() -> Vec<Input> {
@@ -164,6 +279,8 @@ fn effects() -> Vec<Effect> {
         text: "we use Kafka".into(),
         links: vec![],
         project: None,
+        subject: Subject::Systems,
+        capture: CaptureId(4),
     };
     vec![
         Effect::Duck { gain: Gain::DUCKED },
@@ -196,4 +313,21 @@ fn effects() -> Vec<Effect> {
             at: SessionTime::from_ms(1500),
         },
     ]
+}
+
+#[test]
+fn every_memory_effect_round_trips() {
+    for effect in [
+        Effect::Forget {
+            scope: ForgetScope::Last,
+        },
+        Effect::Forget {
+            scope: ForgetScope::Session,
+        },
+        Effect::AcceptProposal {
+            capture: CaptureId(4),
+        },
+    ] {
+        round_trip(&effect);
+    }
 }
