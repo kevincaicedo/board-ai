@@ -92,6 +92,7 @@ export class Scene implements BatchSink {
       case "SurfaceDismiss":
       case "Chip":
       case "Problem":
+      case "OpenSettings":
         break;
     }
     this.store.apply(event, at);

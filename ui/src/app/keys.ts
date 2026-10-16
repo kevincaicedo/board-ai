@@ -50,3 +50,12 @@ function escapeCommand(closing: EscapeAction): UiCommand | null {
       return { type: "Stop" };
   }
 }
+
+/** ⌘, opens the settings screen over the stage (and closes it again from inside). */
+export function opensSettings(key: {
+  readonly code: string;
+  readonly meta: boolean;
+  readonly repeat: boolean;
+}): boolean {
+  return key.code === "Comma" && key.meta && !key.repeat;
+}

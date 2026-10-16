@@ -4,6 +4,7 @@
 //! - `dev_say(text)`: a command the UI's dev overlay can call; granted at runtime in debug
 //!   builds, absent (no handler, no permission) in release.
 //! - `BOARDAI_DEV_SCRIPT=<file>`: a script in the `converse` format, said once the UI connects.
+//!   The session starts at launch without the first-run screen.
 //!   With `BOARDAI_DEV_EXIT=1` the app quits when the script's last answer ends, through the
 //!   normal exit path (the session closes and logs what the bridge delivered).
 //! - `BOARDAI_SETTINGS=<file>`: read settings from this file instead of the config folder.
@@ -34,6 +35,17 @@ pub fn observe<S: StoreSink + 'static>(
     store: S,
 ) -> (Arc<dyn StoreSink>, Option<watch::Receiver<Progress>>) {
     (Arc::new(store), None)
+}
+
+/// A dev script needs a session without anyone clicking through the first-run screen.
+#[cfg(debug_assertions)]
+pub fn skips_setup() -> bool {
+    std::env::var_os("BOARDAI_DEV_SCRIPT").is_some()
+}
+
+#[cfg(not(debug_assertions))]
+pub fn skips_setup() -> bool {
+    false
 }
 
 #[cfg(debug_assertions)]

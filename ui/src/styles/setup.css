@@ -1,0 +1,501 @@
+/* The first-run screen, transcribed from the design canvas (11 · First run). Only tokens for
+   colors, shadows, type and the artboard's layout; the screen scrolls when the window is
+   smaller than the artboard. */
+
+/* Above the stage when it opens as settings. */
+.first-run {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  outline: none;
+  overflow-y: auto;
+  background: var(--bg-soft);
+  color: var(--ink);
+  font-family: var(--font-ui);
+}
+
+.first-run-column {
+  box-sizing: border-box;
+  max-width: calc(var(--setup-width) + 2 * var(--setup-side));
+  margin: 0 auto;
+  padding: var(--setup-orb-top) clamp(32px, 6.667vw, var(--setup-side)) 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.first-run-orb {
+  position: relative;
+  flex: none;
+  width: var(--setup-orb);
+  height: var(--setup-orb);
+}
+
+.first-run-head {
+  max-width: var(--setup-head-width);
+  margin-top: var(--setup-head-gap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.first-run-title {
+  margin: 0;
+  font-size: var(--type-setup-title);
+  line-height: var(--type-setup-title-line);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+}
+
+.first-run-lede {
+  margin: 0;
+  font-size: var(--type-setup-lede);
+  line-height: var(--type-setup-lede-line);
+  color: var(--ink-2);
+}
+
+.first-run-cards {
+  align-self: stretch;
+  margin-top: var(--setup-cards-gap);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--setup-gap);
+}
+
+/* A card */
+
+.setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--setup-card-gap);
+  padding: var(--setup-card-padding);
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  box-shadow: var(--shadow-setup-card);
+}
+
+.setup-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.setup-step {
+  font-family: var(--font-code);
+  font-size: var(--type-setup-step);
+  line-height: var(--type-setup-step-line);
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+
+.setup-card-title {
+  margin: 0;
+  font-size: var(--type-setup-card-title);
+  line-height: var(--type-setup-card-title-line);
+  font-weight: 400;
+}
+
+.setup-label,
+.setup-foot-label {
+  font-size: var(--type-setup-label);
+  line-height: var(--type-setup-label-line);
+  color: var(--ink-2);
+}
+
+.setup-note {
+  margin: 0;
+  font-size: var(--type-setup-note);
+  line-height: var(--type-setup-note-line);
+  color: var(--ink-2);
+}
+
+/* A refusal on its card: plain words in ink, louder than a note without a new color. */
+.setup-problem {
+  margin: 0;
+  font-size: var(--type-setup-note);
+  line-height: var(--type-setup-note-line);
+  color: var(--ink);
+}
+
+.setup-mono {
+  font-family: var(--font-code);
+  font-size: var(--type-setup-label);
+  line-height: var(--type-setup-label-line);
+}
+
+.setup-quiet {
+  color: var(--ink-2);
+}
+
+.setup-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--grey-100);
+}
+
+/* Card 1: providers and keys */
+
+.setup-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.setup-pill,
+.setup-mode {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+}
+
+/* Native radios, hidden; the label is the pill or the row. */
+.setup-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.setup-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--size-setup-pill);
+  padding: 0 16px;
+  border-radius: var(--radius-hover);
+  font-size: var(--type-setup-pill);
+  color: var(--ink-2);
+}
+
+.setup-pill:has(.setup-radio:checked),
+.setup-mode:has(.setup-radio:checked) {
+  background: var(--bg);
+  box-shadow:
+    var(--shadow-card-control),
+    inset 0 0 0 1.5px var(--signal);
+}
+
+.setup-pill:has(.setup-radio:checked) {
+  color: var(--ink);
+}
+
+.setup-mode:has(.setup-radio:checked) {
+  box-shadow:
+    var(--shadow-control),
+    inset 0 0 0 1.5px var(--signal);
+}
+
+.setup-key {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-field {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: var(--size-setup-field);
+  padding: 0 16px;
+  box-sizing: border-box;
+  border-radius: calc(var(--size-setup-field) / 2);
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+  font-family: var(--font-code);
+  font-size: var(--type-setup-label);
+}
+
+.setup-field:focus-within {
+  box-shadow: inset 0 0 0 1.5px var(--signal);
+}
+
+.setup-lock {
+  flex: none;
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.setup-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-code);
+  font-size: var(--type-setup-label);
+  color: var(--ink);
+  outline: none;
+}
+
+.setup-field input::placeholder {
+  color: var(--ink-placeholder);
+}
+
+.setup-select {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-code);
+  font-size: var(--type-setup-label);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.setup-local .setup-select {
+  flex: 1;
+}
+
+/* Card 2: the local models */
+
+.setup-model {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setup-model-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setup-model-name {
+  font-size: var(--type-setup-row);
+  line-height: var(--type-setup-row-line);
+}
+
+.setup-size {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--type-setup-note);
+}
+
+.setup-bar {
+  position: relative;
+  height: var(--setup-bar);
+  border-radius: 3px;
+  background: var(--grey-100);
+}
+
+.setup-bar-fill {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  height: calc(var(--setup-bar) - 2px);
+  border-radius: 2px;
+  background: var(--signal);
+  transition: width var(--duration-standard) var(--ease-out);
+}
+
+.setup-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setup-small {
+  flex: none;
+  height: var(--size-setup-small);
+  padding: 0 14px;
+  border-radius: calc(var(--size-setup-small) / 2);
+  border: none;
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+  font-family: inherit;
+  font-size: var(--type-setup-label);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* Card 3: the microphone */
+
+/* One row at the artboard's width; on a narrow window the input picker wraps under. */
+.setup-mic-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--size-button);
+}
+
+.setup-mic-ask {
+  flex: none;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--size-button);
+  padding: 0 22px 0 6px;
+  border-radius: calc(var(--size-button) / 2);
+  border: none;
+  background: var(--bg);
+  box-shadow: var(--shadow-button);
+  font-family: inherit;
+  font-size: var(--type-setup-row);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.setup-mic-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--type-setup-row);
+  line-height: var(--type-setup-row-line);
+}
+
+.setup-mic-glyph,
+.setup-mic-badge {
+  flex: none;
+  width: var(--size-control);
+  height: var(--size-control);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setup-mic-badge {
+  background: var(--bg);
+  box-shadow: var(--shadow-card-control);
+}
+
+.setup-mic-glyph svg,
+.setup-mic-badge svg {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.setup-input {
+  max-width: 50%;
+  text-align: right;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--type-setup-note);
+}
+
+.setup-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setup-mode {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 16px;
+  border-radius: var(--radius-hover);
+  text-align: left;
+  color: var(--ink);
+}
+
+.setup-mode-label {
+  font-size: var(--type-setup-row);
+  line-height: var(--type-setup-row-line);
+}
+
+/* Below the cards */
+
+.first-run-foot {
+  align-self: stretch;
+  margin-top: var(--setup-foot-gap);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  font-size: var(--type-setup-label);
+  line-height: var(--type-setup-label-line);
+  color: var(--ink-2);
+}
+
+.first-run-harness {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-chip {
+  padding: 6px 12px;
+  border-radius: var(--radius-chip);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+  font-family: var(--font-code);
+  font-size: var(--type-setup-note);
+}
+
+.setup-chip-found {
+  color: var(--ink);
+}
+
+.first-run-start {
+  margin-top: var(--setup-start-gap);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.first-run-go {
+  height: var(--size-button);
+  padding: 0 32px;
+  border-radius: calc(var(--size-button) / 2);
+  border: none;
+  background: var(--bg);
+  box-shadow: var(--shadow-setup-start);
+  font-family: inherit;
+  font-size: var(--type-setup-start);
+  color: var(--signal);
+  cursor: pointer;
+}
+
+.first-run-go:disabled {
+  color: var(--ink-3);
+  box-shadow: var(--shadow-control);
+  cursor: default;
+}
+
+.setup-pill:has(.setup-radio:disabled),
+.setup-mode:has(.setup-radio:disabled),
+.setup-small:disabled,
+.setup-mic-ask:disabled {
+  cursor: progress;
+}
+
+.setup-pill:has(.setup-radio:focus-visible),
+.setup-mode:has(.setup-radio:focus-visible),
+.setup-small:focus-visible,
+.setup-mic-ask:focus-visible,
+.setup-select:focus-visible,
+.first-run-go:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+
+.first-run .orb {
+  pointer-events: none;
+}

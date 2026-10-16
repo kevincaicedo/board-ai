@@ -163,6 +163,24 @@ pub const SETTINGS_FILE_MAX_BYTES: u64 = 256 * 1024;
 /// Longest secret name; a longer name is a settings error.
 pub const SECRET_NAME_MAX_BYTES: usize = 64;
 
+/// Longest secret value the first-run screen saves (provider keys are under 200 bytes); a
+/// longer paste is refused before it reaches the Keychain.
+pub const SECRET_VALUE_MAX_BYTES: usize = 1024;
+
+/// Time for a local Ollama to list its models (connect and answer). Past it Ollama counts as
+/// not running; the first-run screen says so and asks again when the window regains focus.
+pub const OLLAMA_PROBE_TIMEOUT_MS: u64 = 800;
+
+/// Largest model list read from Ollama; a larger answer counts as malformed.
+pub const OLLAMA_TAGS_MAX_BYTES: usize = 256 * 1024;
+
+/// Models listed from Ollama; later ones are left out of the first-run screen.
+pub const OLLAMA_MODELS_MAX: usize = 64;
+
+/// Longest Ollama model name kept (and accepted from the first-run screen); longer names are
+/// skipped or refused.
+pub const OLLAMA_MODEL_NAME_MAX_BYTES: usize = 200;
+
 // ---------------------------------------------------------------------------------------------
 // Store: event log, vault, index, recall and the scribe (owner: runtime::store)
 

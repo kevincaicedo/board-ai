@@ -14,63 +14,66 @@ use crate::limits::{LLM_MAX_TOKENS_MAX, SCRIBE_MAX_TOKENS_DEFAULT, TALKER_MAX_TO
 use crate::llm::openai::OLLAMA_BASE_URL;
 use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
 
-const ANTHROPIC_SECRET: &str = "anthropic";
-const ELEVENLABS_SECRET: &str = "elevenlabs";
+pub(super) const ANTHROPIC_SECRET: &str = "anthropic";
+pub(super) const ELEVENLABS_SECRET: &str = "elevenlabs";
 const DEFAULT_STT_MODEL: &str = "base.en";
 const DEFAULT_VOICE: &str = "default";
 
+/// The file as written: `None` is a field the file leaves out (its default). Editing keeps
+/// this shape, so a saved file holds only what was chosen (`super::edit`).
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawSettings {
-    vault: Option<String>,
-    code_roots: Option<Vec<String>>,
-    mic: Option<String>,
-    voice: Option<RawVoice>,
-    audio: Option<RawAudio>,
-    talker: Option<RawLlm>,
-    scribe: Option<RawLlm>,
-    stt: Option<RawProvider>,
-    tts: Option<RawProvider>,
-    harness: Option<RawHarness>,
+pub(super) struct RawSettings {
+    pub(super) setup_complete: Option<bool>,
+    pub(super) vault: Option<String>,
+    pub(super) code_roots: Option<Vec<String>>,
+    pub(super) mic: Option<String>,
+    pub(super) voice: Option<RawVoice>,
+    pub(super) audio: Option<RawAudio>,
+    pub(super) talker: Option<RawLlm>,
+    pub(super) scribe: Option<RawLlm>,
+    pub(super) stt: Option<RawProvider>,
+    pub(super) tts: Option<RawProvider>,
+    pub(super) harness: Option<RawHarness>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawLlm {
-    kind: Option<String>,
-    model: Option<String>,
-    effort: Option<String>,
-    max_tokens: Option<i64>,
-    base_url: Option<String>,
-    secret: Option<String>,
+pub(super) struct RawLlm {
+    pub(super) kind: Option<String>,
+    pub(super) model: Option<String>,
+    pub(super) effort: Option<String>,
+    pub(super) max_tokens: Option<i64>,
+    pub(super) base_url: Option<String>,
+    pub(super) secret: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawProvider {
-    kind: Option<String>,
-    model: Option<String>,
-    base_url: Option<String>,
-    secret: Option<String>,
+pub(super) struct RawProvider {
+    pub(super) kind: Option<String>,
+    pub(super) model: Option<String>,
+    pub(super) base_url: Option<String>,
+    pub(super) secret: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawHarness {
-    kind: Option<String>,
-    model: Option<String>,
+pub(super) struct RawHarness {
+    pub(super) kind: Option<String>,
+    pub(super) model: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawVoice {
-    id: Option<String>,
+pub(super) struct RawVoice {
+    pub(super) id: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawAudio {
-    input: Option<String>,
+pub(super) struct RawAudio {
+    pub(super) input: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +111,7 @@ pub(super) fn defaults(home: &Path) -> Settings {
             vault: home.join("BoardAI"),
             code_roots: Vec::new(),
             mic: MicMode::Open,
+            setup_complete: false,
         }
     })
 }
@@ -125,11 +129,15 @@ fn fallback_llm(role: Role) -> LlmSettings {
 }
 
 pub(super) fn parse(text: &str, home: &Path) -> Result<Settings, SettingsError> {
-    let raw: RawSettings = toml::from_str(text).map_err(|error| SettingsError::Syntax {
+    parse_raw(read_raw(text)?, home)
+}
+
+/// The file's fields as written, before defaults and checks.
+pub(super) fn read_raw(text: &str) -> Result<RawSettings, SettingsError> {
+    toml::from_str(text).map_err(|error| SettingsError::Syntax {
         line: error.span().map(|span| line_of(text, span.start)),
         message: without_quoted_values(error.message()),
-    })?;
-    parse_raw(raw, home)
+    })
 }
 
 fn parse_raw(raw: RawSettings, home: &Path) -> Result<Settings, SettingsError> {
@@ -158,12 +166,16 @@ fn parse_raw(raw: RawSettings, home: &Path) -> Result<Settings, SettingsError> {
             .map(|root| path("code_roots", root, home))
             .collect::<Result<_, _>>()?,
         mic: match raw.mic.as_deref() {
-            None | Some("open") => MicMode::Open,
-            Some("push_to_talk") => MicMode::PushToTalk,
+            None | Some(MIC_OPEN) => MicMode::Open,
+            Some(MIC_PUSH_TO_TALK) => MicMode::PushToTalk,
             Some(_) => return Err(invalid("mic", "must be `open` or `push_to_talk`")),
         },
+        setup_complete: raw.setup_complete.unwrap_or(false),
     })
 }
+
+pub(super) const MIC_OPEN: &str = "open";
+pub(super) const MIC_PUSH_TO_TALK: &str = "push_to_talk";
 
 fn role_defaults(role: Role) -> (&'static str, Effort, u32) {
     match role {

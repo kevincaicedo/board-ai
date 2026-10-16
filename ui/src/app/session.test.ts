@@ -242,3 +242,12 @@ test("the suggestion rises in out of a blur, then blurs out once cleared", () =>
   const gone = suggestionLook(500, 2050, 2050 + tokens.durationSuggestionOutMs, tokens);
   assert.equal(gone.opacity, 0);
 });
+
+test('each spoken "open settings" is one request, kept across a stage reset', () => {
+  const store = new SessionStore(tokens);
+  assert.equal(store.settingsRequests.value, 0);
+  store.apply({ type: "OpenSettings" }, 100);
+  store.reset();
+  store.apply({ type: "OpenSettings" }, 0);
+  assert.equal(store.settingsRequests.value, 2);
+});

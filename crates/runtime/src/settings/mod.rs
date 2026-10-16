@@ -1,10 +1,13 @@
 //! Settings (LLD §3.8): `settings.toml` in the app's config folder, parsed once into typed
 //! settings with defaults, and errors that name the field. Secrets are referenced by name only
 //! and resolved through a [`SecretStore`]; a key pasted into the file is an error, and no error
-//! ever quotes a value from the file.
+//! ever quotes a value from the file. The first-run screen changes the file with
+//! [`Settings::edit`].
 
+mod edit;
 mod raw;
 mod secrets;
+mod write;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -13,6 +16,7 @@ use crate::audio::InputChoice;
 use crate::limits::SETTINGS_FILE_MAX_BYTES;
 use crate::llm::Effort;
 
+pub use edit::{LlmChoice, SettingsEdit};
 pub use secrets::{MemorySecretStore, Secret, SecretError, SecretName, SecretStore};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +33,9 @@ pub struct Settings {
     /// Where "open the boardai repo" looks.
     pub code_roots: Vec<PathBuf>,
     pub mic: MicMode,
+    /// `setup_complete = true`: the first-run screen was finished, so the app opens on the
+    /// stage. Absent (a new or hand-written file) shows the first-run screen.
+    pub setup_complete: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +139,10 @@ pub enum SettingsError {
         field: String,
         reason: String,
     },
+    /// Saving failed; the file on disk is unchanged.
+    Unwritable {
+        detail: String,
+    },
 }
 
 impl fmt::Display for SettingsError {
@@ -153,6 +164,9 @@ impl fmt::Display for SettingsError {
             Self::Invalid { field, reason } => {
                 write!(formatter, "settings.toml `{field}`: {reason}")
             }
+            Self::Unwritable { detail } => {
+                write!(formatter, "settings.toml could not be saved: {detail}")
+            }
         }
     }
 }
@@ -173,25 +187,40 @@ impl Settings {
 
     /// Reads and parses the file; a missing file means the defaults.
     pub fn load(path: &Path, home: &Path) -> Result<Self, SettingsError> {
-        let metadata = match std::fs::metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::defaults(home));
-            }
-            Err(error) => {
-                return Err(SettingsError::Unreadable {
-                    detail: error.to_string(),
-                });
-            }
-        };
-        if metadata.len() > SETTINGS_FILE_MAX_BYTES {
-            return Err(SettingsError::TooLarge {
-                size_bytes: metadata.len(),
+        match read_text(path)? {
+            Some(text) => Self::parse(&text, home),
+            None => Ok(Self::defaults(home)),
+        }
+    }
+
+    /// Applies `edits` to the file at `path`, creating it (and its folder) when missing. Fields
+    /// the edits don't touch are kept as written; comments are not. The new text must parse
+    /// with [`Settings::parse`] before it replaces the file, atomically, so a failed edit
+    /// leaves the file as it was. A file that doesn't parse is never overwritten.
+    pub fn edit(path: &Path, home: &Path, edits: &[SettingsEdit]) -> Result<Self, SettingsError> {
+        edit::apply(path, home, edits)
+    }
+}
+
+/// The file's text, bounded; `None` when there is no file.
+fn read_text(path: &Path) -> Result<Option<String>, SettingsError> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(SettingsError::Unreadable {
+                detail: error.to_string(),
             });
         }
-        let text = std::fs::read_to_string(path).map_err(|error| SettingsError::Unreadable {
-            detail: error.to_string(),
-        })?;
-        Self::parse(&text, home)
+    };
+    if metadata.len() > SETTINGS_FILE_MAX_BYTES {
+        return Err(SettingsError::TooLarge {
+            size_bytes: metadata.len(),
+        });
     }
+    std::fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| SettingsError::Unreadable {
+            detail: error.to_string(),
+        })
 }

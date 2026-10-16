@@ -114,6 +114,7 @@ const TOKEN_SPEC = {
   recallCardWidth: ["--recall-card-width", "px"],
   recallBoardSoften: ["--recall-board-soften", "px"],
   captionWidth: ["--caption-width", "px"],
+  setupOrb: ["--setup-orb", "px"],
 } as const satisfies Record<string, readonly [string, "px" | "ms" | "number"]>;
 
 export type Tokens = { readonly [K in keyof typeof TOKEN_SPEC]: number };

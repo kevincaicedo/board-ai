@@ -27,7 +27,7 @@ pub use actor::{SpeechOut, SpeechOutChannels, SpeechOutCommand, SpeechOutConfig}
 pub use elevenlabs::{
     ELEVENLABS_BASE_URL, ELEVENLABS_DEFAULT_VOICE_ID, ElevenLabsOptions, ElevenLabsVoice,
 };
-pub use engine::{ChosenVoice, KOKORO_QUANTIZED_MODEL, choose_voice, engine_for};
+pub use engine::{ChosenVoice, KOKORO_QUANTIZED_MODEL, choose_voice, engine_for, kokoro_files};
 pub use kokoro::{KOKORO_VOICE, KokoroFiles, KokoroVoice};
 pub use system::{SystemVoice, SystemVoiceInfo, system_voices};
 

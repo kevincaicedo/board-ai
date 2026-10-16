@@ -267,6 +267,7 @@ The core keeps this session's captures, newest last. It stops at 500 (`CAPTURES_
 | "Don't remember this session" (`FORGET_SESSION_PHRASES`) | Any time | `Forget { scope: Session }` (I10). The session is off the record: `remember` and `add_task` answer "Not stored" and send nothing | "Won't remember this." |
 | "Yes, keep it" (`KEEP_PHRASES` or a plain yes) | A proposal is waiting | `AcceptProposal { capture }` | "Kept." |
 | "Close that" (`CLOSE_VIEW_PHRASES`) | A view is open (§3.7) | `ViewDismiss` and an `Acknowledge` pulse | nothing |
+| "Open settings" (`OPEN_SETTINGS_PHRASES`) | Any time | `OpenSettings` and an `Acknowledge` pulse: the UI shows the settings screen (§3.8) | nothing |
 
 Two cases are left to the talker:
 - "Forget that" with nothing captured, which usually means "never mind".
@@ -314,7 +315,7 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 
 **Speech in** is anything holding a `SpeechInLink` (voice onset, start and end, transcripts). `LiveListener` connects the real one. Typed text also works: `say_typed` gives a line the inputs of a finished utterance, with its voiced length estimated per word, so barge-in rules apply as they would to speech (the dev loop and the app's dev hooks).
 
-**Audio in the app.** At launch, in order: the voice engine from settings (the system voice in its place when it cannot start; silently while a local model is only waiting for its download), the microphone permission (read with `AVAudioApplication`, which never prompts; asked for once while undetermined), VoiceProcessingIO on the configured input (a name no device has falls back to the system default), `LiveVoice` on its voice ring, then speech in on its mic ring if permission is granted and the models are downloaded. Each failure is a `Problem` caption and the rest still starts: no audio unit means `VirtualVoice` (captions and strokes in time, no sound); no permission or no models means BoardAI speaks but cannot hear. Closing stops the session first, then speech in's threads, then the unit.
+**Audio in the app.** At launch, in order: the voice engine from settings (the system voice in its place when it cannot start; silently while a local model is only waiting for its download), the microphone permission (read with `AVAudioApplication`, which never prompts; the first-run screen asked already, so it is asked for here only after a dev script skipped setup; both go through the app's one entry point, `app::permission`), VoiceProcessingIO on the configured input (a name no device has falls back to the system default), `LiveVoice` on its voice ring, then speech in on its mic ring if permission is granted and the models are downloaded. Each failure is a `Problem` caption and the rest still starts: no audio unit means `VirtualVoice` (captions and strokes in time, no sound); no permission or no models means BoardAI speaks but cannot hear. Closing stops the session first, then speech in's threads, then the unit.
 
 **Time.** All runtime time comes through a `Clock` trait, real or fake. The core's `SessionTime` is monotonic time since the session started. Sync with the voice uses the separate playback offset, which comes from the audio clock.
 
@@ -498,6 +499,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - `Problem { spoken, detail }`, `Suggestion { text }` (the idle line under the orb; `None` clears it)
   - `SessionStart { session }`: always the first event of a session. The UI starts from an empty stage, and its clock follows the new session's time, which starts again from zero. The bridge never puts it in a batch with the previous session's events.
   - `ViewShow { view, today }` and `ViewDismiss`; the view types are in `core::views`.
+  - `OpenSettings`: "open settings" was heard; the live UI shows the settings screen, a replay ignores it.
 - **Draw ops:** `Node { id, op, shape, label, rect, stack, fill }` with `fill` one of `Lilac`, `Sky`, `Mint`, `Blush` or none; `Edge`, `Annotate`, `Strike` (rewrites above the old label, D-032), `Trace`. Groups are drawn solid and light with the label above (D-032).
 - **Surfaces:** `Code { path, first_line, lines, highlight }`; `Compare { options, criteria, title }`, whose options are columns and criteria rows; `Recap { bullets }`. Updates: `Highlight { line }`; `Cell { row, col, mark }` with `row` indexing criteria and `col` options; `Mark { line, columns, mark }`, a pen mark on a code line, with `columns` the `[begin, end)` characters (Unicode scalar values) it covers.
 - **Commands (UI → core):** `Pointer { target }`, `Mic { mute | unmute | talk_down | talk_up }`, `Stop` (Esc, §2.2), `CloseView` (Esc while a view is open, §3.7 views). To come: `ReplaySeek { ms }`, `SaveSettings { … }`.
@@ -513,7 +515,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - **Closing.** A view closes on "close that" (§2.8), on Esc (`CloseView`), or just before the live stage is used again (a stroke, a detour or a card). A view never hides what is being explained.
   - **A past board is a picture.** It is drawn at once over the live board and never merged into the core's board (law 1). The talker can't draw on it; to continue, it redraws on the live board, which closes the view.
 - **Types** are defined in `core::protocol` and exported to `ui/src/protocol/generated/` by ts-rs. A stale export fails `just check`.
-- **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. `invoke("session_log", { id })` returns a past session's `events.jsonl` for a replay. The id is parsed as a `SessionId` at the boundary, and the store finds the file through the index, so no path ever comes from the UI. The app's capabilities allow only these three commands; debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
+- **Transport.** A Tauri `Channel` carries events in batches per frame: `connect` registers it, and batches made before it (the session starts before the webview loads) wait, at most 64, and go first. One `invoke("command", …)` carries commands; a full inbox drops the command and the UI counts the rejection. `invoke("session_log", { id })` returns a past session's `events.jsonl` for a replay. The id is parsed as a `SessionId` at the boundary, and the store finds the file through the index, so no path ever comes from the UI. The app's capabilities allow only these three commands and the first-run screen's six `setup_*` commands (§3.8); debug builds also grant `dev_say(text)`, a typed utterance for the dev overlay, which release builds don't have. The UI only sees a `Transport` interface, with Tauri, replay-file and (later) WebSocket implementations.
 
 ### 3.8 Settings and secrets
 
@@ -523,7 +525,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - vault path
   - code roots, which are where "open the boardai repo" looks
   - mic mode
-- **Shape.** Top-level `vault`, `code_roots` (absolute or `~/`) and `mic` (`open` or `push_to_talk`), plus a table per role:
+- **Shape.** Top-level `setup_complete` (`true` once the first-run screen is finished), `vault`, `code_roots` (absolute or `~/`) and `mic` (`open` or `push_to_talk`), plus a table per role and `[audio]`:
 
   ```toml
   [talker]   # and [scribe]: kind = "anthropic" | "openai_compatible", model, effort (none…max), max_tokens, base_url, secret
@@ -535,11 +537,22 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   [tts]      # kind = "kokoro" | "elevenlabs" | "system", model; base_url and secret for elevenlabs only
   [harness]  # kind = "auto" | "claude_code" | "pi", model
   [voice]    # id
+  [audio]    # input = "system_default" | "built_in" | a device name as macOS shows it
   ```
 
   Everything has a default (the D-017 models, Ollama's URL for `openai_compatible`). Unknown keys are errors. Errors name the field and never quote a value: a value that looks like a key, or a misplaced one, is rejected without being echoed.
 - **Secrets** are stored in the Keychain (`keyring`) under names that the settings reference, read through the runtime's `SecretStore` trait. A secret is never put in settings, logs or the event log; `Secret` has no `Display` and a redacted `Debug`.
-- **First run.** The first run is the one screen that needs typing: choose providers, paste keys, watch the model downloads, and grant mic permission. Its design is artboard 11 on the design canvas.
+- **Editing.** `Settings::edit` applies typed edits to the file's fields as written: untouched fields stay as the user wrote them (or absent, so defaults keep moving with the code), and comments are not kept. The new text must parse with `Settings::parse` before it replaces the file through a synced temporary file and a rename, so a failed edit leaves the old file. A file that doesn't parse is never overwritten; the screen shows its error instead. Picking a provider replaces `[talker]` and `[scribe]` together, each from the provider's defaults.
+- **First run** (artboard 11 · First run, `crates/app/src/setup/`, `ui/src/setup/`). The one screen that needs typing.
+  - **When.** At launch, the session starts only when `setup_complete = true` (a missing file has no flag). Otherwise the window shows the first-run screen and the session waits for "Start talking". Debug builds running `BOARDAI_DEV_SCRIPT` skip it.
+  - **Status.** `setup_status` returns a `core::setup::SetupStatus`: the configured talker and its provider pill (Claude, OpenRouter, Ollama, or `Other` for a base URL the screen doesn't offer), which key names have a value in the Keychain (names only), the voice engine, Kokoro's and the hearing files (Whisper for `stt.model` plus Silero) with their sizes and state, Ollama's models from `GET /api/tags` within `OLLAMA_PROBE_TIMEOUT_MS`, microphone permission (`AVAudioApplication`, read without prompting), mic mode, input, and whether `claude` and `pi` are installed.
+  - **The start rule** (`core::setup::blockers`, D-101). The session may start once the talker is usable (its key is saved; or Ollama answers with the chosen model), the hearing files are verified, and the microphone is allowed. Push-to-talk needs the same files: both modes turn speech into text with Whisper. The voice never blocks: the system voice speaks until Kokoro is ready. The app refuses `setup_finish` while the rule names anything; the UI disables "Start talking" on the same list and says the first item in plain words.
+  - **Saving.** Each choice is saved at once (`setup_save`, one `SetupEdit`). Claude uses the D-017 defaults; OpenRouter uses `anthropic/claude-opus-5.5` and `anthropic/claude-haiku-5.5` at `https://openrouter.ai/api/v1` with the `openrouter` key; Ollama uses the chosen model (else `gemma4:latest` when present, else the first listed) for both roles at effort `none`. ElevenLabs becomes the voice only once its key is saved.
+  - **Keys.** `setup_key(name, value)` takes one of `anthropic`, `openrouter`, `elevenlabs`; the value is trimmed, must be one word of at most `SECRET_VALUE_MAX_BYTES`, and goes straight to the Keychain through `SecretStore::set`. It is never written to a file, logged, or sent back; the UI clears its field when it saves (on paste or Enter) and afterwards only shows that a key is saved.
+  - **Downloads.** The screen starts the hearing files, and Kokoro's while it is the voice, on its own; `setup_download(model, progress)` takes a model id (`ModelId::name`), resumes from the `.part` file, verifies SHA-256, and sends `Progress` at most every `SETUP_PROGRESS_INTERVAL_MS` (the last always), then `Done` or `Failed` with a problem the card says in plain words, with "Try again". A file runs once at a time; a request for a running one resolves at once and the screen polls the status until it is done.
+  - **Microphone.** "Allow microphone" asks once through `setup_microphone`; a denial tells you where to turn it on, and the status is read again whenever the window regains focus.
+  - **Finish.** `setup_finish` checks the rule again, writes `setup_complete = true`, starts the session once, and the UI swaps the screen for the stage. The session (store, audio, orchestrator) starts only here or at launch, so the gate and the lifecycle compose: after it, sessions end and begin by idle rest as before.
+  - **Settings** (D-107). ⌘, or a spoken "open settings" (a core cue, `UiEvent::OpenSettings`) shows the same screen over the running stage, titled "Settings"; the stage's keys wait while it is open. Choices and keys save at once as on a first run, and each save marks the session as changed. Esc, ⌘, or "Start talking" calls `setup_finish`: with nothing saved it only closes the screen; with changes it checks the rule (a blocker keeps the screen open and says why), then ends the session the way quitting does (its digest within `SESSION_QUIT_DIGEST_MS`, then audio, then the store) and starts a new one from the new settings. The UI stays connected and the new session's `SessionStart` resets the stage.
 
 ## 4. UI
 
@@ -575,6 +588,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - **Replay.** A full-stage overlay that plays the log from `Transport.sessionLog(id)` on its own `ReplayTransport` and scene. The live orb and captions stay on top. Its playhead is its own, not the outer session's time: the one exception to D-029.
   - **Esc.** It first leaves a replay started from a card, then sends `CloseView` when a core view is open, and otherwise sends `Stop` (§2.2).
   - **SessionStart.** The Tauri transport delivers the events before it, resets its clock and the scene, then delivers the rest.
+- **First run** (`ui/src/setup/`, artboard 11 · First run, §3.8). Inside Tauri the UI asks for the setup status before connecting; while setup isn't complete it shows the first-run screen instead of the stage, and swaps to the stage once `setup_finish` resolves. The screen reaches the app only through a `SetupTransport` (Tauri over the same bridge as the session transport, and a fake). A pure reducer holds the last status, requests in flight per card, refusals per card and the downloads it started; "Start talking" is enabled when the status names no blocker and nothing is in flight. The cards, the orb (the stage's renderer at 64 px, no dot field), the harness row and the button keep the artboard's positions at 1440×900, and the page scrolls on a smaller window. The microphone card adds an input picker on its first row, listing the devices macOS names (not on the canvas yet). Over the live stage, ⌘, or `OpenSettings` mounts the same screen as settings (`ui/src/setup/settings.tsx`); it takes the keyboard while open, and Esc or ⌘, leaves it. Outside Tauri, `?setup=downloading|ready|key-saved|mic-denied|ollama` shows the screen with a fake app for side-by-side checks against the canvas.
 - **Tokens and fonts.** TypeScript reads its numeric tokens from `tokens.css` at boot and fails on a missing one. Geist, Geist Mono and Excalifont are bundled (latin subsets, OFL), since the CSP allows no remote fonts.
 - **Budgets.** At most 4 ms of script per frame. One SVG path per stroke and one per hachure fill.
 
@@ -605,6 +619,10 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Audio file as mic input | 64 MiB, 120 s | runtime::audio | Refused |
 | File mic queue | 8 clips | runtime::audio | `play` is refused with `Full` |
 | Model download silence | 30 s | runtime::models | Fails with `Network`; the partial file is kept for resuming |
+| Model download progress to the first-run screen | one per 100 ms | app::setup | Updates in between are dropped; the last one always goes |
+| Pasted key | 1,024 bytes | runtime::settings | Refused before it reaches the Keychain |
+| Waiting for the microphone prompt's answer | 120 s | app::permission | The card shows what macOS reports then |
+| Ollama probe | 800 ms; 256 KiB, 64 models, 200-byte names | runtime::llm | Ollama counts as not running; past the size, a malformed answer; extra or longer names are left out |
 | Narration tag | 512 bytes | core::narration | The tag is dropped and counted |
 | Ops per response | 200 | core | The rest are dropped, and the talker is told in the next turn |
 | Detour depth | 3 | core | A spoken "let's finish this one first" |
@@ -703,7 +721,8 @@ CI runs the same command on macOS.
 - **API keys** live in the Keychain only, and the redaction filter covers every sink.
 - **Repo access.** Every path is canonicalized into a `RepoPath` at the boundary and must sit under a folder you opened. There is no access outside it.
 - **Prompt injection.** Repo content, docs and tool results are data. Nothing they say can trigger a change (I9). The system prompt says so, and the confirmation gate enforces it.
-- **Webview.** A strict CSP, no remote content, and minimal Tauri capabilities (the event channel and one command).
+- **Webview.** A strict CSP, no remote content, and minimal Tauri capabilities: the event channel, one command, a past session's log by id, and the first-run commands.
+- **First-run commands** (D-100). `setup_status`, `setup_save(edit)`, `setup_key(name, value)`, `setup_download(model, progress)`, `setup_microphone`, `setup_finish`. Every argument is parsed at the boundary into a type (`SetupEdit`, `KeyName`, `ModelId`, a bounded key), so the UI can name a provider, a key name or a model from fixed lists but never a path or a URL. A key goes only to the Keychain; refusals never quote it; `Secret` stays unprintable. The Ollama probe goes only to `localhost:11434`.
 
 ## 10. Dependencies
 

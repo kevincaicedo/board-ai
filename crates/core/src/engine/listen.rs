@@ -386,15 +386,15 @@ impl Core {
             self.user.context = context;
             return;
         }
-        // Keeping a proposal, the memory controls and "close that" are answered by the core
-        // itself; what the user was told so far waits for their next real question.
+        // Keeping a proposal, the memory controls, "close that" and "open settings" are answered
+        // by the core itself; what the user was told so far waits for their next real question.
         if self.resolve_proposal(&text, began, effects) {
             self.user.context = context;
             return;
         }
         self.resolve_gate(&text, began, effects);
         self.cancel_by_voice(&text, effects);
-        if self.memory_control(&text, effects) {
+        if self.memory_control(&text, effects) || self.open_settings_by_voice(&text, effects) {
             self.user.context = context;
             return;
         }

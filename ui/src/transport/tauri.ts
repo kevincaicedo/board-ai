@@ -12,6 +12,7 @@
 //   3. For a replay:       invoke("session_log", { id }) → string
 //      A past session's events.jsonl by id (bounded by the shell); a rejection is counted and
 //      the replay says it couldn't open.
+//   4. The first-run screen's setup_* commands, through the same bridge (setup/tauriSetup.ts).
 //
 // Both payloads are the serde JSON of the types in crates/core/src/protocol.rs. Batches are
 // parsed again here (protocol/parse.ts) so a mismatched build drops events instead of crashing.
@@ -22,12 +23,21 @@ import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import { parseUiBatch } from "../protocol/parse.ts";
 import { type BatchSink, isSessionId, SessionClock, type Transport } from "./transport.ts";
 
-/** The two Tauri calls the transport needs, injectable so tests don't need a webview. */
+/** The app's commands (crates/app/src/main.rs); the setup ones serve the first-run screen. */
+export type TauriCommand =
+  | "connect"
+  | "command"
+  | "session_log"
+  | "setup_status"
+  | "setup_save"
+  | "setup_key"
+  | "setup_download"
+  | "setup_microphone"
+  | "setup_finish";
+
+/** The two Tauri calls the transports need, injectable so tests don't need a webview. */
 export interface TauriBridge {
-  invoke(
-    command: "connect" | "command" | "session_log",
-    args: Record<string, unknown>,
-  ): Promise<unknown>;
+  invoke(command: TauriCommand, args: Record<string, unknown>): Promise<unknown>;
   /** Creates the channel object passed to `connect`; `onMessage` gets each batch. */
   channel(onMessage: (message: unknown) => void): unknown;
 }

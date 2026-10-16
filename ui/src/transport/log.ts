@@ -162,6 +162,7 @@ export function chaptersOf(batches: readonly UiBatch[]): Chapter[] {
         case "SessionStart":
         case "ViewShow":
         case "ViewDismiss":
+        case "OpenSettings":
           break;
       }
     }

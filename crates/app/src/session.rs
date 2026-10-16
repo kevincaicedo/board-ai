@@ -1,6 +1,7 @@
 //! Starting and closing the conversation session on Tauri's async runtime.
 //!
-//! At startup: `settings.toml` from the app's config folder (defaults when it is absent), the
+//! It starts once setup is done (`setup::launch`, or "Start talking" on the first-run screen):
+//! `settings.toml` from the app's config folder (defaults when it is absent), the
 //! store over the vault (`~/BoardAI` by default) with its index in the app's data folder, the
 //! talker and the scribe from those settings with their keys from the Keychain, the repo tools
 //! and harness for the configured code roots, and real audio (`crate::audio`: the voice, and
@@ -12,7 +13,8 @@
 //!
 //! Quitting closes the session (its digest within `SESSION_QUIT_DIGEST_MS`), then audio (speech
 //! in's threads, then the unit), then the store (within `STORE_SHUTDOWN_TIMEOUT_MS`), so
-//! quitting never hangs.
+//! quitting never hangs. Changing settings on the settings screen closes everything the same
+//! way and starts again (`restart`).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -112,13 +114,27 @@ pub fn start(app: &AppHandle) {
     });
 }
 
-/// Closes the session (talker, tasks, timers, voice; its digest within the quit budget), then
-/// audio, then the store.
+/// Quitting: closes the session, then audio, then the store, on the calling thread.
 pub fn close(app: &AppHandle) {
+    tauri::async_runtime::block_on(shut_down(app));
+}
+
+/// Settings changed: ends the session as quitting does (its digest within the quit budget),
+/// then starts a new one from the new `settings.toml`. The UI stays connected; the new
+/// session's `SessionStart` resets its stage.
+pub async fn restart(app: &AppHandle) {
+    shut_down(app).await;
+    tracing::info!("settings changed; a new session starts");
+    start(app);
+}
+
+/// Closes the session (talker, tasks, timers, voice; its digest within the quit budget), then
+/// audio, then the store. Every slot is emptied first, so nothing reaches a closing part.
+async fn shut_down(app: &AppHandle) {
     let state = app.state::<AppState>();
     let session = state.session.lock().ok().and_then(|mut slot| slot.take());
     if let Some(session) = session {
-        let stats = tauri::async_runtime::block_on(session.close());
+        let stats = session.close().await;
         tracing::info!(
             steps = stats.steps,
             sessions = stats.sessions,
@@ -127,19 +143,17 @@ pub fn close(app: &AppHandle) {
     }
     let audio = state.audio.lock().ok().and_then(|mut slot| slot.take());
     if let Some(audio) = audio {
-        tauri::async_runtime::block_on(audio.stop());
+        audio.stop().await;
     }
     let store = state.store.lock().ok().and_then(|mut slot| slot.take());
     if let Some(OpenStore { store, task }) = store {
         let bound = Duration::from_millis(STORE_SHUTDOWN_TIMEOUT_MS);
-        let stopped = tauri::async_runtime::block_on(async move {
-            tokio::time::timeout(bound, async move {
-                let closed = store.shutdown().await;
-                let joined = task.join().await;
-                closed.and(joined)
-            })
-            .await
-        });
+        let stopped = tokio::time::timeout(bound, async move {
+            let closed = store.shutdown().await;
+            let joined = task.join().await;
+            closed.and(joined)
+        })
+        .await;
         match stopped {
             Ok(Ok(())) => tracing::info!("store closed"),
             Ok(Err(error)) => tracing::warn!(%error, "the store did not close cleanly"),
@@ -205,15 +219,20 @@ async fn parts(
     }
 }
 
-fn load_settings(app: &AppHandle) -> Settings {
-    let home = app.path().home_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let path = crate::dev::settings_override().or_else(|| {
+/// `settings.toml` in the app's config folder (or the dev override); the first-run screen
+/// writes the same file.
+pub fn settings_path(app: &AppHandle) -> Option<PathBuf> {
+    crate::dev::settings_override().or_else(|| {
         app.path()
             .app_config_dir()
             .ok()
             .map(|folder| folder.join("settings.toml"))
-    });
-    let Some(path) = path else {
+    })
+}
+
+fn load_settings(app: &AppHandle) -> Settings {
+    let home = app.path().home_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let Some(path) = settings_path(app) else {
         tracing::error!("no app config folder; using default settings");
         return Settings::defaults(&home);
     };

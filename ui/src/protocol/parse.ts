@@ -546,6 +546,7 @@ const EVENTS: Tagged<UiEvent, "type"> = {
       : { type: "ViewShow", view, today };
   },
   ViewDismiss: () => ({ type: "ViewDismiss" }),
+  OpenSettings: () => ({ type: "OpenSettings" }),
 };
 
 export function parseUiEvent(value: unknown): UiEvent | null {

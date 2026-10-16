@@ -4,7 +4,8 @@
 //!
 //! One view is open at a time. It closes when the user says "close that", presses Esc, or when
 //! the live stage is used again (a stroke, a detour or a card): the board is the core's, and a
-//! view never hides what is being explained.
+//! view never hides what is being explained. "Open settings" opens the settings screen, which
+//! the UI and the app own.
 
 use std::fmt::Write as _;
 
@@ -43,6 +44,20 @@ impl Core {
                 kind_name(kind)
             ));
         }
+        true
+    }
+
+    /// "Open settings": the UI opens the settings screen, with a nod and no words (returns
+    /// true). The talker hears about it with its next request.
+    pub(super) fn open_settings_by_voice(&mut self, text: &str, effects: &mut Vec<Effect>) -> bool {
+        if !cues::is_open_settings(text) {
+            return false;
+        }
+        effects.push(Effect::Ui(UiEvent::OpenSettings));
+        effects.push(Effect::Ui(UiEvent::Acknowledge));
+        self.context.notice(format!(
+            "The user said \"{text}\" and the settings screen opened over the board."
+        ));
         true
     }
 

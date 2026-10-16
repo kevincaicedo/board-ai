@@ -104,7 +104,8 @@ impl Frame {
             | UiEvent::Suggestion { .. }
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
-            | UiEvent::ViewDismiss => key,
+            | UiEvent::ViewDismiss
+            | UiEvent::OpenSettings => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -135,7 +136,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::Suggestion { .. }
         | UiEvent::SessionStart { .. }
         | UiEvent::ViewShow { .. }
-        | UiEvent::ViewDismiss => None,
+        | UiEvent::ViewDismiss
+        | UiEvent::OpenSettings => None,
     }
 }
 

@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Mutex;
 
 use crate::limits::SECRET_NAME_MAX_BYTES;
 
@@ -66,6 +67,8 @@ pub enum SecretError {
     Missing { name: SecretName },
     /// The store could not be read (a locked Keychain, a denied prompt).
     Unavailable { name: SecretName, detail: String },
+    /// The store refused to save the secret; whatever it held before is unchanged.
+    Unwritable { name: SecretName, detail: String },
 }
 
 impl fmt::Display for SecretError {
@@ -75,22 +78,51 @@ impl fmt::Display for SecretError {
             Self::Unavailable { name, detail } => {
                 write!(formatter, "the secret `{name}` could not be read: {detail}")
             }
+            Self::Unwritable { name, detail } => {
+                write!(
+                    formatter,
+                    "the secret `{name}` could not be saved: {detail}"
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for SecretError {}
 
-/// Where secrets live. Reads may block (the Keychain can prompt), so async callers use the
-/// blocking pool.
+/// Where secrets live. Reads and writes may block (the Keychain can prompt), so async callers
+/// use the blocking pool.
 pub trait SecretStore: Send + Sync {
     fn get(&self, name: &SecretName) -> Result<Secret, SecretError>;
+
+    /// Stores `secret` under `name`, replacing any value (the first-run screen).
+    fn set(&self, name: &SecretName, secret: &Secret) -> Result<(), SecretError>;
+
+    /// Whether a value is stored under `name`, without handing it out.
+    fn contains(&self, name: &SecretName) -> Result<bool, SecretError> {
+        match self.get(name) {
+            Ok(_) => Ok(true),
+            Err(SecretError::Missing { .. }) => Ok(false),
+            Err(error @ (SecretError::Unavailable { .. } | SecretError::Unwritable { .. })) => {
+                Err(error)
+            }
+        }
+    }
 }
 
 /// A store for tests and the conversation simulator.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct MemorySecretStore {
-    secrets: BTreeMap<SecretName, Secret>,
+    // Held only to read or write one entry.
+    secrets: Mutex<BTreeMap<SecretName, Secret>>,
+}
+
+impl Clone for MemorySecretStore {
+    fn clone(&self) -> Self {
+        Self {
+            secrets: Mutex::new(self.entries()),
+        }
+    }
 }
 
 impl MemorySecretStore {
@@ -100,16 +132,43 @@ impl MemorySecretStore {
     }
 
     pub fn insert(&mut self, name: SecretName, secret: Secret) {
-        self.secrets.insert(name, secret);
+        match self.secrets.get_mut() {
+            Ok(secrets) => {
+                secrets.insert(name, secret);
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().insert(name, secret);
+            }
+        }
+    }
+
+    fn entries(&self) -> BTreeMap<SecretName, Secret> {
+        match self.secrets.lock() {
+            Ok(secrets) => secrets.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 }
 
 impl SecretStore for MemorySecretStore {
     fn get(&self, name: &SecretName) -> Result<Secret, SecretError> {
-        self.secrets
+        let secrets = match self.secrets.lock() {
+            Ok(secrets) => secrets,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        secrets
             .get(name)
             .cloned()
             .ok_or_else(|| SecretError::Missing { name: name.clone() })
+    }
+
+    fn set(&self, name: &SecretName, secret: &Secret) -> Result<(), SecretError> {
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Unwritable {
+            name: name.clone(),
+            detail: "the store is poisoned".to_owned(),
+        })?;
+        secrets.insert(name.clone(), secret.clone());
+        Ok(())
     }
 }
 
@@ -148,5 +207,24 @@ mod tests {
         );
         let missing = SecretName::parse("openrouter").map(|other| store.get(&other));
         assert!(matches!(missing, Some(Err(SecretError::Missing { .. }))));
+    }
+
+    #[test]
+    fn a_set_secret_is_found_and_replaced() {
+        let store = MemorySecretStore::new();
+        let Some(name) = SecretName::parse("openrouter") else {
+            panic!("valid name")
+        };
+        assert_eq!(store.contains(&name), Ok(false));
+        let first = Secret::new("sk-or-first".to_owned());
+        assert_eq!(store.set(&name, &first), Ok(()));
+        assert_eq!(store.contains(&name), Ok(true));
+        let second = Secret::new("sk-or-second".to_owned());
+        assert_eq!(store.set(&name, &second), Ok(()));
+        assert_eq!(store.get(&name), Ok(second));
+        assert_eq!(
+            store.clone().get(&name).map(|found| found.expose().len()),
+            Ok(12)
+        );
     }
 }

@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use boardai_runtime::limits::TALKER_MAX_TOKENS_DEFAULT;
-use boardai_runtime::llm::openai::OLLAMA_BASE_URL;
+use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
 use boardai_runtime::llm::{DEFAULT_TALKER_MODEL, Effort};
 use boardai_runtime::settings::{LlmKind, LlmSettings, Secret, SecretName};
 
@@ -28,7 +28,6 @@ Type a line to say it; a line typed while BoardAI speaks is a barge-in. Ctrl-D e
 
 Keys come from the environment: ANTHROPIC_API_KEY, OPENROUTER_API_KEY.";
 
-const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const OLLAMA_DEFAULT_MODEL: &str = "gemma4:latest";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

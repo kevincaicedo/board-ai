@@ -292,6 +292,44 @@
   --recall-thumb-height: 126px;
   --recall-board-soften: 4px;
   --replay-caption-lift: 110px;
+
+  /* First run (11 · First run): the one screen with typing. Vertical gaps put the orb, title,
+     cards, harness row and Start at the artboard's 56 / 144 / 268 / 716 / 796 px at 1440×900. */
+  --ink-placeholder: #8e8e93;
+  --shadow-setup-card: 0 24px 64px rgba(20, 20, 40, 0.06);
+  --shadow-setup-start: 0 10px 30px rgba(20, 20, 40, 0.1);
+  --setup-orb: 64px;
+  --setup-orb-top: 56px;
+  --setup-head-gap: 24px;
+  --setup-cards-gap: 42px;
+  --setup-foot-gap: 112px;
+  --setup-start-gap: 48px;
+  --setup-width: 1248px;
+  --setup-side: 96px;
+  --setup-head-width: 1000px;
+  --setup-gap: 24px;
+  --setup-card-padding: 28px;
+  --setup-card-gap: 18px;
+  --setup-bar: 5px;
+  --size-setup-pill: 40px;
+  --size-setup-field: 48px;
+  --size-setup-small: 36px;
+  --type-setup-title: 40px;
+  --type-setup-title-line: 48px;
+  --type-setup-lede: 16px;
+  --type-setup-lede-line: 24px;
+  --type-setup-step: 12px;
+  --type-setup-step-line: 16px;
+  --type-setup-card-title: 20px;
+  --type-setup-card-title-line: 28px;
+  --type-setup-pill: 15px;
+  --type-setup-row: 16px;
+  --type-setup-row-line: 22px;
+  --type-setup-label: 14px;
+  --type-setup-label-line: 20px;
+  --type-setup-note: 13px;
+  --type-setup-note-line: 18px;
+  --type-setup-start: 17px;
 }
 
 html,

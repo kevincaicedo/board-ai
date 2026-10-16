@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type KeyPress, keyDownCommand } from "./keys.ts";
+import { type KeyPress, keyDownCommand, opensSettings } from "./keys.ts";
 
 const press = (code: string, extra: Partial<KeyPress> = {}): KeyPress => ({
   code,
@@ -42,4 +42,11 @@ test("Esc closes what is open first: a card's replay, then the view, then it sto
   assert.equal(pressEscape("close-replay"), null, "the UI closes its own replay; nothing is sent");
   assert.deepEqual(pressEscape("close-view"), { type: "CloseView" });
   assert.deepEqual(pressEscape("none"), { type: "Stop" });
+});
+
+test("⌘, opens settings; a comma alone or a held key does not", () => {
+  assert.equal(opensSettings({ code: "Comma", meta: true, repeat: false }), true);
+  assert.equal(opensSettings({ code: "Comma", meta: false, repeat: false }), false);
+  assert.equal(opensSettings({ code: "Comma", meta: true, repeat: true }), false);
+  assert.equal(opensSettings({ code: "Period", meta: true, repeat: false }), false);
 });

@@ -22,6 +22,9 @@ use crate::settings::Secret;
 /// Ollama's OpenAI-compatible endpoint on its default port.
 pub const OLLAMA_BASE_URL: &str = "http://localhost:11434/v1";
 
+/// OpenRouter's OpenAI-compatible endpoint.
+pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
+
 /// How to reach the server. Local servers need no key.
 #[derive(Clone, Debug)]
 pub struct OpenAiOptions {

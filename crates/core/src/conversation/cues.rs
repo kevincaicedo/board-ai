@@ -170,6 +170,25 @@ pub const CLOSE_VIEW_PHRASES: &[&str] = &[
     "done",
 ];
 
+/// Opening the settings screen by voice, as a whole utterance (the first-run screen's footer:
+/// "Change any of this later by saying 'open settings'").
+pub const OPEN_SETTINGS_PHRASES: &[&str] = &[
+    "open settings",
+    "open the settings",
+    "open your settings",
+    "open my settings",
+    "show settings",
+    "show the settings",
+    "show me the settings",
+    "show me settings",
+    "go to settings",
+    "change settings",
+    "change the settings",
+    "change my settings",
+    "open preferences",
+    "settings",
+];
+
 /// Words allowed around a memory control or a close without changing it ("no, forget that").
 pub const CONTROL_FILLERS: &[&str] = &[
     "please", "ok", "okay", "oh", "just", "actually", "hey", "no", "yes", "yeah", "now", "and",
@@ -350,6 +369,12 @@ pub fn is_keep(text: &str) -> bool {
 #[must_use]
 pub fn is_close_view(text: &str) -> bool {
     made_of(text, CLOSE_VIEW_PHRASES, CONTROL_FILLERS)
+}
+
+/// "Open settings", whatever is on screen.
+#[must_use]
+pub fn is_open_settings(text: &str) -> bool {
+    made_of(text, OPEN_SETTINGS_PHRASES, CONTROL_FILLERS)
 }
 
 /// The utterance sounds unfinished: it ends on a continuation word or a trailing-off mark.

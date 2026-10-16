@@ -4,14 +4,15 @@
 //! Each part falls back on its own and says why with a `Problem` caption: without an audio
 //! device the virtual voice keeps captions and strokes in time with no sound; without microphone
 //! access or speech models BoardAI still speaks but cannot hear. The app stays usable either
-//! way, replay included. The first-run screen will own the permission prompt later; until then
-//! an undetermined permission is asked for here, once.
+//! way, replay included. The first-run screen asks for the microphone before the session
+//! starts; an undetermined permission (a dev script skipped setup) is asked for here, once,
+//! through the same `crate::permission`.
 
 use std::path::PathBuf;
 
+use boardai_core::setup::MicPermission;
 use boardai_runtime::audio::{
-    AudioConfig, AudioError, AudioIo, InputChoice, MicReader, MicrophoneAccess, VoiceOutput,
-    microphone_access, request_microphone_access,
+    AudioConfig, AudioError, AudioIo, InputChoice, MicReader, VoiceOutput,
 };
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
@@ -22,6 +23,7 @@ use boardai_runtime::settings::Settings;
 use boardai_runtime::speech_in::{SpeechIn, load_speech_in, repo_terms};
 use boardai_runtime::speech_out::{ChosenVoice, TtsError, choose_voice};
 
+use crate::permission;
 use crate::secrets::KeychainSecrets;
 
 /// What keeps real audio running; dropped after the session closes.
@@ -58,7 +60,7 @@ pub async fn start(
     let Some(voice) = choose(settings, models.clone(), &problems).await else {
         return virtual_voice(channels, &problems, "no voice could start");
     };
-    let access = ask_for_microphone().await;
+    let access = permission::ask_once().await;
     let Some((unit, mic, output)) = open_unit(settings.audio.input.clone(), &problems).await else {
         return virtual_voice(channels, &problems, "the audio device would not start");
     };
@@ -127,14 +129,6 @@ async fn choose(
     }
 }
 
-/// The microphone permission, asking once while it is undetermined.
-async fn ask_for_microphone() -> MicrophoneAccess {
-    match microphone_access() {
-        MicrophoneAccess::Undetermined => request_microphone_access().await,
-        known @ (MicrophoneAccess::Granted | MicrophoneAccess::Denied) => known,
-    }
-}
-
 /// Opens VoiceProcessingIO on the configured microphone, or on the system default when no
 /// device has that name.
 async fn open_unit(
@@ -172,10 +166,10 @@ async fn listen(
     channels: &SessionChannels,
     mic: MicReader,
     models: ModelStore,
-    access: MicrophoneAccess,
+    access: MicPermission,
     problems: &ProblemLink,
 ) -> Option<LiveListener> {
-    if access != MicrophoneAccess::Granted {
+    if access != MicPermission::Granted {
         problems.report(
             "I can't hear you: microphone access is off for BoardAI.",
             "Turn it on in System Settings → Privacy & Security → Microphone, then reopen \

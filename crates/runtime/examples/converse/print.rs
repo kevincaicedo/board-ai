@@ -238,7 +238,10 @@ impl Printer {
             UiEvent::Suggestion { text } => {
                 line(at, "suggest", text.as_deref().unwrap_or("(cleared)"));
             }
-            UiEvent::SessionStart { .. } | UiEvent::ViewShow { .. } | UiEvent::ViewDismiss => {
+            UiEvent::SessionStart { .. }
+            | UiEvent::ViewShow { .. }
+            | UiEvent::ViewDismiss
+            | UiEvent::OpenSettings => {
                 print_session_event(at, event);
             }
             UiEvent::Orb { state, .. } => {
@@ -373,7 +376,7 @@ impl StoreSink for Printer {
     }
 }
 
-/// A session starting, or a view opening or closing.
+/// A session starting, a view opening or closing, or the settings screen opening.
 fn print_session_event(at: SessionTime, event: &UiEvent) {
     if let UiEvent::SessionStart { session } = event {
         line(at, "session", session.as_deref().unwrap_or("(memory off)"));
@@ -381,6 +384,8 @@ fn print_session_event(at: SessionTime, event: &UiEvent) {
         line(at, "view", &format!("{:?}", view.kind()));
     } else if let UiEvent::ViewDismiss = event {
         line(at, "view", "closed");
+    } else if let UiEvent::OpenSettings = event {
+        line(at, "settings", "opened");
     }
 }
 

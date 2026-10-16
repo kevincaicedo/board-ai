@@ -6,6 +6,11 @@ import "./styles/stage.css";
 import "./styles/canvas.css";
 import "./styles/views.css";
 import "./styles/panels.css";
+import "./styles/setup.css";
+import { showFirstRun } from "./setup/FirstRun.tsx";
+import { isPreset, presetTransport } from "./setup/fake.ts";
+import { installSettings } from "./setup/settings.tsx";
+import { TauriSetupTransport } from "./setup/tauriSetup.ts";
 import { readTokens } from "./styles/tokens.ts";
 import { parseReplayLog, REPLAY_TAIL_MS, type ReplayLog } from "./transport/log.ts";
 import { ReplayTransport } from "./transport/replay.ts";
@@ -71,30 +76,60 @@ async function boot(container: HTMLElement): Promise<void> {
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const params = new URLSearchParams(location.search);
   const choice = chooseTransport(location.search, insideTauri(window));
-  let runtime: Runtime;
-  if (choice.kind === "tauri") {
-    runtime = new Runtime(
-      new TauriTransport(tauriBridge(), () => performance.now()),
-      null,
-      tokens,
-      reducedMotion,
+  const firstRunView = { orbSize: tokens.setupOrb, still: reducedMotion };
+  const stage = (runtime: Runtime): void => {
+    render(
+      <Stage
+        runtime={runtime}
+        perf={params.has("perf")}
+        controls={params.get("controls") !== "0"}
+      />,
+      container,
     );
-  } else {
-    const replay = new ReplayTransport(await loadReplay(choice.url));
-    runtime = new Runtime(replay, replay, tokens, reducedMotion);
-    await loadFonts();
-    const now = performance.now();
-    replay.setSpeed(choice.speed, now);
-    if (choice.seekMs === null) {
-      replay.play(now);
+  };
+  if (choice.kind === "tauri") {
+    const bridge = tauriBridge();
+    const setup = new TauriSetupTransport(bridge);
+    const live = (): void => {
+      const runtime = new Runtime(
+        new TauriTransport(bridge, () => performance.now()),
+        null,
+        tokens,
+        reducedMotion,
+      );
+      stage(runtime);
+      // ⌘, or "open settings" shows the same screen over the stage.
+      installSettings(runtime.scene.store, setup, firstRunView);
+    };
+    // The first run (LLD §3.8): the session waits for "Start talking". A shell without the
+    // setup commands opens the stage as before.
+    const status = await setup.status().catch(() => null);
+    if (status !== null && !status.complete) {
+      showFirstRun(container, setup, status, firstRunView, live);
     } else {
-      replay.seek(choice.seekMs, now);
+      live();
     }
+    return;
   }
-  render(
-    <Stage runtime={runtime} perf={params.has("perf")} controls={params.get("controls") !== "0"} />,
-    container,
-  );
+  const preset = params.get("setup");
+  if (preset !== null && isPreset(preset)) {
+    // The first-run screen with a fake app, for the visual check against the canvas.
+    showFirstRun(container, presetTransport(preset), null, firstRunView, () => {
+      location.assign(location.pathname);
+    });
+    return;
+  }
+  const replay = new ReplayTransport(await loadReplay(choice.url));
+  const runtime = new Runtime(replay, replay, tokens, reducedMotion);
+  await loadFonts();
+  const now = performance.now();
+  replay.setSpeed(choice.speed, now);
+  if (choice.seekMs === null) {
+    replay.play(now);
+  } else {
+    replay.seek(choice.seekMs, now);
+  }
+  stage(runtime);
 }
 
 boot(root).catch((error: unknown) => {

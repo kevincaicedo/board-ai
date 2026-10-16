@@ -119,7 +119,8 @@ mod tests {
             | UiEvent::Suggestion { .. }
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
-            | UiEvent::ViewDismiss => None,
+            | UiEvent::ViewDismiss
+            | UiEvent::OpenSettings => None,
         }
     }
 

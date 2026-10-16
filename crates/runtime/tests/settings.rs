@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use boardai_runtime::audio::InputChoice;
 use boardai_runtime::llm::Effort;
 use boardai_runtime::settings::{
-    HarnessChoice, LlmKind, MicMode, SecretName, Settings, SettingsError, TtsKind,
+    HarnessChoice, LlmChoice, LlmKind, MicMode, SecretName, Settings, SettingsEdit, SettingsError,
+    TtsKind,
 };
 use support::TempFolder;
 
@@ -206,4 +207,182 @@ fn loading_reads_the_file_bounded_and_defaults_when_missing() {
         Settings::load(&huge, home),
         Err(SettingsError::TooLarge { .. })
     ));
+}
+
+#[test]
+fn the_setup_flag_is_off_until_written() {
+    assert!(!parse("").expect("parses").setup_complete);
+    assert!(
+        parse("setup_complete = true")
+            .expect("parses")
+            .setup_complete
+    );
+    assert!(matches!(
+        parse("setup_complete = \"yes\""),
+        Err(SettingsError::Syntax { .. })
+    ));
+}
+
+fn ollama(model: &str) -> LlmChoice {
+    LlmChoice {
+        kind: LlmKind::OpenAiCompatible,
+        model: Some(model.to_owned()),
+        effort: Some(Effort::None),
+        base_url: None,
+        secret: None,
+    }
+}
+
+#[test]
+fn an_edit_creates_the_file_and_keeps_what_it_does_not_touch() {
+    let folder = TempFolder::new("settings-edit");
+    let home = Path::new(HOME);
+    let path = folder.path.join("config/settings.toml");
+    let first = Settings::edit(&path, home, &[SettingsEdit::Mic(MicMode::PushToTalk)])
+        .expect("creates the file and its folder");
+    assert_eq!(first.mic, MicMode::PushToTalk);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("written"),
+        "mic = \"push_to_talk\"\n"
+    );
+
+    std::fs::write(
+        &path,
+        "vault = \"~/Notes\"\ncode_roots = [\"~/code\"]\n[harness]\nkind = \"pi\"\n[talker]\nmax_tokens = 900\n",
+    )
+    .expect("hand-written");
+    let edits = [
+        SettingsEdit::Llm {
+            talker: ollama("gemma4:latest"),
+            scribe: ollama("gemma4:latest"),
+        },
+        SettingsEdit::Tts(TtsKind::System),
+        SettingsEdit::Input(InputChoice::BuiltIn),
+        SettingsEdit::SetupComplete,
+    ];
+    let edited = Settings::edit(&path, home, &edits).expect("edited");
+    assert_eq!(
+        edited,
+        Settings::load(&path, home).expect("reloads the same")
+    );
+    assert_eq!(edited.vault, PathBuf::from("/Users/someone/Notes"));
+    assert_eq!(
+        edited.code_roots,
+        vec![PathBuf::from("/Users/someone/code")]
+    );
+    assert_eq!(edited.harness.kind, HarnessChoice::Pi);
+    assert_eq!(edited.talker.kind, LlmKind::OpenAiCompatible);
+    assert_eq!(edited.talker.model, "gemma4:latest");
+    assert_eq!(edited.talker.effort, Effort::None);
+    // A new provider starts from its own defaults: the old output budget goes with the old one.
+    assert_eq!(
+        edited.talker.max_tokens,
+        Settings::defaults(home).talker.max_tokens
+    );
+    assert_eq!(edited.tts.kind, TtsKind::System);
+    assert_eq!(edited.audio.input, InputChoice::BuiltIn);
+    assert!(edited.setup_complete);
+}
+
+#[test]
+fn edits_switch_back_to_the_defaults_and_pick_a_microphone_by_name() {
+    let folder = TempFolder::new("settings-switch");
+    let home = Path::new(HOME);
+    let path = folder.path.join("config/settings.toml");
+    let local = SettingsEdit::Llm {
+        talker: ollama("gemma4:latest"),
+        scribe: ollama("gemma4:latest"),
+    };
+    Settings::edit(&path, home, &[local]).expect("edited");
+    let claude = LlmChoice {
+        kind: LlmKind::Anthropic,
+        model: None,
+        effort: None,
+        base_url: None,
+        secret: SecretName::parse("anthropic"),
+    };
+    let back = Settings::edit(
+        &path,
+        home,
+        &[SettingsEdit::Llm {
+            talker: claude.clone(),
+            scribe: claude,
+        }],
+    )
+    .expect("edited");
+    assert_eq!(back.talker, Settings::defaults(home).talker);
+    assert_eq!(back.scribe, Settings::defaults(home).scribe);
+    let named = InputChoice::Named("Studio Display Microphone".to_owned());
+    let picked =
+        Settings::edit(&path, home, &[SettingsEdit::Input(named.clone())]).expect("edited");
+    assert_eq!(picked.audio.input, named);
+    assert_eq!(
+        Settings::load(&path, home).expect("reloads").audio.input,
+        named
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(path.parent().expect("folder"))
+        .expect("listed")
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
+    assert_eq!(leftovers, vec![std::ffi::OsString::from("settings.toml")]);
+}
+
+#[test]
+fn an_edit_never_overwrites_a_file_that_does_not_parse_or_writes_an_invalid_one() {
+    let folder = TempFolder::new("settings-refused");
+    let home = Path::new(HOME);
+    let broken = "# my notes\n[talker]\nkind = \"gemini\"\n";
+    let path = folder.write("settings.toml", broken.as_bytes());
+    let refused = Settings::edit(&path, home, &[SettingsEdit::SetupComplete]);
+    assert!(matches!(refused, Err(SettingsError::Invalid { .. })));
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), broken);
+    // Even an edit that would replace the bad field leaves a hand-written file alone.
+    let half_done = "# trying push to talk\nmic = \"sometimes\"\n";
+    let path = folder.write("half-done.toml", half_done.as_bytes());
+    let refused = Settings::edit(&path, home, &[SettingsEdit::Mic(MicMode::Open)]);
+    assert!(matches!(refused, Err(SettingsError::Invalid { .. })));
+    assert_eq!(std::fs::read_to_string(&path).expect("kept"), half_done);
+
+    let valid = folder.write("valid.toml", b"mic = \"open\"\n");
+    let empty_model = SettingsEdit::Llm {
+        talker: ollama("  "),
+        scribe: ollama("gemma4:latest"),
+    };
+    let refused = Settings::edit(&valid, home, &[empty_model]);
+    assert!(
+        matches!(&refused, Err(SettingsError::Invalid { field, .. }) if field == "talker.model"),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&valid).expect("kept"),
+        "mic = \"open\"\n"
+    );
+}
+
+#[test]
+fn an_edit_that_cannot_write_reports_it_and_keeps_the_old_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let folder = TempFolder::new("settings-unwritable");
+    let home = Path::new(HOME);
+    let path = folder.write("config/settings.toml", b"mic = \"open\"\n");
+    let config = path.parent().expect("folder").to_path_buf();
+    let read_only = std::fs::Permissions::from_mode(0o555);
+    std::fs::set_permissions(&config, read_only).expect("read-only folder");
+    let refused = Settings::edit(&path, home, &[SettingsEdit::Mic(MicMode::PushToTalk)]);
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o755)).expect("restored");
+    assert!(
+        matches!(refused, Err(SettingsError::Unwritable { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("kept"),
+        "mic = \"open\"\n"
+    );
+    let names: Vec<_> = std::fs::read_dir(&config)
+        .expect("listed")
+        .flatten()
+        .map(|entry| entry.file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("settings.toml")]);
 }

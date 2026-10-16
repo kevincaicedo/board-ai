@@ -24,14 +24,11 @@ pub fn engine_for(
     match settings.kind {
         TtsKind::System => Ok(Arc::new(SystemVoice::new()?)),
         TtsKind::Kokoro => {
-            let model = match settings.model.as_deref() {
-                Some(KOKORO_QUANTIZED_MODEL) => ModelId::KokoroModelQuantized,
-                Some(_) | None => ModelId::KokoroModel,
-            };
+            let [model, voice, lexicon] = kokoro_files(settings);
             let files = KokoroFiles {
                 model: ready(models, model)?,
-                voice: ready(models, ModelId::KokoroVoiceHeart)?,
-                lexicon: ready(models, ModelId::MisakiUsGold)?,
+                voice: ready(models, voice)?,
+                lexicon: ready(models, lexicon)?,
             };
             Ok(Arc::new(KokoroVoice::new(files)?))
         }
@@ -99,6 +96,19 @@ pub fn choose_voice(
             replaced: Some(error),
         },
     })
+}
+
+/// Kokoro's files for these settings: the model `tts.model` picks, the voice and the lexicon.
+/// The first-run screen downloads these whichever engine is chosen.
+#[must_use]
+pub fn kokoro_files(settings: &TtsSettings) -> [ModelId; 3] {
+    let model = match settings.model.as_deref() {
+        Some(KOKORO_QUANTIZED_MODEL) if settings.kind == TtsKind::Kokoro => {
+            ModelId::KokoroModelQuantized
+        }
+        Some(_) | None => ModelId::KokoroModel,
+    };
+    [model, ModelId::KokoroVoiceHeart, ModelId::MisakiUsGold]
 }
 
 fn ready(models: &ModelStore, id: ModelId) -> Result<std::path::PathBuf, TtsError> {

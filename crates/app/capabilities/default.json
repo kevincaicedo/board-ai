@@ -1,7 +1,17 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may only open the event channel, send commands, and read a past session's log by id for a replay (LLD §9, D-027). Debug builds also grant dev_say at runtime.",
+  "description": "The main window may only open the event channel, send commands, read a past session's log by id for a replay (LLD §9, D-027, D-081), and run the first-run screen: read its status, save a choice or a key, download a model file, ask for the microphone, and start the session (D-100). Debug builds also grant dev_say at runtime.",
   "windows": ["main"],
-  "permissions": ["allow-connect", "allow-command", "allow-session-log"]
+  "permissions": [
+    "allow-connect",
+    "allow-command",
+    "allow-session-log",
+    "allow-setup-status",
+    "allow-setup-save",
+    "allow-setup-key",
+    "allow-setup-download",
+    "allow-setup-microphone",
+    "allow-setup-finish"
+  ]
 }

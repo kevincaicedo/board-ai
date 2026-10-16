@@ -58,15 +58,29 @@ pub enum InputChoice {
     Named(String),
 }
 
+const INPUT_SYSTEM_DEFAULT: &str = "system_default";
+const INPUT_BUILT_IN: &str = "built_in";
+
 impl InputChoice {
     /// `system_default` and `built_in` name the two fixed choices; anything else is a device
     /// name.
     #[must_use]
     pub fn parse(value: &str) -> Self {
         match value.trim() {
-            "system_default" => Self::SystemDefault,
-            "built_in" => Self::BuiltIn,
+            INPUT_SYSTEM_DEFAULT => Self::SystemDefault,
+            INPUT_BUILT_IN => Self::BuiltIn,
             name => Self::Named(name.to_owned()),
+        }
+    }
+
+    /// The `[audio] input` value that parses back to this choice (the first-run screen writes
+    /// it).
+    #[must_use]
+    pub fn as_setting(&self) -> &str {
+        match self {
+            Self::SystemDefault => INPUT_SYSTEM_DEFAULT,
+            Self::BuiltIn => INPUT_BUILT_IN,
+            Self::Named(name) => name,
         }
     }
 }

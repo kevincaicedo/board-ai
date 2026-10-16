@@ -23,6 +23,7 @@ pub mod memory_policy;
 pub mod narration;
 pub mod prompt;
 pub mod protocol;
+pub mod setup;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod surfaces;

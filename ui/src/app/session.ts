@@ -139,6 +139,11 @@ export class SessionStore {
   readonly chips = signal<readonly Chip[]>([]);
   readonly orb = signal<OrbStatus>({ state: "Idle", previous: "Idle", at: 0 });
   readonly suggestion = signal<SuggestionView | null>(null);
+  /**
+   * "Open settings" requests heard so far. The live app opens the settings screen on each new
+   * one; a replay never does. Not reset with the stage: a request is a one-shot.
+   */
+  readonly settingsRequests = signal(0);
   readonly #tokens: SessionTokens;
   #chipSerial = 0;
 
@@ -201,6 +206,9 @@ export class SessionStore {
         break;
       case "Suggestion":
         this.#suggest(event.text, at);
+        break;
+      case "OpenSettings":
+        this.settingsRequests.value += 1;
         break;
       case "Acknowledge":
       case "OpStart":

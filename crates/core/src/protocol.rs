@@ -141,6 +141,9 @@ pub enum UiEvent {
     },
     /// The open view goes away: by voice, by Esc, or because the board draws again.
     ViewDismiss,
+    /// "Open settings": the UI shows the settings screen (the first-run screen, LLD §3.8)
+    /// over the stage. A replay ignores it.
+    OpenSettings,
 }
 
 /// The orb states on the design canvas (frame 10a).

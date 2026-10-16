@@ -292,7 +292,8 @@ impl Checker {
             | UiEvent::Suggestion { .. }
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
-            | UiEvent::ViewDismiss => {}
+            | UiEvent::ViewDismiss
+            | UiEvent::OpenSettings => {}
         }
     }
 

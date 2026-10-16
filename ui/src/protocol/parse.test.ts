@@ -193,6 +193,7 @@ const EVERY_EVENT: UiEvent[] = [
   { type: "SessionStart", session: null },
   ...EVERY_VIEW.map((view): UiEvent => ({ type: "ViewShow", view, today: "2026-10-15" })),
   { type: "ViewDismiss" },
+  { type: "OpenSettings" },
 ];
 
 test("every protocol event round-trips through the parser unchanged", () => {
