@@ -4,6 +4,9 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use objc2::rc::Retained;
+use objc2_foundation::NSString;
+
 use objc2_core_audio::{
     AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID,
     AudioObjectPropertyAddress, AudioObjectPropertyScope, AudioObjectPropertySelector,
@@ -11,7 +14,7 @@ use objc2_core_audio::{
     kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
     kAudioDevicePropertyStreams, kAudioDevicePropertyTransportType,
     kAudioDeviceTransportTypeBuiltIn, kAudioHardwarePropertyDevices,
-    kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
+    kAudioObjectPropertyElementMain, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
     kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
     kAudioStreamPropertyLatency,
 };
@@ -142,26 +145,67 @@ pub(crate) fn output_latency_seconds(device: AudioObjectID) -> f64 {
 /// The Mac's own microphone, when it has one: a device with input streams whose transport is
 /// built-in. Used when the system default input is a virtual device that hears nothing.
 pub(crate) fn built_in_input_device() -> Option<AudioObjectID> {
-    let system = AudioObjectID::try_from(kAudioObjectSystemObject).ok()?;
-    let devices = read_ids(
-        system,
-        kAudioHardwarePropertyDevices,
-        kAudioObjectPropertyScopeGlobal,
-    )
-    .ok()?;
-    devices.into_iter().find(|device| {
+    input_devices().into_iter().find(|device| {
         let transport = read(
             *device,
             kAudioDevicePropertyTransportType,
             kAudioObjectPropertyScopeGlobal,
             0_u32,
         );
-        let has_input = read_ids(
-            *device,
-            kAudioDevicePropertyStreams,
-            kAudioObjectPropertyScopeInput,
-        )
-        .is_ok_and(|streams| !streams.is_empty());
-        transport == Ok(kAudioDeviceTransportTypeBuiltIn) && has_input
+        transport == Ok(kAudioDeviceTransportTypeBuiltIn)
     })
+}
+
+/// The input device whose name is `name`, ignoring case.
+pub(crate) fn input_device_named(name: &str) -> Option<AudioObjectID> {
+    input_devices().into_iter().find(|device| {
+        device_name(*device).is_some_and(|candidate| candidate.eq_ignore_ascii_case(name.trim()))
+    })
+}
+
+/// The names of the devices that can record, for settings and error messages.
+pub(crate) fn input_device_names() -> Vec<String> {
+    input_devices()
+        .into_iter()
+        .filter_map(device_name)
+        .collect()
+}
+
+/// Devices with at least one input stream.
+fn input_devices() -> Vec<AudioObjectID> {
+    let Ok(system) = AudioObjectID::try_from(kAudioObjectSystemObject) else {
+        return Vec::new();
+    };
+    let devices = read_ids(
+        system,
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+    )
+    .unwrap_or_default();
+    devices
+        .into_iter()
+        .filter(|device| {
+            read_ids(
+                *device,
+                kAudioDevicePropertyStreams,
+                kAudioObjectPropertyScopeInput,
+            )
+            .is_ok_and(|streams| !streams.is_empty())
+        })
+        .collect()
+}
+
+fn device_name(device: AudioObjectID) -> Option<String> {
+    let name = read(
+        device,
+        kAudioObjectPropertyName,
+        kAudioObjectPropertyScopeGlobal,
+        std::ptr::null_mut::<NSString>(),
+    )
+    .ok()?;
+    // SAFETY: the HAL returns the name as a `CFStringRef` the caller owns (one retain), and
+    // CFString is toll-free bridged to NSString, so `Retained` releases it exactly once. A null
+    // result is `None`.
+    let name = unsafe { Retained::from_raw(name) }?;
+    Some(name.to_string())
 }

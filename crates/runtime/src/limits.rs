@@ -366,6 +366,13 @@ pub const PAST_BOARD_OPS_MAX: usize = 1_024;
 /// the barge-in rules that count voice time apply as they would to speech.
 pub const TYPED_MS_PER_WORD: u32 = 280;
 
+/// Board labels kept as recent terms for speech-to-text, newest first; past it the oldest is
+/// forgotten. Whisper's prompt keeps fewer still (`STT_VOCABULARY_TOKENS_MAX`).
+pub const VOCABULARY_RECENT_TERMS_MAX: usize = 32;
+
+/// Longest label taken as a term; a longer one (a sentence used as a label) is left out.
+pub const VOCABULARY_TERM_MAX_BYTES: usize = 64;
+
 // ---------------------------------------------------------------------------------------------
 // UI bridge (owner: runtime::bridge)
 
@@ -466,6 +473,16 @@ pub const AUDIO_CALLBACK_FRAMES_MAX: usize = 8_192;
 /// considered (a Mac has a handful).
 pub const AUDIO_DEVICES_MAX: usize = 256;
 
+/// Largest audio file read as mic input; a larger one is refused before it is read.
+pub const AUDIO_FILE_MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Longest audio file played as mic input (a clip is an utterance); a longer one is refused.
+pub const AUDIO_FILE_MAX_MS: u64 = 120_000;
+
+/// Clips waiting to be spoken into the mic ring by a file mic; past it `play` is refused with
+/// `FileMicError::Full`.
+pub const FILE_MIC_QUEUE_CLIPS: usize = 8;
+
 // ---------------------------------------------------------------------------------------------
 // Speech out (owner: runtime::speech_out)
 
@@ -529,6 +546,23 @@ pub const STT_QUEUE_MESSAGES: usize = 1_024;
 /// Speech-in inputs waiting for the orchestrator. When full, a partial transcript is dropped
 /// and counted (a newer one follows); voice start and end and final transcripts wait.
 pub const SPEECH_IN_EVENT_QUEUE: usize = 64;
+
+/// Repo symbols offered to speech-to-text, best first; the rest are left out (the 200-token
+/// prompt keeps fewer still).
+pub const VOCABULARY_REPO_TERMS_MAX: usize = 64;
+
+/// Source files read for repo symbols; past it the scan stops with what it has.
+pub const VOCABULARY_SCAN_FILES_MAX: usize = 2_000;
+
+/// Bytes read for repo symbols in all; past it the scan stops with what it has.
+pub const VOCABULARY_SCAN_BYTES_MAX: u64 = 16 * 1024 * 1024;
+
+/// Bytes read of one source file for repo symbols; the rest of the file is not read.
+pub const VOCABULARY_SCAN_FILE_MAX_BYTES: u64 = 256 * 1024;
+
+/// Distinct identifiers counted during the scan; later new names are not counted (a name
+/// already counted still is).
+pub const VOCABULARY_IDENTIFIERS_MAX: usize = 100_000;
 
 // ---------------------------------------------------------------------------------------------
 // Model files (owner: runtime::models)

@@ -10,7 +10,9 @@ use crate::effect::{Effect, Gain, Milestone};
 use crate::engine::{Core, MicMode, TurnMarks, milestone};
 use crate::harness::{HarnessKind, HarnessTask};
 use crate::history::{Message, UserPart};
-use crate::limits::{BACKCHANNEL_LATE_FINAL_MS, DETOUR_QUESTION_MAX_BYTES};
+use crate::limits::{
+    BACKCHANNEL_LATE_FINAL_MS, DETOUR_QUESTION_MAX_BYTES, VOICE_ONSET_DUCK_HOLD_MS,
+};
 use crate::narration::tags::bounded;
 use crate::protocol::{MicAction, PointerTarget, Speaker, UiEvent};
 use crate::time::SessionTime;
@@ -66,6 +68,36 @@ pub(super) enum ChangeGate {
 }
 
 impl Core {
+    /// The first sign of the user's voice. While BoardAI speaks, the voice ducks at once, so the
+    /// duck lands within its budget although `VoiceStart` needs ~160 ms more to confirm speech.
+    /// The duck is tentative: `VoiceStart` takes it over as a barge-in; without one (a cough, a
+    /// click) the gain comes back when the hold ends and nothing else changes. Anywhere else an
+    /// onset means nothing until `VoiceStart`.
+    pub(super) fn on_voice_onset(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        let ignored = self.config.mic == MicMode::PushToTalk && !self.push_to_talk_held;
+        if ignored || self.state != ConversationState::Speaking {
+            return;
+        }
+        if self.onset_duck_until.is_none() {
+            self.set_gain(Gain::DUCKED, effects);
+            milestone(effects, Milestone::OnsetDuck);
+        }
+        let until = now.plus_ms(VOICE_ONSET_DUCK_HOLD_MS);
+        self.onset_duck_until = Some(until);
+        self.wake(until, effects);
+    }
+
+    /// The onset's hold has ended with no barge-in owning the duck: the gain comes back.
+    pub(super) fn release_onset_duck(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        if self.onset_duck_until.is_none_or(|until| now < until) {
+            return;
+        }
+        self.onset_duck_until = None;
+        if !matches!(self.state, ConversationState::Ducked(_)) {
+            self.set_gain(Gain::FULL, effects);
+        }
+    }
+
     pub(super) fn on_voice_start(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         if self.config.mic == MicMode::PushToTalk && !self.push_to_talk_held {
             return;
@@ -96,8 +128,10 @@ impl Core {
 
     /// Speaking + voice: duck first, decide second (PRODUCT §6.2).
     fn duck(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        // The barge-in owns the gain from here; the onset's hold no longer restores it.
+        self.onset_duck_until = None;
         let barge_in = BargeIn::new(now);
-        effects.push(Effect::Duck { gain: Gain::DUCKED });
+        self.set_gain(Gain::DUCKED, effects);
         milestone(effects, Milestone::BargeInDuck);
         self.wake(barge_in.decide_by(), effects);
         self.state = ConversationState::Ducked(barge_in);
@@ -222,7 +256,7 @@ impl Core {
         match barge_in.decide(now, self.pointer.set_at) {
             Decision::Undecided => {}
             Decision::Backchannel => {
-                effects.push(Effect::Duck { gain: Gain::FULL });
+                self.set_gain(Gain::FULL, effects);
                 effects.push(Effect::Ui(UiEvent::Acknowledge));
                 self.backchannel_at = Some(now);
                 self.state = if self.voice.is_audible() {

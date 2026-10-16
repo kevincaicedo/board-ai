@@ -157,8 +157,11 @@ impl Core {
             self.user.pending = None;
         }
         self.end_reply();
-        if stop.stopped_voice {
-            effects.push(Effect::Duck { gain: Gain::FULL });
+        // A barge-in decided while nothing was playing stopped no audio, but its duck still has
+        // to be undone, or the next answer is heard at the ducked level.
+        if stop.stopped_voice || self.gain != Gain::FULL {
+            self.set_gain(Gain::FULL, effects);
+            self.onset_duck_until = None;
         }
     }
 
@@ -230,7 +233,7 @@ impl Core {
             }
             // The user started talking just as BoardAI finished: their words are a new turn.
             ConversationState::Ducked(barge_in) => {
-                effects.push(Effect::Duck { gain: Gain::FULL });
+                self.set_gain(Gain::FULL, effects);
                 self.hand_floor(barge_in.into_utterance(), effects);
             }
             state @ (ConversationState::Listening(_) | ConversationState::Muted) => {

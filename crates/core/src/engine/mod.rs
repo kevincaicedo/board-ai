@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 use crate::board::Board;
 use crate::conversation::ConversationState;
-use crate::effect::{Effect, LogRecord, Milestone};
+use crate::effect::{Effect, Gain, LogRecord, Milestone};
 use crate::history::{Conversation, Message};
 use crate::ids::{ClauseId, LayerId};
 use crate::input::Input;
@@ -118,6 +118,11 @@ pub struct Core {
     wakes: BTreeSet<SessionTime>,
     push_to_talk_held: bool,
     backchannel_at: Option<SessionTime>,
+    /// A voice onset ducked the voice tentatively; the gain comes back at this time unless a
+    /// barge-in takes the duck over first.
+    onset_duck_until: Option<SessionTime>,
+    /// The gain the voice was last told, so a stop that had nothing to fade still undoes a duck.
+    gain: Gain,
     next_task: u32,
     /// What this session captured, the memory controls' state, and a proposal awaiting a yes.
     memory: Memory,
@@ -155,6 +160,8 @@ impl Core {
             wakes: BTreeSet::new(),
             push_to_talk_held: false,
             backchannel_at: None,
+            onset_duck_until: None,
+            gain: Gain::FULL,
             next_task: 0,
             memory: Memory::default(),
             view: None,
@@ -188,6 +195,7 @@ impl Core {
     pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>) {
         let first = effects.len();
         match input {
+            Input::VoiceOnset => self.on_voice_onset(now, effects),
             Input::VoiceStart => self.on_voice_start(now, effects),
             Input::VoiceEnd { voiced_ms } => self.on_voice_end(now, voiced_ms, effects),
             Input::Transcript { text, is_final } => {
@@ -310,6 +318,7 @@ impl Core {
             // position that played, so the heard prefix stays honest.
             self.settle_stop(None, effects);
         }
+        self.release_onset_duck(now, effects);
         self.check_turn_deadlines(now, effects);
         self.evaluate_barge_in(now, effects);
     }
@@ -324,6 +333,12 @@ impl Core {
         self.maybe_finish_reply(effects);
         self.maybe_report(now, effects);
         self.update_orb(now, effects);
+    }
+
+    /// Sets the voice's gain, remembering it.
+    fn set_gain(&mut self, gain: Gain, effects: &mut Vec<Effect>) {
+        self.gain = gain;
+        effects.push(Effect::Duck { gain });
     }
 
     /// Asks for a `Tick` at `at`, once per distinct deadline.

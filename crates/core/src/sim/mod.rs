@@ -26,6 +26,10 @@ pub const USER_MS_PER_WORD: u64 = 280;
 pub const USER_PARTIAL_EVERY_MS: u64 = 500;
 pub const USER_FINAL_DELAY_MS: u64 = 120;
 
+/// How long after its onset the voice detector confirms speech: its 150 ms minimum, counted in
+/// 32 ms windows.
+pub const USER_ONSET_LEAD_MS: u64 = 160;
+
 /// How long the runtime takes to answer a tool call.
 pub const TOOL_LATENCY_MS: u64 = 15;
 
@@ -146,6 +150,19 @@ impl Sim {
         self.user_says_for(at_ms, text, voiced_ms);
     }
 
+    /// The voice detector's first speech window at `at_ms` and nothing after it: a cough, a
+    /// click.
+    pub fn user_onset(&mut self, at_ms: u64) {
+        self.at(at_ms, Input::VoiceOnset);
+    }
+
+    /// Like [`Sim::user_says`] as the real voice detector reports it: the onset at `at_ms`, and
+    /// `VoiceStart` [`USER_ONSET_LEAD_MS`] later, once the speech has lasted its minimum.
+    pub fn user_says_with_onset(&mut self, at_ms: u64, text: &str) {
+        self.user_onset(at_ms);
+        self.user_says(at_ms + USER_ONSET_LEAD_MS, text);
+    }
+
     /// Like [`Sim::user_says`] with an explicit voiced length.
     pub fn user_says_for(&mut self, at_ms: u64, text: &str, voiced_ms: u64) {
         let words: Vec<&str> = text.split_whitespace().collect();
@@ -259,6 +276,7 @@ impl Sim {
         self.apply(effects);
         self.checker
             .after_step(self.now, &self.core, &self.talker.scripts);
+        self.checker.check_gain(self.now, &self.core, &self.speech);
     }
 
     fn apply(&mut self, effects: Vec<Effect>) {

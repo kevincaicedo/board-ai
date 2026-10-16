@@ -1,5 +1,6 @@
 //! Speech in (LLD §3.1, §3.4): voice activity detection and speech-to-text on the mic ring,
-//! producing `VoiceStart`, `VoiceEnd { voiced_ms }` and `Transcript { text, is_final }`.
+//! producing `VoiceOnset`, `VoiceStart`, `VoiceEnd { voiced_ms }` and
+//! `Transcript { text, is_final }`.
 //!
 //! Two dedicated threads, never async tasks, since both run inference:
 //!
@@ -15,15 +16,19 @@
 //! [`SPEECH_PREROLL_MS`]: crate::limits::SPEECH_PREROLL_MS
 //! [`STT_PARTIAL_INTERVAL_MS`]: crate::limits::STT_PARTIAL_INTERVAL_MS
 
+mod setup;
 mod silero;
 mod stt_thread;
 pub mod vad;
+mod vocabulary;
 mod whisper;
 mod worker;
 
 use std::fmt;
 
+pub use setup::{SpeechInSetupError, load_speech_in};
 pub use silero::SileroVad;
+pub use vocabulary::repo_terms;
 pub use whisper::WhisperStt;
 pub use worker::{SpeechIn, SpeechInCounters};
 

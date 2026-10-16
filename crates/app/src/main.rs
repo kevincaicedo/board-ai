@@ -2,6 +2,7 @@
 //! session (D-027). It holds no business logic (docs/architecture/HLD.md §3).
 #![forbid(unsafe_code)]
 
+mod audio;
 mod commands;
 mod dev;
 mod secrets;

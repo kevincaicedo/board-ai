@@ -183,6 +183,8 @@ impl VadWorker {
         });
         let was_speaking = self.machine.in_speech();
         match self.machine.step(probability) {
+            // Barge-in latency starts here: the voice ducks on this, before speech is confirmed.
+            Some(VadEvent::Onset { .. }) => self.events.blocking_send(Input::VoiceOnset).is_ok(),
             // The orchestrator hears of the start and end before the speech-to-text thread does,
             // so a transcript never arrives ahead of the `VoiceEnd` it belongs to.
             Some(VadEvent::Start { onset_frame }) => {

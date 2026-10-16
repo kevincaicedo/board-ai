@@ -131,6 +131,8 @@ pub enum Milestone {
     FirstOp,
     BargeInDuck,
     BargeInStop,
+    /// The voice ducked on a voice onset, before `VoiceStart` confirmed speech.
+    OnsetDuck,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

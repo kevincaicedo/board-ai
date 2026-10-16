@@ -9,10 +9,15 @@
 //!
 //! [`AudioIo::start`] opens the unit and returns both ring ends. Tests and the conversation
 //! simulator build the same rings with [`mic_ring`] and [`voice_ring`] and drive the renderer
-//! themselves, so everything above the device runs without hardware.
+//! themselves, so everything above the device runs without hardware. [`FileMic`] speaks audio
+//! files into the mic ring and [`NullOutput`] plays the voice ring nowhere, both in real time:
+//! the end-to-end test runs the whole pipeline with them (LLD §7).
 
 pub(crate) mod coreaudio;
+mod file;
+mod file_mic;
 mod mic;
+mod null_output;
 pub mod resample;
 mod voice;
 
@@ -21,8 +26,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use coreaudio::run_main_loop_until;
+pub use file::{AudioFileError, decode_audio, read_audio_file};
+pub use file_mic::{ClipPlayed, FILE_MIC_CHUNK_MS, FileMic, FileMicError};
 pub use mic::{MicReader, MicWriter, mic_ring};
-pub use voice::{PlaybackRenderer, StopAcknowledged, VoiceOutput, voice_ring};
+pub use null_output::{NULL_OUTPUT_CYCLE_MS, NullOutput};
+pub use voice::{PlaybackRenderer, StopAcknowledged, VoiceGain, VoiceOutput, voice_ring};
 
 use self::resample::ResamplerError;
 use crate::limits::{MIC_RING_MS, VOICE_RING_MS};
@@ -38,7 +46,7 @@ pub const MIC_RING_FRAMES: usize = (MIC_RING_MS * MIC_RATE_HZ / 1_000) as usize;
 pub const VOICE_RING_FRAMES: usize = (VOICE_RING_MS * VOICE_RATE_HZ / 1_000) as usize;
 
 /// Which microphone the unit listens to.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum InputChoice {
     /// The system's default input.
     #[default]
@@ -46,11 +54,62 @@ pub enum InputChoice {
     /// The Mac's built-in microphone, for when the default is a virtual device (an audio
     /// interface's mixer, a meeting app's loopback) that hears nothing.
     BuiltIn,
+    /// The input device with this name, as macOS shows it (ignoring case).
+    Named(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+impl InputChoice {
+    /// `system_default` and `built_in` name the two fixed choices; anything else is a device
+    /// name.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        match value.trim() {
+            "system_default" => Self::SystemDefault,
+            "built_in" => Self::BuiltIn,
+            name => Self::Named(name.to_owned()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AudioConfig {
     pub input: InputChoice,
+}
+
+/// Whether this process may record (macOS asks the user once).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MicrophoneAccess {
+    Granted,
+    Denied,
+    /// Not asked yet: recording now would show the system prompt.
+    Undetermined,
+}
+
+/// Reads the microphone permission. Never prompts.
+#[must_use]
+pub fn microphone_access() -> MicrophoneAccess {
+    coreaudio::microphone_access()
+}
+
+/// Asks for microphone permission (macOS shows its prompt only while undetermined) and returns
+/// the answer once the user has given it.
+pub async fn request_microphone_access() -> MicrophoneAccess {
+    let (answer, answered) = tokio::sync::oneshot::channel();
+    coreaudio::request_microphone_access(move |granted| {
+        let _ = answer.send(granted);
+    });
+    match answered.await {
+        Ok(true) => MicrophoneAccess::Granted,
+        Ok(false) => MicrophoneAccess::Denied,
+        // The handler was dropped without an answer: as good as no.
+        Err(_) => MicrophoneAccess::Denied,
+    }
+}
+
+/// The names of the devices that can record, as macOS shows them.
+#[must_use]
+pub fn input_device_names() -> Vec<String> {
+    coreaudio::input_device_names()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,6 +118,11 @@ pub enum AudioError {
     VoiceProcessingUnavailable,
     /// The built-in microphone was asked for and none was found.
     NoBuiltInInput,
+    /// No input device has the configured name; `available` lists the ones that do exist.
+    NoSuchInput {
+        name: String,
+        available: Vec<String>,
+    },
     /// The unit runs at a rate the converter cannot handle.
     UnsupportedRate { rate_hz: u32 },
     /// A CoreAudio call failed with this status.
@@ -72,6 +136,11 @@ impl fmt::Display for AudioError {
                 formatter.write_str("the voice processing audio unit is not available")
             }
             Self::NoBuiltInInput => formatter.write_str("this Mac has no built-in microphone"),
+            Self::NoSuchInput { name, available } => write!(
+                formatter,
+                "no microphone is named \"{name}\" (there are: {})",
+                available.join(", ")
+            ),
             Self::UnsupportedRate { rate_hz } => {
                 write!(
                     formatter,
@@ -146,7 +215,7 @@ impl AudioIo {
         // The latency is only known once the unit runs; the voice output is rebuilt with it.
         let (pending_output, renderer) = voice_ring(VOICE_RING_FRAMES, 0);
         let unit = coreaudio::VoiceProcessingUnit::start(
-            config.input,
+            &config.input,
             mic_writer,
             renderer,
             Arc::clone(&counters),

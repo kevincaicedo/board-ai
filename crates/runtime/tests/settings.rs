@@ -5,6 +5,7 @@ mod support;
 
 use std::path::{Path, PathBuf};
 
+use boardai_runtime::audio::InputChoice;
 use boardai_runtime::llm::Effort;
 use boardai_runtime::settings::{
     HarnessChoice, LlmKind, MicMode, SecretName, Settings, SettingsError, TtsKind,
@@ -38,6 +39,26 @@ fn an_empty_file_is_the_defaults() {
     assert_eq!(settings.mic, MicMode::Open);
     assert_eq!(settings.tts.kind, TtsKind::Kokoro);
     assert_eq!(settings.harness.kind, HarnessChoice::Auto);
+    assert_eq!(settings.audio.input, InputChoice::SystemDefault);
+}
+
+#[test]
+fn the_microphone_is_chosen_by_name_or_one_of_two_words() {
+    let input = |text: &str| parse(text).expect("parses").audio.input;
+    assert_eq!(input("[audio]\ninput = \"built_in\""), InputChoice::BuiltIn);
+    assert_eq!(
+        input("[audio]\ninput = \"system_default\""),
+        InputChoice::SystemDefault
+    );
+    assert_eq!(
+        input("[audio]\ninput = \"MacBook Pro Microphone\""),
+        InputChoice::Named("MacBook Pro Microphone".to_owned())
+    );
+    assert_eq!(invalid_field("[audio]\ninput = \"  \""), "audio.input");
+    assert!(
+        parse("[audio]\noutput = \"x\"").is_err(),
+        "unknown keys are refused"
+    );
 }
 
 #[test]

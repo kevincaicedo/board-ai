@@ -1,8 +1,8 @@
 //! A seeded fuzzer over conversation interleavings (LLD §7). Random talker replies (good, bad
 //! and malformed narration, tools, refusals, failures) meet random user behaviour (questions,
-//! backchannels, interruptions, pointing, mute, push-to-talk, the Esc stop, yes and no) and a
-//! voice that sometimes fails to synthesize a clause, on the simulator's fake clock. Every step is
-//! checked for I1–I7, I9 and I11; any panic fails the test.
+//! backchannels, interruptions, coughs, pointing, mute, push-to-talk, the Esc stop, yes and no)
+//! and a voice that sometimes fails to synthesize a clause, on the simulator's fake clock. Every
+//! step is checked for I1–I7, I9 and I11 and the voice's gain; any panic fails the test.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
@@ -10,14 +10,15 @@ mod common;
 use std::collections::BTreeMap;
 
 use boardai_core::conversation::ConversationState;
-use boardai_core::effect::{Effect, LogRecord};
+use boardai_core::effect::{Effect, LogRecord, Milestone};
 use boardai_core::engine::text::SYNTHESIS_FAILED_DETAIL;
 use boardai_core::harness::HarnessKind;
 use boardai_core::ids::{ClauseId, ElementId, LayerId};
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
+use boardai_core::limits::VOICE_ONSET_DUCK_HOLD_MS;
 use boardai_core::protocol::{MicAction, PointerTarget, UiCommand, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
-use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD};
+use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD, USER_ONSET_LEAD_MS};
 use boardai_core::{CoreConfig, MicMode};
 use common::config;
 
@@ -144,11 +145,17 @@ fn saying(sim: &mut Sim, at: u64, text: &str) -> u64 {
     words * USER_MS_PER_WORD + USER_FINAL_DELAY_MS + 50
 }
 
+/// [`saying`] as the real voice detector reports it: an onset first, `VoiceStart` after it.
+fn saying_with_onset(sim: &mut Sim, at: u64, text: &str) -> u64 {
+    sim.user_onset(at);
+    USER_ONSET_LEAD_MS + saying(sim, at + USER_ONSET_LEAD_MS, text)
+}
+
 /// One random user action at the current time; returns how long to leave the floor alone.
 fn act(sim: &mut Sim, rng: &mut Rng, last_pointer_ms: &mut u64) -> u64 {
     let now = sim.now().as_ms();
     let speaking = *sim.core().state() == ConversationState::Speaking;
-    match rng.below(10) {
+    match rng.below(12) {
         0 | 1 => saying(sim, now, rng.pick(QUESTIONS)),
         2 if speaking && now > *last_pointer_ms + 1_600 => {
             sim.user_backchannel(now, rng.pick(&["mm-hm", "yeah", "okay", "right", "got it"]));
@@ -185,6 +192,12 @@ fn act(sim: &mut Sim, rng: &mut Rng, last_pointer_ms: &mut u64) -> u64 {
             sim.at(now, Input::Command(UiCommand::Stop));
             0
         }
+        // A cough, a click: an onset that never becomes speech.
+        10 => {
+            sim.user_onset(now);
+            VOICE_ONSET_DUCK_HOLD_MS + 100
+        }
+        11 => saying_with_onset(sim, now, rng.pick(CUES)),
         _ => 0,
     }
 }
@@ -201,6 +214,12 @@ type Reached = fn(&Effect) -> bool;
 /// The paths the fuzzer must reach, as predicates over effects.
 const PATHS: &[(&str, Reached)] = &[
     ("stop voice", |effect| matches!(effect, Effect::StopVoice)),
+    ("onset duck", |effect| {
+        *effect
+            == Effect::Log(LogRecord::Milestone {
+                milestone: Milestone::OnsetDuck,
+            })
+    }),
     ("backchannel", |effect| {
         matches!(effect, Effect::Ui(UiEvent::Acknowledge))
     }),
@@ -350,6 +369,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
     }
     coverage.assert_exercised(&[
         "stop voice",
+        "onset duck",
         "backchannel",
         "freeze",
         "resume",

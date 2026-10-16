@@ -17,7 +17,7 @@ boardai-core.workspace = true
 block2 = "0.6.2"
 objc2 = "0.6.5"
 objc2-audio-toolbox = { version = "0.3.2", default-features = false, features = ["std", "AUComponent", "AudioComponent", "AudioOutputUnit", "AudioUnitProperties", "objc2-core-audio-types"] }
-objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "block2", "AVAudioBuffer", "AVAudioFormat", "AVAudioTypes", "AVSpeechSynthesis", "objc2-core-audio-types"] }
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "block2", "AVAudioApplication", "AVAudioBuffer", "AVAudioFormat", "AVAudioTypes", "AVSpeechSynthesis", "objc2-core-audio-types"] }
 objc2-core-audio = { version = "0.3.2", default-features = false, features = ["std", "AudioHardware", "objc2-core-audio-types"] }
 objc2-core-audio-types = { version = "0.3.2", default-features = false, features = ["std", "CoreAudioBaseTypes"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDate", "NSEnumerator", "NSRange", "NSRunLoop", "NSString", "NSThread"] }
@@ -49,5 +49,8 @@ tracing = "0.1.44"
 whisper-rs = { version = "0.16.0", default-features = false, features = ["metal", "tracing_backend"] }
 
 [dev-dependencies]
+# The simulator's op anchors, so the end-to-end example can check I1 by replaying its inputs
+# through a fresh core (D-033: never in a shipped build).
+boardai-core = { workspace = true, features = ["sim"] }
 # `io-std` reads typed lines in the `converse` example.
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "net", "test-util", "io-std"] }

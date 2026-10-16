@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::{
-    HarnessChoice, HarnessSettings, LlmKind, LlmSettings, MicMode, SecretName, Settings,
-    SettingsError, SttKind, SttSettings, TtsKind, TtsSettings, VoiceSettings,
+    AudioSettings, HarnessChoice, HarnessSettings, LlmKind, LlmSettings, MicMode, SecretName,
+    Settings, SettingsError, SttKind, SttSettings, TtsKind, TtsSettings, VoiceSettings,
 };
+use crate::audio::InputChoice;
 use crate::limits::{LLM_MAX_TOKENS_MAX, SCRIBE_MAX_TOKENS_DEFAULT, TALKER_MAX_TOKENS_DEFAULT};
 use crate::llm::openai::OLLAMA_BASE_URL;
 use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
@@ -25,6 +26,7 @@ struct RawSettings {
     code_roots: Option<Vec<String>>,
     mic: Option<String>,
     voice: Option<RawVoice>,
+    audio: Option<RawAudio>,
     talker: Option<RawLlm>,
     scribe: Option<RawLlm>,
     stt: Option<RawProvider>,
@@ -65,6 +67,12 @@ struct RawVoice {
     id: Option<String>,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAudio {
+    input: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 enum Role {
     Talker,
@@ -96,6 +104,7 @@ pub(super) fn defaults(home: &Path) -> Settings {
             voice: VoiceSettings {
                 id: DEFAULT_VOICE.to_owned(),
             },
+            audio: AudioSettings::default(),
             vault: home.join("BoardAI"),
             code_roots: Vec::new(),
             mic: MicMode::Open,
@@ -133,6 +142,10 @@ fn parse_raw(raw: RawSettings, home: &Path) -> Result<Settings, SettingsError> {
         voice: VoiceSettings {
             id: non_empty("voice.id", raw.voice.and_then(|voice| voice.id))?
                 .unwrap_or_else(|| DEFAULT_VOICE.to_owned()),
+        },
+        audio: AudioSettings {
+            input: non_empty("audio.input", raw.audio.and_then(|audio| audio.input))?
+                .map_or_else(InputChoice::default, |input| InputChoice::parse(&input)),
         },
         vault: match raw.vault {
             Some(vault) => path("vault", &vault, home)?,

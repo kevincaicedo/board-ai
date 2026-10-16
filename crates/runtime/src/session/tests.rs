@@ -344,3 +344,4 @@ async fn close(harness: Harness) -> (SessionStats, Arc<Recorder>, Arc<ScriptedTa
 
 mod flow;
 mod lifecycle;
+mod live;

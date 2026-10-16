@@ -39,6 +39,12 @@ pub const END_OF_TURN_GRACE_MS: u64 = 1_500;
 /// Barge-in: undecided speech becomes an interruption after this long.
 pub const BARGE_IN_DECISION_MS: u64 = 900;
 
+/// A voice onset while speaking ducks the voice for this long. `VoiceStart` confirms speech about
+/// 160 ms after its onset (the detector's 150 ms minimum, in 32 ms windows), so this leaves room
+/// for a late detector thread; past it, an onset that never became speech (a cough, a click)
+/// restores the gain and changes nothing else.
+pub const VOICE_ONSET_DUCK_HOLD_MS: u64 = 300;
+
 /// Barge-in: this much voice makes it an interruption.
 pub const BARGE_IN_VOICE_MS: u32 = 700;
 

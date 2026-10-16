@@ -3,13 +3,16 @@
 //! At startup: `settings.toml` from the app's config folder (defaults when it is absent), the
 //! store over the vault (`~/BoardAI` by default) with its index in the app's data folder, the
 //! talker and the scribe from those settings with their keys from the Keychain, the repo tools
-//! and harness for the configured code roots, the virtual voice until real speech lands, and no
-//! mic yet. A talker that can't be built still starts the session: every question then gets
-//! the spoken "No talker model is set up yet." (LLD §6). A vault that can't be used still
-//! starts it too, with memory kept for this run only.
+//! and harness for the configured code roots, and real audio (`crate::audio`: the voice, and
+//! the microphone once macOS allows it; the virtual voice when audio cannot start). Audio
+//! outlives the conversation sessions: every session after an idle rest speaks and listens
+//! through the same voice and microphone. A talker that can't be built still starts the
+//! session: every question then gets the spoken "No talker model is set up yet." (LLD §6). A
+//! vault that can't be used still starts it too, with memory kept for this run only.
 //!
-//! Quitting closes the session (its digest within `SESSION_QUIT_DIGEST_MS`), then the store
-//! (within `STORE_SHUTDOWN_TIMEOUT_MS`), so quitting never hangs.
+//! Quitting closes the session (its digest within `SESSION_QUIT_DIGEST_MS`), then audio (speech
+//! in's threads, then the unit), then the store (within `STORE_SHUTDOWN_TIMEOUT_MS`), so
+//! quitting never hangs.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -23,16 +26,17 @@ use boardai_runtime::harness::{
 };
 use boardai_runtime::limits::STORE_SHUTDOWN_TIMEOUT_MS;
 use boardai_runtime::llm::LlmProvider;
+use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
-    MemoryStore, SessionChannels, SessionHandle, SessionParts, StoreSink, UnconfiguredTalker,
-    VaultSink, VirtualVoice, VirtualVoiceConfig, scribe_from_settings, talker_from_settings,
-    talker_name,
+    MemoryStore, SessionChannels, SessionHandle, SessionParts, SpeechOut, StoreSink,
+    UnconfiguredTalker, VaultSink, scribe_from_settings, talker_from_settings, talker_name,
 };
 use boardai_runtime::settings::{self, HarnessChoice, Settings};
 use boardai_runtime::store::{Store, StoreConfig, StoreTask, SystemWallClock};
 use boardai_runtime::tools::{RepoRoots, RepoTools};
 use tauri::{AppHandle, Manager};
 
+use crate::audio::RunningAudio;
 use crate::secrets::KeychainSecrets;
 use crate::sink::TauriSink;
 
@@ -47,6 +51,8 @@ pub struct AppState {
     /// The store while it is open. Replays read session logs through it; quitting stops it.
     // Held only to clone or take the handle, never across an await.
     pub store: Mutex<Option<OpenStore>>,
+    /// The audio unit and speech in, stopped after the session closes.
+    pub audio: Mutex<Option<RunningAudio>>,
 }
 
 /// The store's handle and its actor task.
@@ -61,6 +67,7 @@ impl AppState {
             sink: Arc::new(TauriSink::new()),
             session: Mutex::new(None),
             store: Mutex::new(None),
+            audio: Mutex::new(None),
         }
     }
 }
@@ -89,7 +96,11 @@ pub fn start(app: &AppHandle) {
         }
         let channels = SessionChannels::new();
         let (store, progress) = crate::dev::observe(store);
-        let parts = parts(&settings, &channels, store, Arc::clone(&state.sink)).await;
+        let (speech, audio) = crate::audio::start(&settings, &channels, models_root(&app)).await;
+        if let Ok(mut slot) = state.audio.lock() {
+            *slot = audio;
+        }
+        let parts = parts(&settings, speech, store, Arc::clone(&state.sink)).await;
         let session = boardai_runtime::session::spawn(channels, parts);
         let link = session.speech_in();
         match state.session.lock() {
@@ -102,7 +113,7 @@ pub fn start(app: &AppHandle) {
 }
 
 /// Closes the session (talker, tasks, timers, voice; its digest within the quit budget), then
-/// the store.
+/// audio, then the store.
 pub fn close(app: &AppHandle) {
     let state = app.state::<AppState>();
     let session = state.session.lock().ok().and_then(|mut slot| slot.take());
@@ -113,6 +124,10 @@ pub fn close(app: &AppHandle) {
             sessions = stats.sessions,
             "session closed"
         );
+    }
+    let audio = state.audio.lock().ok().and_then(|mut slot| slot.take());
+    if let Some(audio) = audio {
+        tauri::async_runtime::block_on(audio.stop());
     }
     let store = state.store.lock().ok().and_then(|mut slot| slot.take());
     if let Some(OpenStore { store, task }) = store {
@@ -155,16 +170,21 @@ async fn open_store(app: &AppHandle, settings: &Settings) -> Option<OpenStore> {
     }
 }
 
+/// `~/Library/Application Support/ai.boardai.desktop/models`, where `just models` puts them.
+fn models_root(app: &AppHandle) -> PathBuf {
+    let home = app.path().home_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    ModelStore::default_root(&home)
+}
+
 async fn parts(
     settings: &Settings,
-    channels: &SessionChannels,
+    speech: Box<dyn SpeechOut>,
     store: Arc<dyn StoreSink>,
     ui: Arc<TauriSink>,
 ) -> SessionParts {
     let talker = talker(settings).await;
     let opened = repo_tools(&settings.code_roots);
     let harness = harness(settings, opened.folders.first());
-    let voice = VirtualVoice::spawn(channels.speech_out(), VirtualVoiceConfig::default());
     SessionParts {
         core: CoreConfig {
             talker_name: talker_name(&settings.talker),
@@ -179,7 +199,7 @@ async fn parts(
         talker,
         tools: opened.tools,
         harness,
-        speech: Box::new(voice),
+        speech,
         store,
         ui,
     }

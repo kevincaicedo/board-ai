@@ -110,6 +110,29 @@ fn next(events: &mut mpsc::Receiver<Input>) -> Input {
     }
 }
 
+/// The onset comes first, at the first loud window; `VoiceStart` once the speech has lasted.
+fn expect_start(events: &mut mpsc::Receiver<Input>) {
+    assert_eq!(next(events), Input::VoiceOnset);
+    assert_eq!(next(events), Input::VoiceStart);
+}
+
+#[test]
+fn a_click_is_an_onset_and_nothing_more() {
+    let (speech, mut events, mut writer, stt) = start(false);
+    writer.write(&audio(384, 0.0));
+    writer.write(&audio(64, 0.5));
+    writer.write(&audio(600, 0.0));
+    assert_eq!(next(&mut events), Input::VoiceOnset);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(events.try_recv().is_err(), "no start, end or transcript");
+    assert_eq!(
+        *stt.frames.lock().expect("lock"),
+        0,
+        "nothing reached Whisper"
+    );
+    speech.shutdown();
+}
+
 #[test]
 fn an_utterance_gives_start_end_and_a_final_with_its_preroll() {
     let (speech, mut events, mut writer, _stt) = start(false);
@@ -118,7 +141,7 @@ fn an_utterance_gives_start_end_and_a_final_with_its_preroll() {
     writer.write(&audio(1_024, 0.5));
     // 1.8 s in all: within the 2 s ring even if the VAD thread has not read any of it yet.
     writer.write(&audio(400, 0.0));
-    assert_eq!(next(&mut events), Input::VoiceStart);
+    expect_start(&mut events);
     assert_eq!(next(&mut events), Input::VoiceEnd { voiced_ms: 1_024 });
     let Input::Transcript { text, is_final } = next(&mut events) else {
         panic!("a transcript")
@@ -139,7 +162,7 @@ fn speaking_again_after_a_pause_discards_the_early_final() {
     writer.write(&audio(160, 0.0));
     writer.write(&audio(512, 0.5));
     writer.write(&audio(320, 0.0));
-    assert_eq!(next(&mut events), Input::VoiceStart);
+    expect_start(&mut events);
     assert_eq!(next(&mut events), Input::VoiceEnd { voiced_ms: 1_184 });
     let Input::Transcript { text, is_final } = next(&mut events) else {
         panic!("a transcript")
@@ -157,7 +180,7 @@ fn partials_arrive_while_you_speak() {
     let (speech, mut events, mut writer, _stt) = start(false);
     speak_in_real_time(&mut writer, &audio(1_800, 0.5));
     speak_in_real_time(&mut writer, &audio(320, 0.0));
-    assert_eq!(next(&mut events), Input::VoiceStart);
+    expect_start(&mut events);
     let mut partials = Vec::new();
     loop {
         let input = next(&mut events);
@@ -194,7 +217,7 @@ fn partials_arrive_while_you_speak() {
 fn muting_drops_the_utterance_unheard() {
     let (speech, mut events, mut writer, stt) = start(false);
     writer.write(&audio(400, 0.5));
-    assert_eq!(next(&mut events), Input::VoiceStart);
+    expect_start(&mut events);
     speech.set_muted(true);
     std::thread::sleep(Duration::from_millis(50));
     writer.write(&audio(1_000, 0.0));
@@ -204,7 +227,7 @@ fn muting_drops_the_utterance_unheard() {
     speech.set_muted(false);
     writer.write(&audio(400, 0.5));
     writer.write(&audio(400, 0.0));
-    assert_eq!(next(&mut events), Input::VoiceStart);
+    expect_start(&mut events);
     assert!(matches!(next(&mut events), Input::VoiceEnd { .. }));
     speech.shutdown();
 }

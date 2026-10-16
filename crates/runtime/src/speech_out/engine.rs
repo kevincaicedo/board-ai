@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use super::{
-    ElevenLabsOptions, ElevenLabsVoice, KokoroFiles, KokoroVoice, SystemVoice, TextToSpeech,
-    TtsError,
+    ElevenLabsOptions, ElevenLabsVoice, KokoroFiles, KokoroVoice, SpeechOutConfig, SystemVoice,
+    TextToSpeech, TtsError, VoiceId,
 };
 use crate::models::{ModelId, ModelStatus, ModelStore};
 use crate::settings::{SecretStore, TtsKind, TtsSettings};
@@ -50,6 +50,55 @@ pub fn engine_for(
             Ok(Arc::new(ElevenLabsVoice::new(options)?))
         }
     }
+}
+
+/// The voice a session speaks with: the configured engine with the system voice behind it for a
+/// clause it fails on (D-059), or the system voice alone when the configured one cannot start.
+pub struct ChosenVoice {
+    pub engine: Arc<dyn TextToSpeech>,
+    pub config: SpeechOutConfig,
+    /// Why the configured engine is not the one speaking, when it is not.
+    pub replaced: Option<TtsError>,
+}
+
+/// Builds the configured engine (`voice` is its voice id), falling back to the system voice.
+/// Fails only when the system voice cannot start either. May block on the Keychain.
+pub fn choose_voice(
+    settings: &TtsSettings,
+    voice: &str,
+    secrets: &dyn SecretStore,
+    models: &ModelStore,
+) -> Result<ChosenVoice, TtsError> {
+    let configured = engine_for(settings, secrets, models);
+    if settings.kind == TtsKind::System {
+        return configured.map(|engine| ChosenVoice {
+            engine,
+            config: SpeechOutConfig {
+                voice: VoiceId::new(voice),
+                fallback: None,
+            },
+            replaced: None,
+        });
+    }
+    let system: Arc<dyn TextToSpeech> = Arc::new(SystemVoice::new()?);
+    Ok(match configured {
+        Ok(engine) => ChosenVoice {
+            engine,
+            config: SpeechOutConfig {
+                voice: VoiceId::new(voice),
+                fallback: Some((system, VoiceId::default())),
+            },
+            replaced: None,
+        },
+        Err(error) => ChosenVoice {
+            engine: system,
+            config: SpeechOutConfig {
+                voice: VoiceId::default(),
+                fallback: None,
+            },
+            replaced: Some(error),
+        },
+    })
 }
 
 fn ready(models: &ModelStore, id: ModelId) -> Result<std::path::PathBuf, TtsError> {

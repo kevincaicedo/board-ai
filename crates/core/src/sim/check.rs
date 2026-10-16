@@ -11,7 +11,7 @@ use crate::harness::HarnessKind;
 use crate::history::{AssistantPart, Message};
 use crate::ids::{CaptureId, ElementId, LayerId, OpId};
 use crate::input::Input;
-use crate::limits::{BARGE_IN_DECISION_MS, DETOUR_DEPTH_MAX};
+use crate::limits::{BARGE_IN_DECISION_MS, DETOUR_DEPTH_MAX, VOICE_ONSET_DUCK_HOLD_MS};
 use crate::memory::{MemoryAction, MemoryWrite};
 use crate::protocol::{DrawOp, EdgePath, NodeShape, UiEvent};
 use crate::sim::speech::FakeSpeech;
@@ -44,6 +44,8 @@ pub struct Checker {
     backchannels: Vec<(SessionTime, SessionTime)>,
     /// The last camera frame sent for each layer.
     frames: BTreeMap<LayerId, Rect>,
+    /// The latest voice onset: the one thing that may keep the voice ducked while it speaks.
+    last_onset: Option<SessionTime>,
 }
 
 impl Checker {
@@ -61,6 +63,37 @@ impl Checker {
         if *core.state() == ConversationState::Speaking {
             let end = start.plus_ms(BARGE_IN_DECISION_MS * 2);
             self.backchannels.push((start, end));
+        }
+    }
+
+    /// The voice is never left ducked while BoardAI speaks: only an onset's hold may keep it
+    /// down outside a barge-in (LLD §2.2), and a cough must not leave it quiet. While a barge-in
+    /// is decided it stays ducked.
+    pub fn check_gain(&mut self, now: SessionTime, core: &Core, speech: &FakeSpeech) {
+        // Inclusive: the tick that ends the hold may be stepped after other inputs of its time.
+        let held = self
+            .last_onset
+            .is_some_and(|onset| now <= onset.plus_ms(VOICE_ONSET_DUCK_HOLD_MS));
+        let gain = speech.gain();
+        match core.state() {
+            ConversationState::Speaking if gain < 1.0 && !held => {
+                self.violate(
+                    now,
+                    format!("the voice was left ducked at {gain} while speaking"),
+                );
+            }
+            ConversationState::Ducked(_) if gain >= 1.0 => {
+                self.violate(
+                    now,
+                    "the voice came back up while a barge-in was decided".into(),
+                );
+            }
+            ConversationState::Idle
+            | ConversationState::Listening(_)
+            | ConversationState::Thinking
+            | ConversationState::Speaking
+            | ConversationState::Ducked(_)
+            | ConversationState::Muted => {}
         }
     }
 
@@ -91,6 +124,7 @@ impl Checker {
                     self.change_proposed = Some(now);
                 }
             }
+            Input::VoiceOnset => self.last_onset = Some(now),
             Input::VoiceStart
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }

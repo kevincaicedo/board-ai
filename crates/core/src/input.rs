@@ -71,6 +71,10 @@ pub enum Input {
     Command(UiCommand),
     /// A deadline the core asked for with `WakeAt` was reached.
     Tick,
+    /// The voice detector's first window above its speech threshold: maybe speech, maybe a
+    /// cough. It comes about 160 ms before `VoiceStart` can confirm speech, so the voice can duck
+    /// within the barge-in budget; a `VoiceStart` follows only if the speech lasts (LLD §2.2).
+    VoiceOnset,
 }
 
 /// A position in the voice: `offset_ms` into the audio of `clause`.

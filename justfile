@@ -33,7 +33,8 @@ models *names:
     cargo run -q -p boardai-runtime --example models -- {{names}}
 
 # Plays two clauses through VoiceProcessingIO with the system voice and prints the reported
-# playback positions. Options: --text "…", --voice <id>, --list-voices, --input builtin.
+# playback positions. Options: --text "…", --voice <id>, --list-voices, --input builtin|<name>,
+# --list-inputs (the microphones by name, and whether this process may record; never prompts).
 audio-probe *args:
     cargo run -q -p boardai-runtime --example audio_probe -- {{args}}
 
@@ -50,6 +51,15 @@ spike-s2:
 # Pass `--minutes N` (default 10) and `--input builtin` to use the Mac's own microphone.
 spike-s1 *args:
     cargo run -q -p boardai-runtime --example spike_s1 -- {{args}}
+
+# The voice steel thread end to end, no human (LLD §7): macOS `say` speaks the user's lines into
+# a file mic, and the VAD, Whisper, the core, Ollama, the system voice, the playback clock and
+# the ops run for real (the voice plays silently unless `--output speakers`). Writes
+# target/e2e/{events,trace}.jsonl and prints the checks and HLD §8 latencies. Needs Ollama with
+# gemma4:latest and `just models silero-vad whisper-base.en`. The vocabulary stands in for the
+# opened repo's symbols, which the app gives Whisper. See `just e2e --help`.
+e2e *args:
+    cargo run -q --locked -p boardai-runtime --example e2e -- --vocabulary "Redis,Postgres" {{args}}
 
 # Run the desktop app with hot reload.
 dev:

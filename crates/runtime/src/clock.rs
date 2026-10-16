@@ -60,6 +60,14 @@ impl TokioClock {
     pub fn instant_at(&self, at: SessionTime) -> tokio::time::Instant {
         self.start + std::time::Duration::from_millis(at.as_ms())
     }
+
+    /// The session time of a moment another thread measured with `std::time::Instant` (when a
+    /// file mic wrote a clip). Meaningful on an unpaused runtime, where both clocks agree.
+    #[must_use]
+    pub fn session_time_of(&self, instant: Instant) -> SessionTime {
+        let elapsed = tokio::time::Instant::from_std(instant).saturating_duration_since(self.start);
+        SessionTime::from_ms(u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+    }
 }
 
 impl Clock for TokioClock {

@@ -318,3 +318,33 @@ fn resume_finishes_the_frozen_op_first() {
         "{history:#?}"
     );
 }
+
+/// Interrupting while the voice waits for the talker's next clause stops nothing (nothing is
+/// playing), but the duck must still be undone: the next answer is heard at full volume.
+#[test]
+fn an_interruption_between_clauses_leaves_the_next_answer_at_full_volume() {
+    let mut sim = Sim::new(config());
+    // One short clause, then the stream stalls for 3 s before its next one.
+    sim.talker.chunk_bytes = 64;
+    sim.talker.chunk_interval_ms = 3_000;
+    sim.talker.push(ScriptedReply::says(
+        "Sure, here goes. Then much later, more.",
+    ));
+    sim.talker
+        .push(ScriptedReply::says("Because reads are cheap."));
+    sim.user_says(0, "Walk me through it.");
+    assert!(sim.run_until_true(30_000, |sim| {
+        !sim.speech.word_starts().is_empty() && !sim.speech.is_active()
+    }));
+    let at = sim.now().as_ms() + 100;
+    sim.user_says(at, "wait, why Redis first?");
+    sim.run_until(at + 20_000);
+    assert_clean(&sim);
+    assert!(
+        count(&sim, |effect| *effect
+            == Effect::Duck { gain: Gain::DUCKED })
+            >= 1,
+        "the barge-in ducked"
+    );
+    assert!((sim.speech.gain() - 1.0).abs() < f32::EPSILON);
+}

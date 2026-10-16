@@ -2,10 +2,15 @@
 //! the other actors plug into.
 //!
 //! Start one in three moves: make the [`SessionChannels`], hand each actor its link (speech in
-//! gets a [`SpeechInLink`], speech out a [`SpeechOutLink`]), then [`spawn`] the session with the
-//! parts. Until the speech stream lands, [`VirtualVoice`] is the speech out and typed text
-//! ([`say_typed`]) is the speech in. The store is a [`VaultSink`] over the vault, or a
-//! [`MemoryStore`] when the vault can't be used (and in the text dev loop).
+//! gets a [`SpeechInLink`] and follows [`SessionChannels::listening`], speech out a
+//! [`SpeechOutLink`]), then [`spawn`] the session with the parts. [`LiveVoice`] puts the real
+//! speech-out actor behind the [`SpeechOut`] port and [`LiveListener`] connects real speech in;
+//! [`VirtualVoice`] and typed text ([`say_typed`]) stand in where there is no audio. All of them
+//! outlive the conversation sessions the orchestrator opens and rests: each new session's core
+//! gets the same voice, microphone and links. The store is a [`VaultSink`] over the vault, or a
+//! [`MemoryStore`] when the vault can't be used (and in the text dev loop). Failures around the
+//! conversation (no audio, no microphone access) are reported through
+//! [`SessionChannels::problems`].
 //!
 //! The runtime's obligations to the core (LLD §2.1) are met here: inputs of a cancelled talker
 //! stream never reach it, every `Synthesize` is answered, every `WakeAt` becomes a `Tick`, and
@@ -13,6 +18,9 @@
 
 mod deadlines;
 mod inbox;
+mod listening;
+mod live_listener;
+mod live_voice;
 mod memory_store;
 mod orchestrator;
 mod ports;
@@ -32,7 +40,12 @@ use boardai_core::input::Input;
 use boardai_core::protocol::UiCommand;
 use tokio::task::JoinHandle;
 
-pub use inbox::{InboxRefused, SessionChannels, SessionClosed, SpeechInLink, SpeechOutLink};
+pub use inbox::{
+    InboxRefused, ProblemLink, SessionChannels, SessionClosed, SpeechInLink, SpeechOutLink,
+};
+pub use listening::{Listening, mic_open};
+pub use live_listener::LiveListener;
+pub use live_voice::LiveVoice;
 pub use memory_store::MemoryStore;
 pub use orchestrator::SessionStats;
 pub use ports::{SessionClose, SessionOpened, SpeechOut, SpeechOutError, StoreRead, StoreSink};
@@ -93,6 +106,7 @@ pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
         inbox,
         receiver,
         positions,
+        listening,
         ..
     } = channels;
     let closing = CancelToken::new();
@@ -106,6 +120,7 @@ pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
             speech: parts.speech,
             store: parts.store,
             bridge: BridgeHandle::spawn(parts.ui),
+            listening,
         },
     );
     let receivers = Receivers {

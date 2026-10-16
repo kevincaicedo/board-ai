@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 
 use super::deadlines::Deadlines;
 use super::inbox::{Envelope, Inbox};
+use super::listening::{Listening, ListeningPublisher};
 use super::ports::{SessionClose, SpeechOut, StoreSink};
 use super::talker::Talker;
 use super::work::Work;
@@ -84,6 +85,7 @@ pub(crate) struct Orchestrator {
     pub(crate) speech: Box<dyn SpeechOut>,
     pub(crate) store: Arc<dyn StoreSink>,
     pub(crate) bridge: BridgeHandle,
+    pub(crate) listening: ListeningPublisher,
     pub(crate) deadlines: Deadlines,
     pub(crate) own_answers: VecDeque<Input>,
     pub(crate) effects: Vec<Effect>,
@@ -103,6 +105,7 @@ pub(crate) struct Receivers {
 impl Orchestrator {
     pub(crate) fn new(config: CoreConfig, clock: TokioClock, parts: OrchestratorParts) -> Self {
         Self {
+            listening: ListeningPublisher::new(config.mic, parts.listening),
             core: Core::new(config.clone()),
             config,
             phase: Phase::Active {
@@ -222,6 +225,14 @@ impl Orchestrator {
                 }
                 self.step(input).await;
             }
+            Envelope::Problem { spoken, detail } => {
+                let now = self.clock.now();
+                let problem = UiEvent::Problem { spoken, detail };
+                self.store.ui_event(now, &problem);
+                if self.bridge.send(now, vec![problem]).await.is_err() {
+                    tracing::error!("the UI bridge has stopped; UI events are lost");
+                }
+            }
         }
     }
 
@@ -242,6 +253,7 @@ impl Orchestrator {
             self.apply(now, effect);
         }
         let events = std::mem::take(&mut self.ui_events);
+        self.listening.after_step(self.core.state(), &events);
         if self.bridge.send(now, events).await.is_err() {
             tracing::error!("the UI bridge has stopped; UI events are lost");
         }
@@ -341,8 +353,8 @@ impl Orchestrator {
 
 /// The session's life: activity, the idle timeout, resting, waking, and its end.
 impl Orchestrator {
-    /// Every input but a timer tick or a playback report is activity; a final transcript with
-    /// words means the user spoke, so the session is worth a digest.
+    /// Every input but a timer tick, a playback report or a bare voice onset is activity; a final
+    /// transcript with words means the user spoke, so the session is worth a digest.
     fn note_activity(&mut self, now: SessionTime, input: &Input) {
         let Phase::Active {
             spoke,
@@ -351,7 +363,11 @@ impl Orchestrator {
         else {
             return;
         };
-        if matches!(input, Input::Tick | Input::PlaybackAt { .. }) {
+        // A cough or a click is not someone using BoardAI; their speech (`VoiceStart`) is.
+        if matches!(
+            input,
+            Input::Tick | Input::PlaybackAt { .. } | Input::VoiceOnset
+        ) {
             return;
         }
         *last_activity = now;
@@ -526,7 +542,9 @@ fn opens_a_session(input: &Input, muted: bool) -> bool {
         | Input::VoiceStopped { .. }
         | Input::ToolResult { .. }
         | Input::Harness { .. }
-        | Input::Tick => false,
+        | Input::Tick
+        // An onset alone may be a cough; the session opens on the `VoiceStart` that confirms it.
+        | Input::VoiceOnset => false,
     }
 }
 
@@ -538,6 +556,7 @@ pub(crate) struct OrchestratorParts {
     pub(crate) speech: Box<dyn SpeechOut>,
     pub(crate) store: Arc<dyn StoreSink>,
     pub(crate) bridge: BridgeHandle,
+    pub(crate) listening: Arc<watch::Sender<Listening>>,
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

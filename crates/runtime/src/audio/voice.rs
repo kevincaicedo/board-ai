@@ -74,6 +74,28 @@ pub struct VoiceOutput {
     stop_generation: u64,
 }
 
+/// The voice's gain, set from outside speech out. One atomic store; the renderer ramps to it.
+#[derive(Clone, Debug)]
+pub struct VoiceGain {
+    shared: Arc<PlaybackShared>,
+}
+
+impl VoiceGain {
+    pub fn set(&self, gain: Gain) {
+        self.shared
+            .target_gain_bits
+            .store(gain.value().to_bits(), Ordering::Release);
+    }
+
+    /// The gain the renderer is ramping to.
+    #[must_use]
+    pub fn target(&self) -> Gain {
+        Gain::new(f32::from_bits(
+            self.shared.target_gain_bits.load(Ordering::Acquire),
+        ))
+    }
+}
+
 /// A stop the renderer has finished: the counter at the end of the fade. Every frame up to it
 /// reaches the speaker (the last [`VOICE_FADE_MS`] attenuated); nothing after it does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +143,15 @@ impl VoiceOutput {
         self.shared
             .target_gain_bits
             .store(gain.value().to_bits(), Ordering::Release);
+    }
+
+    /// A handle on the gain alone, for a caller that must duck without waiting behind speech
+    /// out's queue (a barge-in has 100 ms).
+    #[must_use]
+    pub fn gain_control(&self) -> VoiceGain {
+        VoiceGain {
+            shared: Arc::clone(&self.shared),
+        }
     }
 
     /// Asks the renderer to fade out and drop the rest of the ring. Answered through

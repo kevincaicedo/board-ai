@@ -1,7 +1,8 @@
 //! `just spike-s1`: the echo-cancellation spike (HLD §11 S1). BoardAI's system voice plays
 //! through VoiceProcessingIO on the speakers for N minutes while the VAD listens on the same
 //! unit's microphone. In a quiet room every `VoiceStart` is a false barge-in: BoardAI hearing
-//! itself. Pass: fewer than 1 per 10 minutes.
+//! itself. Pass: fewer than 1 per 10 minutes. Onsets that never become speech are counted too:
+//! they do not stop the voice, but each ducks it for 300 ms.
 //!
 //! Needs speakers (not headphones), a quiet room, and microphone permission for the terminal.
 //! Options: `--minutes N` (default 10), `--input builtin` (the Mac's own microphone, for when
@@ -136,7 +137,7 @@ fn main() -> Result<(), String> {
     let whisper =
         WhisperStt::new(&model(ModelId::WhisperBaseEn)?).map_err(|error| error.to_string())?;
     let (audio, mic, output) = AudioIo::start(AudioConfig {
-        input: options.input,
+        input: options.input.clone(),
     })
     .map_err(|error| error.to_string())?;
     println!(
@@ -177,6 +178,8 @@ fn main() -> Result<(), String> {
 #[derive(Default)]
 struct Tally {
     false_starts: u32,
+    /// Onsets with no start after them: each ducks the voice for 300 ms in the app.
+    false_onsets: u32,
     heard: Vec<Heard>,
     spoken_ms: u64,
 }
@@ -185,8 +188,12 @@ impl Tally {
     /// Counts a speech-in input; prints false starts and what the recognizer made of them.
     fn speech_in(&mut self, input: Input, started: Instant) {
         let at = started.elapsed().as_secs_f64();
-        if input == Input::VoiceStart {
+        if input == Input::VoiceOnset {
+            self.false_onsets += 1;
+        } else if input == Input::VoiceStart {
             self.false_starts += 1;
+            // Its onset came just before; only onsets that never became starts are dips alone.
+            self.false_onsets = self.false_onsets.saturating_sub(1);
             println!("{at:>7.1} s  false VoiceStart #{}", self.false_starts);
         } else if let Input::Transcript {
             text,
@@ -221,6 +228,12 @@ impl Tally {
         };
         let verdict = if per_ten < 1.0 { "pass" } else { "FAIL" };
         println!("S1: {per_ten:.2} self-triggered starts per 10 min ({verdict}){quiet}");
+        // Not part of the pass bar, but heard: the voice dips for 300 ms on each one.
+        println!(
+            "S1: {} onsets that never became speech ({:.2} per 10 min): the voice ducks briefly on each",
+            self.false_onsets,
+            f64::from(self.false_onsets) * 10.0 / minutes
+        );
     }
 }
 

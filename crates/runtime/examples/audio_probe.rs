@@ -2,7 +2,8 @@
 //! and prints what speech out reports, so you can hear the voice and see positions advance.
 //!
 //! Options: `--text "…"` (one clause), `--voice <identifier>`, `--list-voices`,
-//! `--input builtin` (listen on the Mac's own microphone instead of the default input).
+//! `--list-inputs` (the microphones and whether this process may record; never prompts),
+//! `--input builtin|default|<device name>` (which microphone the unit opens).
 #![allow(clippy::print_stdout, reason = "a dev probe prints its findings")]
 
 use std::sync::Arc;
@@ -11,7 +12,9 @@ use std::time::{Duration, Instant};
 
 use boardai_core::ids::ClauseId;
 use boardai_core::input::Input;
-use boardai_runtime::audio::{AudioConfig, AudioIo, InputChoice, run_main_loop_until};
+use boardai_runtime::audio::{
+    AudioConfig, AudioIo, InputChoice, input_device_names, microphone_access, run_main_loop_until,
+};
 use boardai_runtime::speech_out::{
     SpeechOut, SpeechOutCommand, SpeechOutConfig, SystemVoice, VoiceId, system_voices,
 };
@@ -29,6 +32,7 @@ struct Options {
     voice: VoiceId,
     input: InputChoice,
     list_voices: bool,
+    list_inputs: bool,
 }
 
 fn options() -> Result<Options, String> {
@@ -40,6 +44,7 @@ fn options() -> Result<Options, String> {
         voice: VoiceId::default(),
         input: InputChoice::SystemDefault,
         list_voices: false,
+        list_inputs: false,
     };
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -52,10 +57,12 @@ fn options() -> Result<Options, String> {
                 options.input = match arguments.next().as_deref() {
                     Some("builtin") => InputChoice::BuiltIn,
                     Some("default") => InputChoice::SystemDefault,
-                    _ => return Err("--input is builtin or default".to_owned()),
+                    Some(name) => InputChoice::Named(name.to_owned()),
+                    None => return Err("--input needs builtin, default or a name".to_owned()),
                 }
             }
             "--list-voices" => options.list_voices = true,
+            "--list-inputs" => options.list_inputs = true,
             other => return Err(format!("unknown option {other}")),
         }
     }
@@ -64,6 +71,13 @@ fn options() -> Result<Options, String> {
 
 fn main() -> Result<(), String> {
     let options = options()?;
+    if options.list_inputs {
+        println!("microphone access: {:?}", microphone_access());
+        for name in input_device_names() {
+            println!("input: {name}");
+        }
+        return Ok(());
+    }
     if options.list_voices {
         for voice in system_voices() {
             println!(
@@ -74,7 +88,7 @@ fn main() -> Result<(), String> {
         return Ok(());
     }
     let (audio, _mic, output) = AudioIo::start(AudioConfig {
-        input: options.input,
+        input: options.input.clone(),
     })
     .map_err(|error| format!("audio: {error}"))?;
     println!(

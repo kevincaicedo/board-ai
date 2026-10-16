@@ -13,6 +13,7 @@ use boardai_core::ids::ClauseId;
 use boardai_core::input::{Input, PlaybackPosition, WordTimings};
 use tokio::sync::{mpsc, watch};
 
+use super::listening::Listening;
 use crate::limits::SESSION_INBOX_CAPACITY;
 
 /// One message for the orchestrator.
@@ -23,6 +24,12 @@ pub(crate) enum Envelope {
     Talker {
         generation: u64,
         input: Input,
+    },
+    /// A runtime failure the user should know about (no audio, no microphone access), shown
+    /// as a `Problem` without going through the core.
+    Problem {
+        spoken: String,
+        detail: String,
     },
 }
 
@@ -93,6 +100,8 @@ pub struct SessionChannels {
     pub(crate) receiver: mpsc::Receiver<Envelope>,
     playback: Arc<Playback>,
     pub(crate) positions: watch::Receiver<Option<PlaybackPosition>>,
+    /// What speech in should do; the orchestrator writes it after every step.
+    pub(crate) listening: Arc<watch::Sender<Listening>>,
 }
 
 impl SessionChannels {
@@ -105,6 +114,22 @@ impl SessionChannels {
             receiver,
             playback: Arc::new(playback),
             positions,
+            listening: Arc::new(watch::Sender::new(Listening::default())),
+        }
+    }
+
+    /// What speech in should do as the conversation goes: whether the mic is heard, and the
+    /// terms BoardAI drew. Latest wins.
+    #[must_use]
+    pub fn listening(&self) -> watch::Receiver<Listening> {
+        self.listening.subscribe()
+    }
+
+    /// The link the runtime reports its own failures through.
+    #[must_use]
+    pub fn problems(&self) -> ProblemLink {
+        ProblemLink {
+            inbox: self.inbox.clone(),
         }
     }
 
@@ -139,6 +164,11 @@ pub struct SpeechInLink {
 }
 
 impl SpeechInLink {
+    /// The voice detector's first speech window: the voice ducks now, speech is confirmed later.
+    pub async fn voice_onset(&self) -> Result<(), SessionClosed> {
+        self.inbox.send(Input::VoiceOnset).await
+    }
+
     pub async fn voice_start(&self) -> Result<(), SessionClosed> {
         self.inbox.send(Input::VoiceStart).await
     }
@@ -192,5 +222,27 @@ impl SpeechOutLink {
     /// nothing was playing.
     pub async fn voice_stopped(&self, last: Option<PlaybackPosition>) -> Result<(), SessionClosed> {
         self.inbox.send(Input::VoiceStopped { last }).await
+    }
+}
+
+/// Where the runtime reports what failed around the conversation: audio that would not start,
+/// a microphone without permission, speech models not downloaded. Each becomes a `Problem`
+/// caption, stamped and logged like the core's own UI events.
+#[derive(Clone, Debug)]
+pub struct ProblemLink {
+    inbox: Inbox,
+}
+
+impl ProblemLink {
+    /// Never waits: a problem reported while the inbox is full is dropped and logged, since a
+    /// session that busy is already being heard from.
+    pub fn report(&self, spoken: impl Into<String>, detail: impl Into<String>) {
+        let problem = Envelope::Problem {
+            spoken: spoken.into(),
+            detail: detail.into(),
+        };
+        if self.inbox.sender.try_send(problem).is_err() {
+            tracing::warn!("a runtime problem was not shown: the session is full or closed");
+        }
     }
 }

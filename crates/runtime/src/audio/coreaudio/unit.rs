@@ -34,7 +34,9 @@ use objc2_core_audio_types::{
 };
 
 use super::OsStatus;
-use super::device::{built_in_input_device, output_latency_seconds};
+use super::device::{
+    built_in_input_device, input_device_named, input_device_names, output_latency_seconds,
+};
 use crate::audio::resample::Resampler;
 use crate::audio::{
     AudioCounters, AudioError, InputChoice, MIC_RATE_HZ, MicWriter, PlaybackRenderer, VOICE_RATE_HZ,
@@ -84,7 +86,7 @@ pub(super) struct PlaybackState {
 
 impl VoiceProcessingUnit {
     pub(crate) fn start(
-        input: InputChoice,
+        input: &InputChoice,
         writer: MicWriter,
         renderer: PlaybackRenderer,
         counters: Arc<AudioCounters>,
@@ -298,19 +300,27 @@ fn mono_float(rate_hz: f64) -> AudioStreamBasicDescription {
 
 /// Picks the mic, turns gain control on, and sets mono `f32` at the unit's own rate on both
 /// client sides.
-fn configure(unit: AudioUnit, input: InputChoice) -> Result<(), AudioError> {
-    match input {
-        InputChoice::SystemDefault => {}
-        InputChoice::BuiltIn => {
-            let device = built_in_input_device().ok_or(AudioError::NoBuiltInInput)?;
-            set_property(
-                unit,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                INPUT_ELEMENT,
-                &device,
-            )?;
+fn configure(unit: AudioUnit, input: &InputChoice) -> Result<(), AudioError> {
+    let device = match input {
+        InputChoice::SystemDefault => None,
+        InputChoice::BuiltIn => Some(built_in_input_device().ok_or(AudioError::NoBuiltInInput)?),
+        InputChoice::Named(name) => {
+            Some(
+                input_device_named(name).ok_or_else(|| AudioError::NoSuchInput {
+                    name: name.clone(),
+                    available: input_device_names(),
+                })?,
+            )
         }
+    };
+    if let Some(device) = device {
+        set_property(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            INPUT_ELEMENT,
+            &device,
+        )?;
     }
     let enabled: u32 = 1;
     set_property(

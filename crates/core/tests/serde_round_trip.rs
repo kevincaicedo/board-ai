@@ -64,6 +64,7 @@ fn speech_and_command_inputs() -> Vec<Input> {
         id: ElementId::parse("lb").expect("valid"),
     };
     vec![
+        Input::VoiceOnset,
         Input::VoiceStart,
         Input::VoiceEnd { voiced_ms: 640 },
         Input::Transcript {

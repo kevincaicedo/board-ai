@@ -144,6 +144,7 @@ impl Printer {
             Milestone::VoiceStart
             | Milestone::FinalTranscript
             | Milestone::TalkerRequested
+            | Milestone::OnsetDuck
             | Milestone::BargeInDuck => None,
         };
         if let Some(slot) = slot
@@ -297,7 +298,8 @@ impl StoreSink for Printer {
                     state.heard = Some(text.clone());
                 }
             }
-            Input::VoiceStart
+            Input::VoiceOnset
+            | Input::VoiceStart
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }
             | Input::ClauseReady { .. }

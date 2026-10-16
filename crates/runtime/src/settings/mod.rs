@@ -9,6 +9,7 @@ mod secrets;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::audio::InputChoice;
 use crate::limits::SETTINGS_FILE_MAX_BYTES;
 use crate::llm::Effort;
 
@@ -22,6 +23,7 @@ pub struct Settings {
     pub tts: TtsSettings,
     pub harness: HarnessSettings,
     pub voice: VoiceSettings,
+    pub audio: AudioSettings,
     /// The vault, the source of truth for sessions, notes and memory (`~/BoardAI`).
     pub vault: PathBuf,
     /// Where "open the boardai repo" looks.
@@ -95,6 +97,14 @@ pub struct HarnessSettings {
 pub struct VoiceSettings {
     /// A voice id of the configured text-to-speech engine; `default` is its default voice.
     pub id: String,
+}
+
+/// `[audio]`: which microphone BoardAI listens on.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AudioSettings {
+    /// `input = "system_default"` (the default), `"built_in"`, or a device's name as macOS shows
+    /// it. A name that matches no device falls back to the system default, out loud.
+    pub input: InputChoice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
