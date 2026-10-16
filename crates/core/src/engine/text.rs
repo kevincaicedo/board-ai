@@ -25,6 +25,12 @@ pub const KEPT_LINE: &str = "Kept.";
 /// "Don't remember this session" (I10).
 pub const OFF_THE_RECORD_LINE: &str = "Won't remember this.";
 
+/// Shown when the store could not make a memory change BoardAI already confirmed out loud.
+pub const NOT_SAVED_LINE: &str = "That wasn't saved.";
+pub const NOT_KEPT_LINE: &str = "That wasn't kept.";
+pub const NOT_FORGOTTEN_LINE: &str = "That wasn't forgotten.";
+pub const NOT_FORGOTTEN_SESSION_LINE: &str = "This session wasn't fully forgotten.";
+
 /// Spoken when a turn runs out of tool rounds.
 pub const TOOL_ROUNDS_LINE: &str = "I got stuck looking things up. Let's try a narrower question.";
 

@@ -37,6 +37,27 @@ impl Redacted {
     pub const fn count(&self) -> usize {
         self.count
     }
+
+    /// The text as one bounded item line ([`one_line`]). Cutting comes after redaction, never
+    /// before: a secret cut short of the length its rule matches would slip through.
+    ///
+    /// [`one_line`]: crate::store::vault::markdown::one_line
+    #[must_use]
+    pub(crate) fn one_line(&self, max_bytes: usize) -> Self {
+        Self {
+            text: crate::store::vault::markdown::one_line(&self.text, max_bytes),
+            count: self.count,
+        }
+    }
+
+    /// The text cut to at most `max_bytes` (plus `…`), after redaction for the same reason.
+    #[must_use]
+    pub(crate) fn cut(&self, max_bytes: usize) -> Self {
+        Self {
+            text: crate::store::vault::markdown::cut_bytes(&self.text, max_bytes),
+            count: self.count,
+        }
+    }
 }
 
 /// When a candidate match counts as a secret.

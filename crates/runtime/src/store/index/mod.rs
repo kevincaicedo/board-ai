@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
 
-pub(crate) use ingest::{UNTITLED as UNTITLED_SESSION, Unit, index_unit};
+pub(crate) use ingest::{UNTITLED as UNTITLED_SESSION, Unit, index_units};
 pub use scan::ScanReport;
 pub(crate) use scan::{rebuild, reconcile, seed_counters};
 pub use schema::SchemaState;
@@ -92,6 +92,28 @@ fn configure(connection: &Connection) -> rusqlite::Result<()> {
     // `NORMAL` durability is enough: a lost commit is redone by the next scan.
     let _mode: String = connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     connection.pragma_update(None, "synchronous", "NORMAL")?;
+    // Deleted rows are overwritten with zeros, not left in free space: what you forget must not
+    // stay readable in the file (I10).
+    connection.pragma_update(None, "secure_delete", true)?;
+    Ok(())
+}
+
+/// After "don't remember this session" (I10), nothing of it may stay readable in the index's
+/// files. Deleted rows are already zeroed (`secure_delete`) and FTS5 already dropped their
+/// terms from its own index (`secure-delete`, schema v2); what is left is the write-ahead log,
+/// which still holds pages as they were before. Checkpointing it with `TRUNCATE` copies the
+/// clean pages into the database and empties the log.
+pub(crate) fn scrub(connection: &Connection) -> Result<(), StoreError> {
+    let (busy, _frames, _copied): (i64, i64, i64) =
+        connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+    if busy != 0 {
+        return Err(StoreError::Index {
+            detail: "the index's log could not be emptied: a read held it past the busy timeout"
+                .to_owned(),
+        });
+    }
     Ok(())
 }
 

@@ -9,17 +9,23 @@
 //! text, and words cut off by mute can only close it.
 //!
 //! The captures here mirror the store's: every `Remember` and `AcceptProposal` adds one, and
-//! `Forget { Last }` removes the newest, so both sides always agree on what "that" is.
+//! `Forget { Last }` removes the newest, so both sides always agree on what "that" is. They
+//! change only with the effects the core emits, never with the store's later answers: the
+//! runtime mirrors them from the same effects, so the two can't drift apart, and a failure
+//! the store reports (`Input::MemoryFailed`) is shown and told, never undone here.
 
 use crate::conversation::ConversationState;
 use crate::conversation::cues::{self, MemoryCue};
 use crate::effect::{Effect, ForgetScope};
 use crate::engine::reply::Reply;
-use crate::engine::text::{FORGOTTEN_LINE, KEPT_LINE, OFF_THE_RECORD_LINE};
+use crate::engine::text::{
+    FORGOTTEN_LINE, KEPT_LINE, NOT_FORGOTTEN_LINE, NOT_FORGOTTEN_SESSION_LINE, NOT_KEPT_LINE,
+    NOT_SAVED_LINE, OFF_THE_RECORD_LINE,
+};
 use crate::engine::{Core, TurnMarks};
 use crate::ids::CaptureId;
-use crate::limits::{CAPTURES_PER_SESSION_MAX, LABEL_MAX_BYTES};
-use crate::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
+use crate::limits::{CAPTURES_PER_SESSION_MAX, LABEL_MAX_BYTES, MEMORY_FAILURE_DETAIL_MAX_BYTES};
+use crate::memory::{MemoryAction, MemoryChange, MemoryKind, MemoryWrite, Subject};
 use crate::memory_policy;
 use crate::narration::speakable::Speakable;
 use crate::narration::tags::bounded;
@@ -31,6 +37,8 @@ use crate::voice::ClauseSource;
 /// One thing the session captured, newest last.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Captured {
+    /// The capture's id; a keep carries its proposal's.
+    capture: CaptureId,
     text: String,
 }
 
@@ -84,6 +92,12 @@ impl Memory {
     #[must_use]
     pub(super) fn is_off_record(&self) -> bool {
         self.off_record
+    }
+
+    /// Whether this session's core made `capture`. An answer about any other is from a session
+    /// that has since ended (its ids start again from zero in the next one).
+    fn made(&self, capture: CaptureId) -> bool {
+        capture.0 < self.next_capture
     }
 }
 
@@ -173,6 +187,7 @@ impl Core {
             capture,
         }));
         self.memory.captures.push(Captured {
+            capture,
             text: bounded(text, LABEL_MAX_BYTES),
         });
         let chip = match kind {
@@ -267,6 +282,7 @@ impl Core {
             capture: proposal.capture,
         });
         self.memory.captures.push(Captured {
+            capture: proposal.capture,
             text: proposal.text.clone(),
         });
         self.context.notice(format!(
@@ -319,6 +335,65 @@ impl Core {
         }
     }
 
+    /// The store could not make a memory change (LLD §2.8). BoardAI already said it was done,
+    /// so the user is shown what failed and the talker hears it with its next request. An
+    /// answer about a capture this session never made is from an ended session and dropped.
+    pub(super) fn on_memory_failed(
+        &mut self,
+        change: MemoryChange,
+        detail: &str,
+        effects: &mut Vec<Effect>,
+    ) {
+        let what = |capture: CaptureId| {
+            self.memory
+                .captures
+                .iter()
+                .rfind(|captured| captured.capture == capture)
+                .map_or_else(
+                    || "it".to_owned(),
+                    |captured| format!("\"{}\"", captured.text),
+                )
+        };
+        let (line, notice) = match change {
+            MemoryChange::Remember { capture } if self.memory.made(capture) => (
+                NOT_SAVED_LINE,
+                format!(
+                    "Saving {} failed, so it is not in the user's vault",
+                    what(capture)
+                ),
+            ),
+            MemoryChange::Keep { capture } if self.memory.made(capture) => (
+                NOT_KEPT_LINE,
+                format!(
+                    "Keeping the proposed memory {} failed, so it is not kept",
+                    what(capture)
+                ),
+            ),
+            MemoryChange::Forget { capture } if self.memory.made(capture) => (
+                NOT_FORGOTTEN_LINE,
+                "\"Forget that\" failed, so what it named is still in the user's vault".to_owned(),
+            ),
+            MemoryChange::ForgetSession if self.memory.off_record => (
+                NOT_FORGOTTEN_SESSION_LINE,
+                "\"Don't remember this session\" did not finish, so some of this session may \
+                 still be in the user's vault"
+                    .to_owned(),
+            ),
+            MemoryChange::Remember { .. }
+            | MemoryChange::Keep { .. }
+            | MemoryChange::Forget { .. }
+            | MemoryChange::ForgetSession => return,
+        };
+        let detail = bounded(detail, MEMORY_FAILURE_DETAIL_MAX_BYTES);
+        effects.push(Effect::Ui(UiEvent::Problem {
+            spoken: line.to_owned(),
+            detail: detail.clone(),
+        }));
+        self.context.notice(format!(
+            "{notice} ({detail}). The user was shown: \"{line}\""
+        ));
+    }
+
     /// A reply the core speaks itself: one short line, no talker request. The turn ends when
     /// it has played, like any reply.
     fn say(&mut self, line: &str, effects: &mut Vec<Effect>) {
@@ -351,6 +426,7 @@ mod tests {
     fn captures_stop_at_the_session_bound() {
         let mut core = Core::new(CoreConfig::default());
         let full = Captured {
+            capture: crate::ids::CaptureId(0),
             text: "x".to_owned(),
         };
         core.memory.captures = vec![full; CAPTURES_PER_SESSION_MAX - 1];

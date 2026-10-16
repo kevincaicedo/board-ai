@@ -216,6 +216,7 @@ mod tests {
     struct StuckReads;
 
     impl StoreSink for StuckReads {
+        fn report_to(&self, _link: crate::session::StoreLink) {}
         fn input(&self, _at: SessionTime, _input: &Input) {}
         fn ui_event(&self, _at: SessionTime, _event: &UiEvent) {}
         fn log(&self, _at: SessionTime, _record: &LogRecord) {}

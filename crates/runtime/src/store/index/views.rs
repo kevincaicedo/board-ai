@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::store::error::StoreError;
 use crate::store::ids::SessionId;
+use crate::store::time::date_of;
 use crate::store::vault::{ABOUT_YOU_FILE, BOARD_FILE, FACTS_FILE, VaultPath};
 
 /// Which memory file a list is read from.
@@ -163,11 +164,6 @@ pub(crate) fn sessions_without_digest(
         ))
     })?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
-/// `YYYY-MM-DD` from an RFC 3339 time; empty when there is none.
-fn date_of(rfc3339: &str) -> String {
-    rfc3339.get(..10).unwrap_or_default().to_owned()
 }
 
 fn sql_limit(limit: usize) -> i64 {

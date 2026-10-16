@@ -139,7 +139,8 @@ async fn deliver(link: &SpeechOutLink, report: Input) -> Result<(), SessionClose
         | Input::ToolResult { .. }
         | Input::Harness { .. }
         | Input::Command(_)
-        | Input::Tick) => {
+        | Input::Tick
+        | Input::MemoryFailed { .. }) => {
             debug_assert!(false, "speech out reported {other:?}");
             tracing::error!(
                 ?other,

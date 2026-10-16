@@ -602,6 +602,7 @@ fn opens_a_session(input: &Input, muted: bool) -> bool {
         | Input::ToolResult { .. }
         | Input::Harness { .. }
         | Input::Tick
+        | Input::MemoryFailed { .. }
         // An onset alone may be a cough; the session opens on the `VoiceStart` that confirms it.
         | Input::VoiceOnset => false,
     }

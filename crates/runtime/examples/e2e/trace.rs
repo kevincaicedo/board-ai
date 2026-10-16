@@ -15,7 +15,9 @@ use boardai_core::protocol::{UiBatch, UiEvent, UiLogKind, UiLogLine};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::bridge::{UiSink, UiSinkClosed};
-use boardai_runtime::session::{MemoryStore, SessionClose, SessionOpened, StoreRead, StoreSink};
+use boardai_runtime::session::{
+    MemoryStore, SessionClose, SessionOpened, StoreLink, StoreRead, StoreSink,
+};
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 
@@ -67,6 +69,10 @@ impl Recorder {
 }
 
 impl StoreSink for Recorder {
+    fn report_to(&self, link: StoreLink) {
+        self.memory.report_to(link);
+    }
+
     fn input(&self, at: SessionTime, input: &Input) {
         self.push(
             at,

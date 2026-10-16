@@ -16,6 +16,7 @@ use boardai_core::time::SessionTime;
 use boardai_core::tools::{ToolCall, ToolOutput};
 use futures_util::future::BoxFuture;
 
+use super::inbox::StoreLink;
 use crate::cancel::CancelToken;
 
 /// Speech out (LLD §3.1, §3.4): synthesizes clauses and plays them in order.
@@ -67,9 +68,14 @@ impl fmt::Display for SpeechOutError {
 /// The record and memory methods run on the orchestrator task for every step, so they must not
 /// block: the store queues them and writes on its own time (it flushes the log every 250 ms).
 /// Memory writes, forgets and keeps are applied in the order they were sent, so "forget that"
-/// always undoes what the core meant. Secret redaction happens inside the store, at its
+/// always undoes what the core meant, and a change the store could not make is reported through
+/// the [`StoreLink`] as `Input::MemoryFailed`. Secret redaction happens inside the store, at its
 /// boundary (LLD §2.8).
 pub trait StoreSink: Send + Sync {
+    /// Where to report memory changes the store could not make. The session hands it over when
+    /// it starts; a store that keeps nothing on disk has nothing to report.
+    fn report_to(&self, link: StoreLink);
+
     /// An input the core stepped, at its session time, for re-simulation.
     fn input(&self, at: SessionTime, input: &Input);
 
@@ -181,6 +187,10 @@ pub enum SessionClose {
 
 /// A shared store is a store, so a caller can keep a handle on it (the dev loop prints from it).
 impl<S: StoreSink + ?Sized> StoreSink for Arc<S> {
+    fn report_to(&self, link: StoreLink) {
+        (**self).report_to(link);
+    }
+
     fn input(&self, at: SessionTime, input: &Input) {
         (**self).input(at, input);
     }

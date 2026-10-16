@@ -281,23 +281,45 @@ pub(crate) fn remove_item(
     Some((out, removed))
 }
 
-/// Sets the checkbox of the item with `id`. `None` when no checklist line has that id.
+/// Sets the checkbox of the item with `id` by changing the one character inside its `[ ]`, so
+/// the line's bullet, indentation and text stay as written. `None` when no checklist line has
+/// that id.
 pub(crate) fn set_checked(content: &str, id: ItemId, checked: bool) -> Option<String> {
     let mut out = String::with_capacity(content.len());
     let mut found = false;
     for line in content.split_inclusive('\n') {
         let bare = line.trim_end_matches(['\n', '\r']);
-        let item = parse_item(bare).filter(|item| item.id == Some(id) && item.checked.is_some());
-        match item {
-            Some(item) if !found => {
+        let mark = (!found)
+            .then(|| parse_item(bare))
+            .flatten()
+            .filter(|item| item.id == Some(id) && item.checked.is_some())
+            .and_then(|_| checkbox_mark_at(bare));
+        match mark {
+            Some(at) => {
                 found = true;
-                out.push_str(&render_item(Some(checked), item.text, &[], item.id));
-                out.push_str(&line[bare.len()..]);
+                out.push_str(&line[..at]);
+                out.push(if checked { 'x' } else { ' ' });
+                out.push_str(&line[at + 1..]);
             }
-            Some(_) | None => out.push_str(line),
+            None => out.push_str(line),
         }
     }
     found.then_some(out)
+}
+
+/// The byte index of the mark inside a checklist line's `[ ]`, `[x]` or `[X]`: after the
+/// indentation and the `- ` or `* ` that [`parse_item`] accepts.
+fn checkbox_mark_at(line: &str) -> Option<usize> {
+    let indent = line.len() - line.trim_start().len();
+    let rest = line.get(indent..)?;
+    let after_bullet = rest
+        .strip_prefix("- ")
+        .or_else(|| rest.strip_prefix("* "))?;
+    let is_box = ["[ ] ", "[x] ", "[X] "]
+        .iter()
+        .any(|open| after_bullet.starts_with(open));
+    // The bullet is two ASCII bytes and `[` one more, so the mark is one ASCII byte here.
+    is_box.then_some(indent + "- [".len())
 }
 
 #[cfg(test)]
@@ -402,6 +424,13 @@ mod tests {
                 true
             ),
             None
+        );
+        // A line written by hand keeps its bullet, indentation, case and spacing.
+        let hand = "  * [X] About you:  kept by hand [[x]] ^p4\r\n";
+        let id = ItemId::new(crate::store::ids::ItemKind::Proposal, 4);
+        assert_eq!(
+            set_checked(hand, id, false).as_deref(),
+            Some("  * [ ] About you:  kept by hand [[x]] ^p4\r\n")
         );
     }
 }

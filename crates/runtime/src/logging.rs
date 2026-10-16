@@ -118,6 +118,16 @@ impl Subscriber for StderrLogger {
     fn exit(&self, _span: &Id) {}
 }
 
+/// A field's value as written: redacted, then bounded. Cutting first could leave a key too
+/// short for its rule to match, and the rest of it would be written.
+fn field_text(value: &dyn fmt::Debug) -> String {
+    let mut text = String::new();
+    let _ = write!(text, "{value:?}");
+    let mut text = redact(&text).into_owned();
+    bound(&mut text, LOG_FIELD_MAX_BYTES);
+    text
+}
+
 /// An event's fields: the message, then ` name=value` for the rest, each value bounded.
 #[derive(Default)]
 struct Fields {
@@ -131,9 +141,7 @@ impl Visit for Fields {
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        let mut text = String::new();
-        let _ = write!(text, "{value:?}");
-        bound(&mut text, LOG_FIELD_MAX_BYTES);
+        let text = field_text(value);
         if field.name() == "message" {
             self.message = text;
         } else {
@@ -144,7 +152,8 @@ impl Visit for Fields {
 
 #[cfg(test)]
 mod tests {
-    use super::{bound, redact};
+    use super::{bound, field_text, redact};
+    use crate::limits::LOG_FIELD_MAX_BYTES;
 
     /// Each planted secret is replaced, whatever surrounds it.
     #[test]
@@ -188,6 +197,17 @@ mod tests {
     fn ordinary_text_is_untouched_and_not_copied() {
         let line = "first token latency_ms=412 provider=anthropic task=sk";
         assert!(matches!(redact(line), std::borrow::Cow::Borrowed(_)));
+    }
+
+    /// A key that straddles the field bound is redacted whole, never cut into a piece no rule
+    /// matches.
+    #[test]
+    fn a_field_is_redacted_before_it_is_cut() {
+        let at = LOG_FIELD_MAX_BYTES - '…'.len_utf8() - "sk-ant-".len() - 14 - 1;
+        let value = format!("{} sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv", "a".repeat(at));
+        let field = field_text(&format_args!("{value}"));
+        assert!(field.len() <= LOG_FIELD_MAX_BYTES, "{}", field.len());
+        assert!(!field.contains("AbCdEfGh"), "{field}");
     }
 
     #[test]

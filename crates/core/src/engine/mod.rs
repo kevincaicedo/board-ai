@@ -235,6 +235,9 @@ impl Core {
             Input::Command(UiCommand::Stop) => self.on_stop(now, effects),
             Input::Command(UiCommand::CloseView) => self.close_view(effects),
             Input::Tick => self.on_tick(now, effects),
+            Input::MemoryFailed { change, detail } => {
+                self.on_memory_failed(change, &detail, effects);
+            }
         }
         self.after_step(now, effects);
         self.yield_view(first, effects);

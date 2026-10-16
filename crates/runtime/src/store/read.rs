@@ -128,7 +128,7 @@ impl Reader {
             .filter(|path| self.vault.absolute(path).is_file())
             .map(|path| path.to_string());
         Ok(LibraryEntry {
-            date: record.started.get(..10).unwrap_or_default().to_owned(),
+            date: super::time::date_of(&record.started),
             shapes: self.cover(board.as_deref()),
             id: record.id,
             title: record.title,

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use boardai_core::ids::ClauseId;
 use boardai_core::input::{Input, PlaybackPosition, WordTimings};
+use boardai_core::memory::MemoryChange;
 use tokio::sync::{mpsc, watch};
 
 use super::listening::Listening;
@@ -149,6 +150,14 @@ impl SessionChannels {
             playback: Arc::clone(&self.playback),
         }
     }
+
+    /// The link the store reports memory changes it could not make through.
+    #[must_use]
+    pub fn store(&self) -> StoreLink {
+        StoreLink {
+            inbox: self.inbox.clone(),
+        }
+    }
 }
 
 impl Default for SessionChannels {
@@ -244,5 +253,21 @@ impl ProblemLink {
         if self.inbox.sender.try_send(problem).is_err() {
             tracing::warn!("a runtime problem was not shown: the session is full or closed");
         }
+    }
+}
+
+/// What the store tells the core: a memory change it could not make (LLD §2.8), which BoardAI
+/// already said was done.
+#[derive(Clone, Debug)]
+pub struct StoreLink {
+    inbox: Inbox,
+}
+
+impl StoreLink {
+    /// Never waits: the store's writer must never wait on the orchestrator, which may itself be
+    /// waiting for the writer to drain (a read, a session's start or end). A full inbox drops
+    /// the report; the caller logs it.
+    pub fn memory_failed(&self, change: MemoryChange, detail: String) -> Result<(), InboxRefused> {
+        self.inbox.try_send(Input::MemoryFailed { change, detail })
     }
 }

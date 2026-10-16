@@ -10,10 +10,10 @@
 use rusqlite::Connection;
 
 /// The version this build writes.
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 /// `MIGRATIONS[n]` takes an index from version `n` to `n + 1`.
-const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [V1];
+const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [V1, V2];
 
 const V1: &str = r"
 CREATE TABLE files (
@@ -110,6 +110,13 @@ CREATE INDEX relations_path ON relations (path);
 CREATE INDEX sessions_started ON sessions (started_ms);
 ";
 
+/// FTS5 removes a deleted row's terms from its index at once, instead of leaving them in older
+/// segments until a merge: a forgotten session's words must not stay readable (I10). The
+/// option is stored in the table's own config, so it holds for every later connection.
+const V2: &str = r"
+INSERT INTO search (search, rank) VALUES ('secure-delete', 1);
+";
+
 /// What opening the index found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SchemaState {
@@ -163,4 +170,34 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<SchemaState, Unusab
     } else {
         SchemaState::Migrated { from: version }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::{SchemaState, V1, migrate};
+
+    /// An index from the first build migrates to v2, which turns FTS5's secure delete on: a
+    /// deleted row's words leave the search index at once (I10).
+    #[test]
+    fn a_v1_index_migrates_to_secure_delete() {
+        let Ok(mut connection) = Connection::open_in_memory() else {
+            panic!("an in-memory index");
+        };
+        assert!(connection.execute_batch(V1).is_ok());
+        assert!(connection.pragma_update(None, "user_version", 1).is_ok());
+        assert_eq!(
+            migrate(&mut connection),
+            Ok(SchemaState::Migrated { from: 1 })
+        );
+        let secure: Option<i64> = connection
+            .query_row(
+                "SELECT v FROM search_config WHERE k = 'secure-delete'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        assert_eq!(secure, Some(1));
+    }
 }

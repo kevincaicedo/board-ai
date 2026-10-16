@@ -10,7 +10,7 @@ use crate::limits::{
 use crate::store::error::StoreError;
 use crate::store::ids::SessionId;
 use crate::store::slug::slugify;
-use crate::store::time::WallTime;
+use crate::store::time::{WallTime, date_of};
 use crate::store::vault::markdown::cut_chars;
 use crate::store::vault::{BOARD_FILE, VaultPath};
 use crate::store::views::{Library, LibraryEntry, NowList, TaskView};
@@ -95,7 +95,8 @@ pub(crate) fn recall(
                 snippet: row.get(4)?,
                 session_date: row
                     .get::<_, Option<String>>(5)?
-                    .and_then(|started| started.get(..10).map(str::to_owned)),
+                    .map(|started| date_of(&started))
+                    .filter(|date| !date.is_empty()),
             })
         },
     )?;
@@ -178,7 +179,7 @@ pub(crate) fn library(connection: &Connection) -> Result<Library, StoreError> {
         sessions.push(LibraryEntry {
             id,
             title,
-            date: started.get(..10).unwrap_or_default().to_owned(),
+            date: date_of(&started),
             started,
             duration_ms: u64::try_from(duration_ms).unwrap_or(0),
             cover,
@@ -235,7 +236,7 @@ pub(crate) fn now_list(
                 session_title: row.get(6)?,
                 session_date: row
                     .get::<_, Option<String>>(7)?
-                    .and_then(|started| started.get(..10).map(str::to_owned)),
+                    .map(|started| date_of(&started)),
             })
         },
     )?;

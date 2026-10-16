@@ -196,6 +196,10 @@ pub const ORB_DRAWING_LINGER_MS: u64 = 800;
 /// stored" and nothing is sent, so the core and the store never disagree on what "that" is.
 pub const CAPTURES_PER_SESSION_MAX: usize = 500;
 
+/// Longest store failure detail shown under a memory problem; a longer one is cut and ends
+/// with "…".
+pub const MEMORY_FAILURE_DETAIL_MAX_BYTES: usize = 200;
+
 /// Items per list the talker reads about a view on screen (sessions, tasks, notes, memories);
 /// the rest are counted ("N more on screen"). Past boards list up to three times as many labels.
 pub const VIEW_TALKER_ITEMS_MAX: usize = 8;

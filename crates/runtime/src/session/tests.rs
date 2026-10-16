@@ -204,6 +204,8 @@ impl UiSink for Recorder {
 }
 
 impl StoreSink for Recorder {
+    fn report_to(&self, _link: super::StoreLink) {}
+
     fn input(&self, _at: SessionTime, input: &Input) {
         if let Ok(mut inputs) = self.inputs.lock() {
             inputs.push(input.clone());

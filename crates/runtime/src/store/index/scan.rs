@@ -1,15 +1,19 @@
 //! Keeping the index in step with the vault. A scan lists the vault's files once and compares
 //! each with its `files` row: same modification time and size means unchanged; otherwise the
 //! content hash decides, and a changed file re-indexes its unit. A full rebuild is the same
-//! scan over an emptied index, so "delete the index and rebuild" gives the same rows.
+//! scan over an emptied index, in the same transaction, so "delete the index and rebuild"
+//! gives the same rows, and a rebuild that fails leaves the index it started from.
+//!
+//! One unreadable file never stops a scan: its unit is skipped, counted in the report, and
+//! tried again at the next scan.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use serde::Serialize;
 
-use super::ingest::{FileState, Unit, file_state, index_unit, modified_ms};
+use super::ingest::{FileState, Unit, file_state, index_units, modified_ms};
 use crate::limits::VAULT_SCAN_FILES_MAX;
 use crate::store::error::StoreError;
 use crate::store::ids::{IdCounters, ItemId};
@@ -26,6 +30,9 @@ pub struct ScanReport {
     pub reindexed: u64,
     /// Files in the index that are gone from the vault.
     pub removed: u64,
+    /// Units left out because a file couldn't be read (a permission, an I/O error); each is
+    /// logged with its path and tried again at the next scan.
+    pub skipped: u64,
     /// The scan stopped at `VAULT_SCAN_FILES_MAX`; files past it are not indexed, and nothing
     /// is removed from the index because the scan did not see everything.
     pub truncated: bool,
@@ -49,17 +56,19 @@ const TABLES: [&str; 9] = [
     "search",
 ];
 
-/// Empties the index and scans the whole vault.
+/// Empties the index and scans the whole vault, in one transaction: a rescan that fails
+/// leaves the index as it was.
 pub(crate) fn rebuild(
     connection: &mut Connection,
     vault: &Vault,
 ) -> Result<ScanReport, StoreError> {
-    let transaction = connection.transaction()?;
+    let mut transaction = connection.transaction()?;
     for table in TABLES {
         transaction.execute(&format!("DELETE FROM {table}"), [])?;
     }
+    let report = reconcile_in(&mut transaction, vault)?;
     transaction.commit()?;
-    reconcile(connection, vault)
+    Ok(report)
 }
 
 /// Re-indexes what changed since the last scan.
@@ -67,7 +76,17 @@ pub(crate) fn reconcile(
     connection: &mut Connection,
     vault: &Vault,
 ) -> Result<ScanReport, StoreError> {
-    let known = known_files(connection)?;
+    let mut transaction = connection.transaction()?;
+    let report = reconcile_in(&mut transaction, vault)?;
+    transaction.commit()?;
+    Ok(report)
+}
+
+fn reconcile_in(
+    transaction: &mut Transaction<'_>,
+    vault: &Vault,
+) -> Result<ScanReport, StoreError> {
+    let known = known_files(transaction)?;
     let (found, truncated) = list_files(vault);
     let mut report = ScanReport {
         files_seen: found.len() as u64,
@@ -76,7 +95,6 @@ pub(crate) fn reconcile(
     };
     let mut units = BTreeSet::new();
     let mut seen = HashSet::new();
-    let transaction = connection.transaction()?;
     for entry in &found {
         seen.insert(entry.path.as_str());
         let changed = match known.get(entry.path.as_str()) {
@@ -86,17 +104,17 @@ pub(crate) fn reconcile(
                 false
             }
             Some(state) => {
-                let current = file_state(&vault.absolute(&entry.path))
-                    .map_err(|error| StoreError::io(entry.path.as_str(), &error))?;
-                match current {
-                    Some(current) if current.hash == state.hash => {
+                // A file that can't be read now counts as changed: its unit is re-indexed, which
+                // skips and reports it.
+                match file_state(&vault.absolute(&entry.path)) {
+                    Ok(Some(current)) if current.hash == state.hash => {
                         transaction.execute(
                             "UPDATE files SET mtime_ms = ?2, size_bytes = ?3 WHERE path = ?1",
                             params![entry.path.as_str(), current.mtime_ms, current.size_bytes],
                         )?;
                         false
                     }
-                    Some(_) | None => true,
+                    Ok(Some(_) | None) | Err(_) => true,
                 }
             }
             None => true,
@@ -120,11 +138,10 @@ pub(crate) fn reconcile(
             }
         }
     }
-    for unit in &units {
-        index_unit(&transaction, vault, unit)?;
-    }
-    transaction.commit()?;
-    report.reindexed = units.len() as u64;
+    let units: Vec<Unit> = units.into_iter().collect();
+    let skipped = index_units(transaction, vault, &units)?;
+    report.skipped = skipped.len() as u64;
+    report.reindexed = (units.len() - skipped.len()) as u64;
     Ok(report)
 }
 
@@ -216,4 +233,38 @@ fn names_in(vault: &Vault, folder: &str) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{rebuild, reconcile};
+    use crate::store::index::open_writer;
+    use crate::store::vault::Vault;
+
+    /// A rebuild whose rescan fails in the index (here a planted trigger; a full disk in life)
+    /// rolls back to the index it started from, never to an empty one.
+    #[test]
+    fn a_rebuild_that_fails_keeps_the_index_it_started_from() {
+        let root = std::env::temp_dir().join(format!("boardai-rebuild-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let vault = Vault::open(&root.join("vault"), None);
+        let opened = open_writer(&root.join("index.sqlite"));
+        let (Ok(vault), Ok((mut connection, _))) = (vault, opened) else {
+            panic!("a vault and an index");
+        };
+        assert!(std::fs::write(vault.root().join("notes/alpha.md"), "# Alpha\n").is_ok());
+        assert!(reconcile(&mut connection, &vault).is_ok());
+        let notes = |connection: &rusqlite::Connection| -> i64 {
+            connection
+                .query_row("SELECT count(*) FROM notes", [], |row| row.get(0))
+                .unwrap_or(-1)
+        };
+        assert_eq!(notes(&connection), 1);
+        let planted = "CREATE TEMP TRIGGER planted BEFORE INSERT ON notes \
+                       BEGIN SELECT RAISE(ABORT, 'planted'); END;";
+        assert!(connection.execute_batch(planted).is_ok());
+        assert!(rebuild(&mut connection, &vault).is_err());
+        assert_eq!(notes(&connection), 1, "the note is still indexed");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

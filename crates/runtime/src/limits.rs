@@ -228,7 +228,8 @@ pub const VAULT_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// file is read as body only, so a hand-edited file never stalls a scan.
 pub const VAULT_FRONT_MATTER_LINES_MAX: usize = 64;
 
-/// Files one vault scan looks at; past it the scan stops and reports `truncated`.
+/// Files one vault scan looks at; past it the scan stops and reports `truncated`. A file that
+/// can't be read is skipped and counted in `skipped`, and tried again at the next scan.
 pub const VAULT_SCAN_FILES_MAX: usize = 100_000;
 
 /// Longest one-line item (a memory, a task title, a proposal); a longer one is cut at a
@@ -389,9 +390,11 @@ pub const SESSION_CLOSE_TIMEOUT_MS: u64 =
 /// you); past it the rest is left out at a line boundary.
 pub const SESSION_CONTEXT_MAX_BYTES: usize = 4 * 1024;
 
-/// Memory writes waiting to reach the store, in order. They are applied one at a time so
-/// "forget that" always undoes the capture the core meant. Past it a write is dropped and
-/// logged as an error (the store would have to be stalled for hundreds of captures).
+/// Memory writes waiting to reach the store, in order. They are applied one at a time, and
+/// "forget that" names the capture it undoes, so a write lost here can't shift what "that" is.
+/// Past it a write is dropped and reported to the core, which shows it failed (the store would
+/// have to be stalled for hundreds of captures). "Don't remember this session" never waits
+/// here: it is signalled beside the queue and goes first.
 pub const STORE_WRITES_CAPACITY: usize = 1_024;
 
 /// Ops of a past board brought back by `open_session`; the rest are counted in

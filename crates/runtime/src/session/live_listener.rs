@@ -143,7 +143,8 @@ async fn forward(link: &SpeechInLink, input: Input) -> Result<(), SessionClosed>
         | Input::ToolResult { .. }
         | Input::Harness { .. }
         | Input::Command(_)
-        | Input::Tick) => {
+        | Input::Tick
+        | Input::MemoryFailed { .. }) => {
             debug_assert!(false, "speech in produced {other:?}");
             tracing::error!(
                 ?other,

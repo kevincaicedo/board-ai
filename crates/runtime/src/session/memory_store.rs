@@ -2,6 +2,9 @@
 //! use it, and the app falls back to it when the vault can't be used. It writes nothing to
 //! disk, so nothing outlives the process; `recall` and the views show what was remembered in
 //! this session, and no past session exists.
+//!
+//! It holds the session's captures as the core counts them: every `remember` and every "yes,
+//! keep it" is one, so "forget that" undoes the capture the core meant.
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -10,21 +13,30 @@ use std::sync::{Arc, Mutex};
 use boardai_core::effect::{ForgetScope, LogRecord};
 use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
-use boardai_core::memory::{MemoryKind, MemoryWrite, Subject};
+use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
 use boardai_core::protocol::UiEvent;
 use boardai_core::time::SessionTime;
 use boardai_core::tools::{ToolFailure, ToolOutput};
 use boardai_core::views::{MemoryRow, TaskRow, View};
 use futures_util::future::BoxFuture;
 
+use super::inbox::StoreLink;
 use super::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
 use crate::limits::{MEMORY_STORE_MEMORIES_MAX, MEMORY_STORE_RECALL_HITS_MAX};
 use crate::store::{SystemWallClock, WallClock};
 
+/// One capture, as the core counts them.
+#[derive(Clone, Debug)]
+enum Held {
+    Memory(MemoryWrite),
+    /// "Yes, keep it" for the proposal made as this capture.
+    Keep(CaptureId),
+}
+
 #[derive(Debug)]
 pub struct MemoryStore {
     // Never held across an await: every method locks, copies and returns.
-    memories: Mutex<VecDeque<MemoryWrite>>,
+    captures: Mutex<VecDeque<Held>>,
     /// For the views' `today`: the UI refuses a view without one.
     clock: Arc<dyn WallClock>,
 }
@@ -44,17 +56,45 @@ impl MemoryStore {
     #[must_use]
     pub fn with_clock(clock: Arc<dyn WallClock>) -> Self {
         Self {
-            memories: Mutex::new(VecDeque::new()),
+            captures: Mutex::new(VecDeque::new()),
             clock,
         }
     }
 
-    /// A copy of what is remembered, oldest first.
+    /// A copy of what is remembered, oldest first: every memory not merely proposed, and the
+    /// proposals kept with a yes.
     fn held(&self) -> Option<Vec<MemoryWrite>> {
-        self.memories
-            .lock()
-            .ok()
-            .map(|memories| memories.iter().cloned().collect())
+        let captures = self.captures.lock().ok()?;
+        let kept: Vec<CaptureId> = captures
+            .iter()
+            .filter_map(|held| match held {
+                Held::Keep(capture) => Some(*capture),
+                Held::Memory(_) => None,
+            })
+            .collect();
+        Some(
+            captures
+                .iter()
+                .filter_map(|held| match held {
+                    Held::Memory(memory)
+                        if memory.action != MemoryAction::Propose
+                            || kept.contains(&memory.capture) =>
+                    {
+                        Some(memory.clone())
+                    }
+                    Held::Memory(_) | Held::Keep(_) => None,
+                })
+                .collect(),
+        )
+    }
+
+    fn hold(&self, held: Held) {
+        if let Ok(mut captures) = self.captures.lock() {
+            if captures.len() >= MEMORY_STORE_MEMORIES_MAX {
+                captures.pop_front();
+            }
+            captures.push_back(held);
+        }
     }
 
     fn search(&self, query: &str) -> ToolOutput {
@@ -101,8 +141,10 @@ impl MemoryStore {
                 .iter()
                 .rev()
                 .filter(|memory| {
-                    matches!(memory.kind, MemoryKind::Stated | MemoryKind::LearningSignal)
-                        && memory.subject == subject
+                    matches!(
+                        memory.kind,
+                        MemoryKind::Stated | MemoryKind::LearningSignal | MemoryKind::Inferred
+                    ) && memory.subject == subject
                 })
                 .map(|memory| MemoryRow {
                     id: format!("c{}", memory.capture.0),
@@ -158,6 +200,9 @@ fn unavailable() -> ToolOutput {
 }
 
 impl StoreSink for MemoryStore {
+    /// Nothing here can fail to be kept: memory is the only place it goes.
+    fn report_to(&self, _link: StoreLink) {}
+
     fn input(&self, _at: SessionTime, _input: &Input) {}
 
     fn ui_event(&self, _at: SessionTime, _event: &UiEvent) {}
@@ -165,27 +210,24 @@ impl StoreSink for MemoryStore {
     fn log(&self, _at: SessionTime, _record: &LogRecord) {}
 
     fn remember(&self, _at: SessionTime, memory: &MemoryWrite) {
-        if let Ok(mut memories) = self.memories.lock() {
-            if memories.len() >= MEMORY_STORE_MEMORIES_MAX {
-                memories.pop_front();
-            }
-            memories.push_back(memory.clone());
-        }
+        self.hold(Held::Memory(memory.clone()));
     }
 
     fn forget(&self, _at: SessionTime, scope: ForgetScope) {
-        if let Ok(mut memories) = self.memories.lock() {
+        if let Ok(mut captures) = self.captures.lock() {
             match scope {
                 ForgetScope::Last => {
-                    memories.pop_back();
+                    captures.pop_back();
                 }
-                ForgetScope::Session => memories.clear(),
+                ForgetScope::Session => captures.clear(),
             }
         }
     }
 
-    /// Nothing here is ever only proposed for long: the session's memory dies with it.
-    fn accept_proposal(&self, _at: SessionTime, _capture: CaptureId) {}
+    /// A keep is a capture of its own, as in the core: "forget that" right after undoes it.
+    fn accept_proposal(&self, _at: SessionTime, capture: CaptureId) {
+        self.hold(Held::Keep(capture));
+    }
 
     fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
         let output = match &read {
@@ -200,8 +242,8 @@ impl StoreSink for MemoryStore {
     }
 
     fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
-        if let Ok(mut memories) = self.memories.lock() {
-            memories.clear();
+        if let Ok(mut captures) = self.captures.lock() {
+            captures.clear();
         }
         Box::pin(std::future::ready(SessionOpened::default()))
     }
@@ -286,8 +328,44 @@ mod tests {
         let texts: Vec<&str> = systems.iter().map(|row| row.text.as_str()).collect();
         assert_eq!(texts, vec!["We use Kafka"]);
         store.forget(SessionTime::ZERO, ForgetScope::Session);
-        let held = store.memories.lock().map_or(1, |memories| memories.len());
+        let held = store.captures.lock().map_or(1, |captures| captures.len());
         assert_eq!(held, 0);
+    }
+
+    /// The core counts a keep as a capture of its own: two "forget that"s after "yes, keep it"
+    /// undo the keep, then the proposal, and the memory before them stays.
+    #[tokio::test]
+    async fn forget_that_undoes_the_capture_the_core_meant() {
+        let store = MemoryStore::new();
+        let about_you = |kind, action, text: &str, capture| MemoryWrite {
+            kind,
+            action,
+            subject: Subject::You,
+            capture: CaptureId(capture),
+            ..memory(text)
+        };
+        let stated = about_you(MemoryKind::Stated, MemoryAction::Keep, "I prefer Go", 0);
+        let inferred = about_you(
+            MemoryKind::Inferred,
+            MemoryAction::Propose,
+            "Likes diagrams first",
+            1,
+        );
+        store.remember(SessionTime::ZERO, &stated);
+        store.remember(SessionTime::ZERO, &inferred);
+        assert_eq!(
+            about(&store).await,
+            vec!["I prefer Go"],
+            "a proposal is not kept"
+        );
+        store.accept_proposal(SessionTime::ZERO, CaptureId(1));
+        assert_eq!(
+            about(&store).await,
+            vec!["Likes diagrams first", "I prefer Go"]
+        );
+        store.forget(SessionTime::ZERO, ForgetScope::Last);
+        store.forget(SessionTime::ZERO, ForgetScope::Last);
+        assert_eq!(about(&store).await, vec!["I prefer Go"]);
     }
 
     /// Review (low): the views carried an empty `today`, and the UI refuses a `ViewShow`
@@ -302,13 +380,23 @@ mod tests {
         assert_eq!(today, "2026-10-15");
     }
 
+    async fn about(store: &MemoryStore) -> Vec<String> {
+        let ToolOutput::View { view, .. } = store.read(StoreRead::Memory).await else {
+            panic!("a view");
+        };
+        let View::Memory { about_you, .. } = *view else {
+            panic!("a memory view");
+        };
+        about_you.into_iter().map(|row| row.text).collect()
+    }
+
     #[test]
     fn the_oldest_memory_goes_past_the_limit() {
         let store = MemoryStore::new();
         for index in 0..=MEMORY_STORE_MEMORIES_MAX {
             store.remember(SessionTime::ZERO, &memory(&format!("fact {index}")));
         }
-        let held = store.memories.lock().map_or(0, |memories| memories.len());
+        let held = store.captures.lock().map_or(0, |captures| captures.len());
         assert_eq!(held, MEMORY_STORE_MEMORIES_MAX);
     }
 }

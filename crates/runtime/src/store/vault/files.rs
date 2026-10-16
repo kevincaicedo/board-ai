@@ -1,12 +1,14 @@
 //! File operations on the vault. Every write is atomic (a temporary file in the same folder,
-//! fsync, rename, then a best-effort fsync of the folder) and takes [`Redacted`] text only.
-//! These run on blocking threads; the store actor never calls them on an async thread.
+//! fsync, rename, then a best-effort fsync of the folder) and takes [`Writable`] text only:
+//! text the store redacted whole, or one of your files with only the store's own redacted line
+//! changed. These run on blocking threads; the store actor never calls them on an async thread.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::edit::Edited;
 use crate::store::redact::Redacted;
 
 const TEMPORARY_PREFIX: &str = ".boardai-";
@@ -28,9 +30,30 @@ pub(crate) enum FileRead {
     },
 }
 
+/// What a vault write may hold (I8). Two kinds of text, and nothing else implements it, so an
+/// unredacted write path does not compile:
+/// - [`Redacted`]: a file the store makes whole (a note, a digest, a board);
+/// - [`Edited`]: one of your files with only the store's own change, whose added text was
+///   redacted and whose other bytes are yours, unchanged (D-042).
+pub(crate) trait Writable {
+    fn text(&self) -> &str;
+}
+
+impl Writable for Redacted {
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Writable for Edited {
+    fn text(&self) -> &str {
+        self.as_str()
+    }
+}
+
 /// Replaces `path` with `contents` atomically: a reader sees the old file or the new one,
 /// never a mix, and a crash leaves at worst a temporary file that the next start removes.
-pub(crate) fn write_atomic(path: &Path, contents: &Redacted) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, contents: &impl Writable) -> io::Result<()> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let folder = path
         .parent()
@@ -46,7 +69,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &Redacted) -> io::Result<()> {
             .write(true)
             .create_new(true)
             .open(&temporary)?;
-        file.write_all(contents.as_str().as_bytes())?;
+        file.write_all(contents.text().as_bytes())?;
         file.sync_all()?;
         fs::rename(&temporary, path)
     })();

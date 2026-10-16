@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use boardai_core::engine::text::NOT_FORGOTTEN_LINE;
 use boardai_core::history::{Conversation, ProviderFamily, RawAssistant};
 use boardai_core::ids::ToolCallId;
 use boardai_core::input::StopReason;
@@ -261,6 +262,45 @@ async fn forget_that_and_yes_keep_it_change_the_vault() {
         digests[0]
     );
     close(store, store_task).await;
+}
+
+/// Finding 13 end to end: a "forget that" the store can't carry out is shown after
+/// "Forgotten.", and the next "forget that" still undoes the capture before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_forget_that_the_store_cannot_carry_out_is_shown() {
+    use std::os::unix::fs::PermissionsExt;
+    let folder = TempFolder::new("session-vault-failed-forget");
+    let (test, store, store_task) = open(&folder).await;
+    let talker = Arc::new(Replies::default());
+    talker.calls("Noted.", &[("remember", NOTE)]);
+    talker.says("Anything else?");
+    talker.calls("Got it.", &[("remember", STATED)]);
+    talker.says("Go it is.");
+    let mut running = start_session(&store, &test, talker);
+    let note = test.vault().join("notes/cache-aside-reads-redis-first.md");
+    let about = test.vault().join("memory/about-you.md");
+    running.say("note that cache-aside reads Redis first").await;
+    running.say("I prefer Go examples").await;
+    eventually("both are written", || note.is_file() && about.is_file()).await;
+
+    let mode = |bits| std::fs::set_permissions(&about, std::fs::Permissions::from_mode(bits));
+    mode(0o000).expect("lock about-you.md");
+    running.say("forget that").await;
+    let screen = Arc::clone(&running.screen);
+    eventually("the failure is shown", || {
+        screen.events.lock().expect("lock").iter().any(|event| {
+            matches!(event, UiEvent::Problem { spoken, detail }
+                if spoken == NOT_FORGOTTEN_LINE && detail.contains("memory/about-you.md"))
+        })
+    })
+    .await;
+    mode(0o644).expect("unlock about-you.md");
+    running.say("forget that").await;
+    eventually("the note is removed", || !note.is_file()).await;
+    let kept = std::fs::read_to_string(&about).expect("about-you.md");
+    running.session.close().await;
+    close(store, store_task).await;
+    assert!(kept.contains("I prefer Go examples"), "{kept}");
 }
 
 /// I10 end to end: everything the session wrote is undone, and nothing more is written.

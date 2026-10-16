@@ -26,10 +26,11 @@ mod views;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use boardai_core::effect::LogRecord;
+use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::UiEvent;
@@ -133,6 +134,9 @@ pub struct Store {
     /// Log entries dropped at a full inbox since the last flush (the actor resets it).
     inbox_dropped: Arc<AtomicU64>,
     dropped_total: Arc<AtomicU64>,
+    /// "Don't remember this session" was said; shared with the actor, which reads it before
+    /// any digest and clears it once the session is forgotten.
+    forget_requested: Arc<AtomicBool>,
 }
 
 /// The actor task. Its owner awaits [`StoreTask::join`] after [`Store::shutdown`].
@@ -152,10 +156,14 @@ impl Store {
     /// and starts the actor.
     pub async fn open(config: StoreConfig) -> Result<(Self, StoreTask, StoreOpened), StoreError> {
         let inbox_dropped = Arc::new(AtomicU64::new(0));
-        let shared_dropped = Arc::clone(&inbox_dropped);
+        let forget_requested = Arc::new(AtomicBool::new(false));
+        let shared = Shared {
+            inbox_dropped: Arc::clone(&inbox_dropped),
+            forget_requested: Arc::clone(&forget_requested),
+        };
         let flush_interval = config.flush_interval;
         let capacity = config.inbox_capacity.max(1);
-        let opened = tokio::task::spawn_blocking(move || open_blocking(config, shared_dropped))
+        let opened = tokio::task::spawn_blocking(move || open_blocking(config, shared))
             .await
             .map_err(|_| StoreError::Stopped)??;
         let (state, reader, report) = opened;
@@ -170,6 +178,7 @@ impl Store {
             inbox: sender,
             inbox_dropped,
             dropped_total: Arc::new(AtomicU64::new(0)),
+            forget_requested,
         };
         Ok((store, StoreTask { handle }, report))
     }
@@ -216,8 +225,12 @@ impl Store {
 
     /// Closes the session's log durably and returns what its digest is made from.
     pub async fn end_session(&self, t_end: SessionTime) -> Result<SessionEnded, StoreError> {
-        self.request(|reply| Message::EndSession { t_end, reply })
-            .await
+        self.request(|reply| Message::EndSession {
+            t_end,
+            board_export: None,
+            reply,
+        })
+        .await
     }
 
     /// Writes the ended session's digest and board (the Excalidraw export from the core), and
@@ -259,7 +272,14 @@ impl Store {
         deadline: Duration,
         cancel: CancelToken,
     ) -> Result<SessionFinished, StoreError> {
-        let material = match self.end_session(t_end).await? {
+        // The board is written with the end of the log, before the scribe runs: if finishing
+        // is cut short, the minimal digest written later still has it.
+        let ended = self.request(|reply| Message::EndSession {
+            t_end,
+            board_export,
+            reply,
+        });
+        let material = match ended.await? {
             SessionEnded::Forgotten => return Ok(SessionFinished::Forgotten),
             SessionEnded::Material(material) => material,
         };
@@ -275,7 +295,7 @@ impl Store {
             None => fallback_digest(&material, FallbackReason::NoScribe),
         };
         let written_by = digest.written_by.clone();
-        let session = self.write_digest(digest, board_export).await?;
+        let session = self.write_digest(digest, None).await?;
         Ok(SessionFinished::Written {
             session,
             written_by,
@@ -299,14 +319,39 @@ impl Store {
             .await
     }
 
+    /// "Yes, keep it" for the proposal this session made as the core's `capture`.
+    pub async fn keep_proposal(&self, capture: CaptureId) -> Result<Remembered, StoreError> {
+        self.request(|reply| Message::KeepProposal { capture, reply })
+            .await
+    }
+
     /// "Forget that": removes the last thing this session captured.
     pub async fn forget_last(&self) -> Result<Option<Forgotten>, StoreError> {
         self.request(|reply| Message::ForgetLast { reply }).await
     }
 
+    /// "Forget that" for what the core captured as `capture` (a keep and its proposal share
+    /// one; the keep goes first). `Ok(None)` when the store holds nothing of it: the write never
+    /// reached the vault. A capture that can't be undone stays recorded and is still removed
+    /// with the session.
+    pub async fn forget_capture(
+        &self,
+        capture: CaptureId,
+    ) -> Result<Option<Forgotten>, StoreError> {
+        self.request(|reply| Message::ForgetCapture { capture, reply })
+            .await
+    }
+
     /// "Don't remember this session" (I10): leaves nothing of it in the vault or the index.
     pub async fn forget_session(&self) -> Result<(), StoreError> {
         self.request(|reply| Message::ForgetSession { reply }).await
+    }
+
+    /// Marks the session being recorded as forgotten at once, without waiting: whatever the
+    /// store does next for it (ending it, a digest, shutting down) forgets it instead, even if
+    /// the [`Store::forget_session`] request is still on its way. Never blocks, never fails.
+    pub fn mark_forgotten(&self) {
+        self.forget_requested.store(true, Ordering::Release);
     }
 
     /// The talker's `recall` tool. Never fails silently: a store problem is a failed output.
@@ -404,7 +449,13 @@ impl Store {
 
 type Opened = (Box<StoreState>, Reader, StoreOpened);
 
-fn open_blocking(config: StoreConfig, inbox_dropped: Arc<AtomicU64>) -> Result<Opened, StoreError> {
+/// What the handle and the actor share.
+struct Shared {
+    inbox_dropped: Arc<AtomicU64>,
+    forget_requested: Arc<AtomicBool>,
+}
+
+fn open_blocking(config: StoreConfig, shared: Shared) -> Result<Opened, StoreError> {
     let vault = Vault::open(&config.vault, config.home.as_deref()).map_err(StoreError::Vault)?;
     let (mut index, opened) = open_writer(&config.index_path)?;
     let scan = reconcile(&mut index, &vault)?;
@@ -417,7 +468,8 @@ fn open_blocking(config: StoreConfig, inbox_dropped: Arc<AtomicU64>) -> Result<O
         clock: config.clock,
         ids,
         slot: SessionSlot::Idle,
-        inbox_dropped,
+        inbox_dropped: shared.inbox_dropped,
+        forget_requested: shared.forget_requested,
     });
     state.recover_interrupted();
     Ok((

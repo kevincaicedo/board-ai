@@ -293,3 +293,81 @@ async fn a_session_cut_short_still_gets_a_digest() {
     }
     close(store, task_handle).await;
 }
+
+/// A session whose finishing is cut short while the scribe works (quitting past its bound)
+/// gets the minimal digest at shutdown, and keeps its board: the board is written with the end
+/// of the log, before the scribe runs.
+#[tokio::test]
+async fn a_minimal_digest_written_at_shutdown_keeps_the_board() {
+    let folder = TempFolder::new("store-digest-board-kept");
+    let test = TestStore::new(&folder.path);
+    let (store, task_handle, _) = test.open().await;
+    session_with_talk(&store).await;
+    let scribe = FakeScribe::new(ScribeAnswer::Hangs);
+    let finishing = store.finish_session_within(
+        at(10_000),
+        Some(&scribe as &dyn LlmProvider),
+        Some(BOARD_EXPORT.to_owned()),
+        std::time::Duration::from_secs(60),
+        CancelToken::new(),
+    );
+    let cut_short = tokio::time::timeout(std::time::Duration::from_millis(300), finishing).await;
+    assert!(cut_short.is_err(), "the scribe never answers");
+    close(store, task_handle).await;
+    let sessions = test.vault().join("sessions");
+    let folders: Vec<_> = std::fs::read_dir(&sessions)
+        .expect("sessions")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    assert_eq!(folders.len(), 1, "{folders:?}");
+    assert!(
+        folders[0].join("board.excalidraw").is_file(),
+        "the board is kept"
+    );
+    let digest = std::fs::read_to_string(folders[0].join("digest.md")).expect("a digest");
+    assert!(digest.contains("written_by: fallback"), "{digest}");
+    assert!(digest.contains("[Board](board.excalidraw)"), "{digest}");
+}
+
+/// LLD §3.6, "nobody spoke: a session with no final transcript leaves nothing": a silent
+/// session the app was killed in (Force Quit, a dev restart) is gone at the next open, not
+/// listed in the library.
+#[test]
+fn a_silent_session_killed_before_it_closed_leaves_nothing() {
+    let folder = TempFolder::new("store-digest-killed-silent");
+    let test = TestStore::new(&folder.path);
+    let runtime = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("runtime")
+    };
+    let killed = runtime();
+    let before = killed.block_on(async {
+        let (store, _task, _) = test.open().await;
+        let before = store_support::snapshot(&test.vault_root());
+        store.start_session(None).await.expect("starts");
+        store.log_ui(
+            at(5),
+            vec![boardai_core::protocol::UiEvent::SessionStart { session: None }],
+        );
+        store.flush().await.expect("flushed");
+        // Nothing closes the session: leaking the handle and dropping the runtime is the kill.
+        std::mem::forget(store);
+        before
+    });
+    killed.shutdown_background();
+    runtime().block_on(async {
+        let (store, task, _) = test.open().await;
+        let library = store.library().await.expect("library");
+        close(store, task).await;
+        assert!(library.sessions.is_empty(), "{library:?}");
+        assert_eq!(
+            store_support::snapshot(&test.vault_root()),
+            before,
+            "its folder is gone"
+        );
+    });
+}

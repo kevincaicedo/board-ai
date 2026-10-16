@@ -4,16 +4,19 @@
 //! A session moves `Idle → Recording → Ended → Idle` (the next start), or to `Forgotten` when
 //! you say "don't remember this session". `Ended` keeps the session's captures so its digest
 //! can be written, its proposals accepted, and the whole session still forgotten.
+//!
+//! Starting a session leaves the previous one behind before anything can fail: a start that
+//! fails leaves `Idle`, never the previous session, so no later write or forget can reach it.
 
 mod capture;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use boardai_core::time::SessionTime;
 use rusqlite::Connection;
 
-pub(crate) use capture::{Capture, Proposal};
+pub(crate) use capture::{Capture, CaptureKind, Proposal};
 
 use super::digest::{
     Digest, DigestDocument, FallbackReason, ProposalLine, SessionMaterial, fallback_digest,
@@ -21,7 +24,7 @@ use super::digest::{
 use super::error::StoreError;
 use super::ids::{IdCounters, ItemKind, SessionId};
 use super::index::views::sessions_without_digest;
-use super::index::{Unit, index_unit};
+use super::index::{Unit, index_units, scrub};
 use super::log::{EventLogWriter, LogEntry, summarize_log};
 use super::redact::{redact_json_text, redact_text};
 use super::slug::{first_free, slugify};
@@ -41,6 +44,9 @@ pub(crate) struct StoreState {
     pub slot: SessionSlot,
     /// Log entries the handle dropped because the inbox was full; recorded at the next flush.
     pub inbox_dropped: Arc<AtomicU64>,
+    /// Set by the handle the moment "don't remember this session" is said, before the request
+    /// itself arrives: the session then gets no digest whatever comes first (I10).
+    pub forget_requested: Arc<AtomicBool>,
 }
 
 pub(crate) enum SessionSlot {
@@ -62,11 +68,9 @@ pub(crate) struct Session {
     pub duration_ms: u64,
     /// Everything this session wrote, in order, so it can be undone.
     pub captures: Vec<Capture>,
-    /// Files this session created, with the header they were created with: forgetting the
-    /// session deletes them once only the header is left.
+    /// Files this session created, with the header they were written with (redacted, as on
+    /// disk): forgetting the session deletes them once only that header is left.
     pub created_files: Vec<(VaultPath, String)>,
-    /// What was kept with the session record itself.
-    pub records: Vec<String>,
     pub proposals: Vec<Proposal>,
     /// The digest once written, so accepting a proposal can re-render it.
     pub digest: Option<Digest>,
@@ -92,6 +96,10 @@ impl StoreState {
         if let Err(error) = self.ensure_digest() {
             tracing::warn!(%error, "the previous session was left without a digest");
         }
+        // The previous session is left behind now: if this start fails, writes and forgets find
+        // no session rather than the previous one.
+        self.slot = SessionSlot::Idle;
+        self.clear_forget_request();
         let started = self.clock.now();
         let base = format!("{}-{}", started.date(), started.time_of_day_compact());
         let sessions = self.vault.root().join(SESSIONS);
@@ -122,7 +130,6 @@ impl StoreState {
             duration_ms: 0,
             captures: Vec::new(),
             created_files: Vec::new(),
-            records: Vec::new(),
             proposals: Vec::new(),
             digest: None,
         }));
@@ -170,8 +177,28 @@ impl StoreState {
         })
     }
 
-    /// Closes the log durably and gathers what the scribe needs.
-    pub(crate) fn end_session(&mut self, t_end: SessionTime) -> Result<SessionEnded, StoreError> {
+    /// Whether "don't remember this session" was said and not yet carried out.
+    fn forget_requested(&self) -> bool {
+        self.forget_requested.load(Ordering::Acquire)
+    }
+
+    /// The request is carried out, or belongs to a session left behind.
+    pub(crate) fn clear_forget_request(&self) {
+        self.forget_requested.store(false, Ordering::Release);
+    }
+
+    /// Closes the log durably and gathers what the scribe needs. The board (the core's export)
+    /// is written now, before the scribe runs, so a session that only gets its minimal digest
+    /// later (quitting past its bound) keeps its board.
+    pub(crate) fn end_session(
+        &mut self,
+        t_end: SessionTime,
+        board_export: Option<String>,
+    ) -> Result<SessionEnded, StoreError> {
+        if self.forget_requested() {
+            self.forget_session()?;
+            return Ok(SessionEnded::Forgotten);
+        }
         let mut session = match std::mem::replace(&mut self.slot, SessionSlot::Idle) {
             SessionSlot::Recording(session) => session,
             SessionSlot::Forgotten => {
@@ -198,15 +225,30 @@ impl StoreState {
         if let Err(error) = closed {
             tracing::warn!(%error, "the session log did not close cleanly");
         }
+        if let Some(export) = board_export {
+            self.write_board(&folder, &export)?;
+        }
         let material = material?;
         self.reindex(&[Unit::Session { folder }])?;
         Ok(SessionEnded::Material(Box::new(material)))
+    }
+
+    fn write_board(&self, folder: &str, export: &str) -> Result<(), StoreError> {
+        let board = VaultPath::session_file(folder, BOARD_FILE).ok_or(StoreError::NoSession)?;
+        write_atomic(&self.vault.absolute(&board), &redact_json_text(export))
+            .map_err(|error| StoreError::io(board.as_str(), &error))
     }
 
     /// Writes the minimal digest for an ended session that has none: the app is quitting, or
     /// the next session started before a digest was written. A session is never left without
     /// one.
     pub(crate) fn ensure_digest(&mut self) -> Result<(), StoreError> {
+        if self.forget_requested() {
+            return match self.forget_session() {
+                Ok(()) | Err(StoreError::NoSession) => Ok(()),
+                Err(error) => Err(error),
+            };
+        }
         let SessionSlot::Ended(session) = &mut self.slot else {
             return Ok(());
         };
@@ -226,6 +268,10 @@ impl StoreState {
         digest: Digest,
         board_export: Option<String>,
     ) -> Result<SessionInfo, StoreError> {
+        if self.forget_requested() {
+            self.forget_session()?;
+            return Err(StoreError::SessionForgotten);
+        }
         let session = match &mut self.slot {
             SessionSlot::Ended(session) => session,
             SessionSlot::Forgotten => return Err(StoreError::SessionForgotten),
@@ -238,13 +284,10 @@ impl StoreState {
                 .push(Proposal::new(id, draft.about, &draft.text));
         }
         let folder = session.folder.clone();
-        if let Some(export) = board_export {
-            let board =
-                VaultPath::session_file(&folder, BOARD_FILE).ok_or(StoreError::NoSession)?;
-            write_atomic(&self.vault.absolute(&board), &redact_json_text(&export))
-                .map_err(|error| StoreError::io(board.as_str(), &error))?;
-        }
         session.digest = Some(digest);
+        if let Some(export) = board_export {
+            self.write_board(&folder, &export)?;
+        }
         self.render_digest()?;
         let renamed = self.rename_after_title();
         let mut units = vec![Unit::Session {
@@ -300,7 +343,8 @@ impl StoreState {
         let SessionSlot::Ended(session) = &mut self.slot else {
             return None;
         };
-        let slug = slugify(&session.digest.as_ref()?.title)?;
+        // The folder is named after the redacted title: a secret never names a folder (I8).
+        let slug = slugify(redact_text(&session.digest.as_ref()?.title).as_str())?;
         let base = format!("{}-{slug}", session.started.date());
         if base == session.folder {
             return None;
@@ -320,7 +364,8 @@ impl StoreState {
     }
 
     /// Sessions a crash or a kill left without a digest get the minimal one when the store
-    /// opens, so every session in the library has one (LLD §3.6). At most
+    /// opens, so every session in the library has one (LLD §3.6). One nobody spoke in leaves
+    /// nothing, as it would have had it closed. At most
     /// [`RECOVERED_SESSIONS_MAX`] per open, oldest first; one that fails is logged and tried
     /// again at the next open.
     pub(crate) fn recover_interrupted(&mut self) {
@@ -345,48 +390,77 @@ impl StoreState {
                 duration_ms,
                 captures: Vec::new(),
                 created_files: Vec::new(),
-                records: Vec::new(),
                 proposals: Vec::new(),
                 digest: None,
             }));
-            if let Err(error) = self.ensure_digest() {
+            let recovered = if self.nobody_spoke_in_the_ended_session() {
+                self.forget_session()
+            } else {
+                self.ensure_digest()
+            };
+            if let Err(error) = recovered {
                 tracing::warn!(%error, "an interrupted session is still without a digest");
             }
             self.slot = SessionSlot::Idle;
         }
     }
 
+    /// Whether the ended session in the slot is one nobody spoke in that holds nothing but its
+    /// log, as a silent session killed before it could close leaves it (LLD §3.6: such a session
+    /// leaves nothing). A folder with anything else in it is kept and digested.
+    fn nobody_spoke_in_the_ended_session(&self) -> bool {
+        let SessionSlot::Ended(session) = &self.slot else {
+            return false;
+        };
+        let Some(folder) = VaultPath::session_folder(&session.folder) else {
+            return false;
+        };
+        let only_the_log = std::fs::read_dir(self.vault.absolute(&folder)).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .all(|entry| entry.file_name().to_str() == Some(EVENTS_FILE))
+        });
+        let events = self.vault.absolute(&folder).join(EVENTS_FILE);
+        only_the_log
+            && summarize_log(&events).is_ok_and(|summary| summary.first_user_line().is_none())
+    }
+
     /// Closes a session still recording at shutdown and gives it the minimal digest. The app
     /// finishes a session (with the scribe) before shutting down when it can.
     pub(crate) fn close_for_shutdown(&mut self) -> Result<(), StoreError> {
-        if matches!(self.slot, SessionSlot::Recording(_)) {
+        if matches!(self.slot, SessionSlot::Recording(_)) && !self.forget_requested() {
             // The end line takes the last time logged; session time has no later reading here.
-            self.end_session(SessionTime::ZERO)?;
+            self.end_session(SessionTime::ZERO, None)?;
         }
         self.ensure_digest()
     }
 
-    /// Re-indexes units in one transaction.
+    /// Re-indexes units in one transaction. A unit whose files can't be read is left out
+    /// (logged); the next scan tries it again.
     pub(crate) fn reindex(&mut self, units: &[Unit]) -> Result<(), StoreError> {
-        let transaction = self.index.transaction()?;
-        for unit in units {
-            index_unit(&transaction, &self.vault, unit)?;
-        }
+        let mut transaction = self.index.transaction()?;
+        index_units(&mut transaction, &self.vault, units)?;
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Leaves nothing readable of what was just deleted in the index's files (I10).
+    pub(crate) fn scrub_index(&self) -> Result<(), StoreError> {
+        scrub(&self.index)
     }
 }
 
 impl Session {
-    /// One line per capture, for the digest and the scribe's prompt.
+    /// One line per capture, for the digest and the scribe's prompt: the items first, then
+    /// what was kept with the session record.
     pub(crate) fn captured_lines(&self) -> Vec<String> {
-        let mut lines: Vec<String> = self
-            .captures
-            .iter()
+        let is_record = |capture: &&Capture| matches!(capture.kind, CaptureKind::SessionRecord);
+        let items = self.captures.iter().filter(|capture| !is_record(capture));
+        let records = self.captures.iter().filter(is_record);
+        items
+            .chain(records)
             .filter_map(Capture::digest_line)
-            .collect();
-        lines.extend(self.records.iter().map(|text| format!("Noted: {text}")));
-        lines
+            .collect()
     }
 }
 

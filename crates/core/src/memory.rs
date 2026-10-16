@@ -62,3 +62,19 @@ pub struct MemoryWrite {
     /// The core's handle for this capture.
     pub capture: CaptureId,
 }
+
+/// A memory change the store could not make (LLD §2.8). The core already said it was done
+/// ("Remembered.", "Forgotten.", "Kept."), so the user is shown it failed and the talker hears it
+/// with its next request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "change", rename_all = "snake_case")]
+pub enum MemoryChange {
+    /// The `Remember` of this capture.
+    Remember { capture: CaptureId },
+    /// "Forget that", for this capture.
+    Forget { capture: CaptureId },
+    /// "Don't remember this session".
+    ForgetSession,
+    /// "Yes, keep it", for the proposal made as this capture.
+    Keep { capture: CaptureId },
+}

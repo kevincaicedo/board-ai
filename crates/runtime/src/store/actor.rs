@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use boardai_core::ids::CaptureId;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
@@ -45,6 +46,7 @@ pub(crate) enum Message {
     },
     EndSession {
         t_end: SessionTime,
+        board_export: Option<String>,
         reply: Reply<SessionEnded>,
     },
     WriteDigest {
@@ -60,7 +62,15 @@ pub(crate) enum Message {
         id: ItemId,
         reply: Reply<Remembered>,
     },
+    KeepProposal {
+        capture: CaptureId,
+        reply: Reply<Remembered>,
+    },
     ForgetLast {
+        reply: Reply<Option<Forgotten>>,
+    },
+    ForgetCapture {
+        capture: CaptureId,
         reply: Reply<Option<Forgotten>>,
     },
     ForgetSession {
@@ -209,8 +219,12 @@ async fn handle(state: &mut State, message: Message) {
             let result = blocking(state, move |state| state.start_session(title_hint)).await;
             let _ = reply.send(result);
         }
-        Message::EndSession { t_end, reply } => {
-            let result = blocking(state, move |state| state.end_session(t_end)).await;
+        Message::EndSession {
+            t_end,
+            board_export,
+            reply,
+        } => {
+            let result = blocking(state, move |state| state.end_session(t_end, board_export)).await;
             let _ = reply.send(result);
         }
         Message::WriteDigest {
@@ -230,8 +244,15 @@ async fn handle(state: &mut State, message: Message) {
         Message::AcceptProposal { id, reply } => {
             let _ = reply.send(blocking(state, move |state| state.accept_proposal(id)).await);
         }
+        Message::KeepProposal { capture, reply } => {
+            let _ = reply.send(blocking(state, move |state| state.keep_proposal(capture)).await);
+        }
         Message::ForgetLast { reply } => {
             let _ = reply.send(blocking(state, StoreState::forget_last).await);
+        }
+        Message::ForgetCapture { capture, reply } => {
+            let kept = blocking(state, move |state| state.forget_capture(capture)).await;
+            let _ = reply.send(kept);
         }
         Message::ForgetSession { reply } => {
             let _ = reply.send(blocking(state, StoreState::forget_session).await);

@@ -145,6 +145,15 @@ impl WallTime {
         Some(Self(seconds * MS_PER_SECOND))
     }
 
+    /// Parses a bare `2026-10-15` as midnight UTC; anything else is `None`.
+    #[must_use]
+    pub fn parse_date(text: &str) -> Option<Self> {
+        if text.len() != 10 {
+            return None;
+        }
+        Self::parse_rfc3339(&format!("{text}T00:00:00Z"))
+    }
+
     fn civil(self) -> Civil {
         let seconds = self.0.div_euclid(MS_PER_SECOND);
         let days = seconds.div_euclid(SECONDS_PER_DAY);
@@ -161,6 +170,25 @@ impl WallTime {
             second: second_of_day % 60,
         }
     }
+}
+
+/// A stamp read from a file, as the index keeps it: an RFC 3339 time the store wrote, or a bare
+/// `YYYY-MM-DD` date, unchanged; empty for anything else (a date typed by hand in another form,
+/// `15/10/2026`). The views then always get a date the UI reads (LLD §3.7).
+pub(crate) fn stamp_of(text: &str) -> String {
+    let text = text.trim();
+    if WallTime::parse_rfc3339(text).is_some() || WallTime::parse_date(text).is_some() {
+        text.to_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// The `YYYY-MM-DD` of a stamp ([`stamp_of`]); empty when it is not one. One row with a bad
+/// date must never make a whole view unreadable.
+pub(crate) fn date_of(stamp: &str) -> String {
+    let stamp = stamp_of(stamp);
+    stamp.get(..10).unwrap_or_default().to_owned()
 }
 
 /// Days since 1970-01-01 for a proleptic Gregorian date.
@@ -215,6 +243,22 @@ mod tests {
             "2000-02-29",
             "leap day"
         );
+    }
+
+    #[test]
+    fn stamps_typed_by_hand_become_dates_or_nothing() {
+        for (stamp, date) in [
+            ("2026-10-15T14:32:10Z", "2026-10-15"),
+            ("2026-10-15", "2026-10-15"),
+            (" 2026-10-15 ", "2026-10-15"),
+            ("15/10/2026", ""),
+            ("2026-10-15T14:32", ""),
+            ("2026-13-01", ""),
+            ("yesterday", ""),
+            ("", ""),
+        ] {
+            assert_eq!(super::date_of(stamp), date, "{stamp:?}");
+        }
     }
 
     #[test]

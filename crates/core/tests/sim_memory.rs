@@ -6,11 +6,13 @@
 mod common;
 
 use boardai_core::effect::{Effect, ForgetScope};
-use boardai_core::engine::text::{FORGOTTEN_LINE, KEPT_LINE, OFF_THE_RECORD_LINE};
+use boardai_core::engine::text::{
+    FORGOTTEN_LINE, KEPT_LINE, NOT_FORGOTTEN_LINE, NOT_SAVED_LINE, OFF_THE_RECORD_LINE,
+};
 use boardai_core::history::Message;
 use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
-use boardai_core::memory::{MemoryAction, MemoryKind, Subject};
+use boardai_core::memory::{MemoryAction, MemoryChange, MemoryKind, Subject};
 use boardai_core::protocol::{MicAction, UiCommand, UiEvent};
 use boardai_core::sim::Sim;
 use boardai_core::sim::talker::ScriptedReply;
@@ -575,4 +577,127 @@ fn a_yes_said_over_a_proposal_runs_nothing_until_it_is_asked_again() {
         1,
         "the yes after the question runs it"
     );
+}
+
+/// Every `Problem` shown, as (line, detail).
+fn problems(sim: &Sim) -> Vec<(String, String)> {
+    sim.ui()
+        .filter_map(|(_, event)| {
+            if let UiEvent::Problem { spoken, detail } = event {
+                Some((spoken.clone(), detail.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Finding 13: the store could not keep what BoardAI said it saved. The user is shown it, and
+/// the talker hears it with its next request.
+#[test]
+fn a_memory_the_store_could_not_keep_is_shown_and_told() {
+    let mut sim = Sim::new(config());
+    sim.talker
+        .push(ScriptedReply::says("Noted.").calls("remember", NOTE));
+    sim.talker.push(ScriptedReply::says("Anything else?"));
+    sim.talker
+        .push(ScriptedReply::says("Sorry, it wasn't saved."));
+    sim.user_says(0, "note that cache-aside reads Redis first");
+    sim.run_until(8_000);
+    let capture = writes(&sim).first().expect("a write").3;
+    let detail = "notes/cache-aside-redis-first.md: permission denied";
+    sim.at(
+        8_000,
+        Input::MemoryFailed {
+            change: MemoryChange::Remember { capture },
+            detail: detail.to_owned(),
+        },
+    );
+    sim.run_until(8_100);
+    assert_eq!(
+        problems(&sim),
+        vec![(NOT_SAVED_LINE.to_owned(), detail.to_owned())]
+    );
+    sim.user_says(9_000, "did you get that");
+    sim.run_until(15_000);
+    assert_clean(&sim);
+    let notices = last_notices(&sim);
+    assert!(
+        notices.contains("Cache-aside: Redis first") && notices.contains("permission denied"),
+        "{notices}"
+    );
+}
+
+/// Finding 13: a failed "forget that" is shown, and it never shifts what the next one names:
+/// the captures follow the core's own effects, which the runtime mirrors.
+#[test]
+fn a_failed_forget_is_shown_and_the_next_forget_names_the_capture_before_it() {
+    let mut sim = Sim::new(config());
+    sim.talker.push(
+        ScriptedReply::says("Noted.")
+            .calls("remember", NOTE)
+            .calls("add_task", r#"{"title":"Check TTLs"}"#),
+    );
+    sim.talker.push(ScriptedReply::says("Done."));
+    sim.talker.push(ScriptedReply::says("Never mind then."));
+    sim.user_says(0, "note that and add a task");
+    sim.run_until(8_000);
+    let task = writes(&sim).get(1).expect("the task").3;
+    sim.user_says(8_000, "forget that");
+    sim.run_until(12_000);
+    sim.at(
+        12_000,
+        Input::MemoryFailed {
+            change: MemoryChange::Forget { capture: task },
+            detail: "projects/inbox.md: permission denied".to_owned(),
+        },
+    );
+    sim.user_says(12_100, "forget that");
+    sim.run_until(16_000);
+    sim.user_says(16_000, "forget that");
+    sim.run_until(22_000);
+    assert_clean(&sim);
+    assert_eq!(
+        problems(&sim),
+        vec![(
+            NOT_FORGOTTEN_LINE.to_owned(),
+            "projects/inbox.md: permission denied".to_owned()
+        )]
+    );
+    assert_eq!(
+        forgets(&sim),
+        vec![ForgetScope::Last, ForgetScope::Last],
+        "the second forget is the note's"
+    );
+    assert_eq!(talks(&sim), 3, "the third has nothing left to forget");
+}
+
+/// An answer about a capture this session never made comes from a session that has ended
+/// (capture ids start again from zero): it is dropped, not shown.
+#[test]
+fn a_failure_from_an_ended_session_is_dropped() {
+    let mut sim = Sim::new(config());
+    for change in [
+        MemoryChange::Remember {
+            capture: CaptureId(3),
+        },
+        MemoryChange::Forget {
+            capture: CaptureId(0),
+        },
+        MemoryChange::Keep {
+            capture: CaptureId(1),
+        },
+        MemoryChange::ForgetSession,
+    ] {
+        sim.at(
+            0,
+            Input::MemoryFailed {
+                change,
+                detail: "memory/about-you.md: permission denied".to_owned(),
+            },
+        );
+    }
+    sim.run_until(1_000);
+    assert_clean(&sim);
+    assert!(problems(&sim).is_empty(), "{:?}", problems(&sim));
 }

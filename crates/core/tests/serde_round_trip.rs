@@ -15,7 +15,7 @@ use boardai_core::input::{
     Input, PlaybackPosition, StopReason, TalkerFailure, TalkerFailureKind, TimingSource,
     WordTiming, WordTimings,
 };
-use boardai_core::memory::{MemoryAction, MemoryKind, MemoryWrite, Subject};
+use boardai_core::memory::{MemoryAction, MemoryChange, MemoryKind, MemoryWrite, Subject};
 use boardai_core::protocol::{DrawOp, MicAction, NodeShape, PointerTarget, UiCommand, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::{ToolCall, ToolInvocation, ToolOutput};
@@ -91,6 +91,16 @@ fn speech_and_command_inputs() -> Vec<Input> {
         }),
         Input::Command(UiCommand::CloseView),
         Input::Tick,
+        Input::MemoryFailed {
+            change: MemoryChange::Remember {
+                capture: CaptureId(3),
+            },
+            detail: "memory/facts.md: permission denied".into(),
+        },
+        Input::MemoryFailed {
+            change: MemoryChange::ForgetSession,
+            detail: "the store has stopped".into(),
+        },
     ]
 }
 

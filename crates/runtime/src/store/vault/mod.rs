@@ -12,6 +12,7 @@
 //! Paths inside the vault are [`VaultPath`]s: relative, `/`-separated and made of safe
 //! components, so nothing the store writes can land outside the vault.
 
+pub(crate) mod edit;
 mod files;
 pub(crate) mod markdown;
 

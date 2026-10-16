@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::harness::HarnessEvent;
 use crate::history::RawAssistant;
 use crate::ids::{ClauseId, TaskId, ToolCallId};
+use crate::memory::MemoryChange;
 use crate::protocol::UiCommand;
 use crate::tools::{ToolInvocation, ToolOutput};
 
@@ -75,6 +76,12 @@ pub enum Input {
     /// cough. It comes about 160 ms before `VoiceStart` can confirm speech, so the voice can duck
     /// within the barge-in budget; a `VoiceStart` follows only if the speech lasts (LLD §2.2).
     VoiceOnset,
+    /// The store could not make a memory change the core asked for. `detail` says why: a
+    /// vault-relative path and an error kind, never a file's contents.
+    MemoryFailed {
+        change: MemoryChange,
+        detail: String,
+    },
 }
 
 /// A position in the voice: `offset_ms` into the audio of `clause`.

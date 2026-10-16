@@ -57,7 +57,8 @@ impl Heard {
             | Input::ToolResult { .. }
             | Input::Harness { .. }
             | Input::Command(_)
-            | Input::Tick => {}
+            | Input::Tick
+            | Input::MemoryFailed { .. } => {}
         }
     }
 

@@ -43,6 +43,7 @@ use tokio::task::JoinHandle;
 
 pub use inbox::{
     InboxRefused, ProblemLink, SessionChannels, SessionClosed, SpeechInLink, SpeechOutLink,
+    StoreLink,
 };
 pub use listening::{Listening, mic_open};
 pub use live_listener::LiveListener;
@@ -104,6 +105,7 @@ pub struct SessionHandle {
 #[must_use]
 pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
     let speech_in = channels.speech_in();
+    parts.store.report_to(channels.store());
     let SessionChannels {
         inbox,
         receiver,

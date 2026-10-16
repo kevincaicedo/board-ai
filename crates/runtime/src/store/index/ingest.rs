@@ -2,15 +2,25 @@
 //! file) is always re-indexed whole: its rows are deleted by path and rebuilt from the files,
 //! so the index can never hold a row its file no longer has.
 //!
-//! Text goes through redaction on its way in: a secret pasted into a vault file by hand stays
-//! in your file but never reaches the index.
+//! Units are re-indexed together: every unit's rows are cleared first, then each is filled from
+//! its files. A session folder renamed by hand is two units (the old name, gone, and the new
+//! one), and clearing first means the old name's row never holds the session id the new one
+//! needs, whatever order the names sort in.
+//!
+//! A unit whose files can't be read (a permission, an I/O error) is skipped and reported, never
+//! fatal: its rows stay cleared and its files unrecorded, so the next scan tries it again. Index
+//! (SQLite) failures abort the whole transaction.
+//!
+//! Text goes through redaction on its way in, before it is cut: a secret pasted into a vault
+//! file by hand stays in your file but never reaches the index. Values the views show (dates,
+//! ids, session links) are normalized here, so one hand-made file can't break a view.
 
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use rusqlite::{Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 
 use crate::limits::{
     DIGEST_TITLE_MAX_CHARS, INDEX_TEXT_MAX_BYTES, VAULT_FILE_MAX_BYTES, VAULT_ITEM_MAX_BYTES,
@@ -20,10 +30,8 @@ use crate::store::error::StoreError;
 use crate::store::ids::SessionId;
 use crate::store::log::{LogSummary, summarize_log};
 use crate::store::redact::{Redacted, redact_text};
-use crate::store::time::WallTime;
-use crate::store::vault::markdown::{
-    cut_bytes, cut_chars, parse_item, split_front_matter, split_links,
-};
+use crate::store::time::{WallTime, stamp_of};
+use crate::store::vault::markdown::{cut_chars, parse_item, split_front_matter, split_links};
 use crate::store::vault::{
     BOARD_FILE, DIGEST_FILE, EVENTS_FILE, FileRead, MemoryFile, NOTES, PROJECTS, SESSIONS, Vault,
     VaultPath, read_text,
@@ -76,41 +84,84 @@ pub(crate) struct FileState {
     pub hash: String,
 }
 
-/// Re-indexes one unit inside `transaction`.
-pub(crate) fn index_unit(
-    transaction: &Transaction<'_>,
+/// A unit left out of the index because its files couldn't be read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Skipped {
+    pub unit: Unit,
+    pub error: StoreError,
+}
+
+/// Re-indexes `units` inside `transaction`: all are cleared, then each is filled from its
+/// files. Returns the units skipped because their files couldn't be read.
+pub(crate) fn index_units(
+    transaction: &mut Transaction<'_>,
     vault: &Vault,
-    unit: &Unit,
-) -> Result<(), StoreError> {
-    let paths = unit.paths();
-    for path in &paths {
-        delete_rows(transaction, path)?;
+    units: &[Unit],
+) -> Result<Vec<Skipped>, StoreError> {
+    for unit in units {
+        clear_unit(transaction, unit)?;
     }
-    if let Unit::Session { folder } = unit {
-        transaction.execute("DELETE FROM sessions WHERE folder = ?1", [folder])?;
-    }
-    for path in &paths {
-        match file_state(&vault.absolute(path))
-            .map_err(|error| StoreError::io(path.as_str(), &error))?
-        {
-            Some(state) => {
-                transaction.execute(
-                    "INSERT INTO files (path, mtime_ms, size_bytes, hash) VALUES (?1, ?2, ?3, ?4)",
-                    params![path.as_str(), state.mtime_ms, state.size_bytes, state.hash],
-                )?;
+    let mut skipped = Vec::new();
+    for unit in units {
+        let savepoint = transaction.savepoint()?;
+        match fill_unit(&savepoint, vault, unit) {
+            Ok(()) => savepoint.commit()?,
+            // Dropping the savepoint rolls the unit back to cleared.
+            Err(error @ StoreError::Io { .. }) => {
+                drop(savepoint);
+                tracing::warn!(%error, "a vault file could not be read; it is indexed later");
+                skipped.push(Skipped {
+                    unit: unit.clone(),
+                    error,
+                });
             }
-            None => continue,
+            Err(error) => return Err(error),
         }
     }
+    Ok(skipped)
+}
+
+fn clear_unit(connection: &Connection, unit: &Unit) -> Result<(), StoreError> {
+    for path in &unit.paths() {
+        delete_rows(connection, path)?;
+    }
+    if let Unit::Session { folder } = unit {
+        connection.execute("DELETE FROM sessions WHERE folder = ?1", [folder])?;
+    }
+    Ok(())
+}
+
+fn fill_unit(connection: &Connection, vault: &Vault, unit: &Unit) -> Result<(), StoreError> {
+    let paths = unit.paths();
+    for path in &paths {
+        let Some(state) = file_state(&vault.absolute(path))
+            .map_err(|error| StoreError::io(path.as_str(), &error))?
+        else {
+            continue;
+        };
+        connection.execute(
+            "INSERT INTO files (path, mtime_ms, size_bytes, hash) VALUES (?1, ?2, ?3, ?4)",
+            params![path.as_str(), state.mtime_ms, state.size_bytes, state.hash],
+        )?;
+    }
     match unit {
-        Unit::Session { folder } => index_session(transaction, vault, folder),
-        Unit::Note(path) => index_note(transaction, vault, path),
-        Unit::Project(path) => index_project(transaction, vault, path),
-        Unit::Memory(path) => index_memory(transaction, vault, path),
+        Unit::Session { folder } => {
+            if !index_session(connection, vault, folder)? {
+                // Another folder holds this session id: leave these files unrecorded, so a later
+                // scan indexes this folder once the other is gone.
+                for path in &paths {
+                    connection.execute("DELETE FROM files WHERE path = ?1", [path.as_str()])?;
+                }
+            }
+            Ok(())
+        }
+        Unit::Note(path) => index_note(connection, vault, path),
+        Unit::Project(path) => index_project(connection, vault, path),
+        Unit::Memory(path) => index_memory(connection, vault, path),
     }
 }
 
-fn delete_rows(transaction: &Transaction<'_>, path: &VaultPath) -> Result<(), StoreError> {
+fn delete_rows(connection: &Connection, path: &VaultPath) -> Result<(), StoreError> {
     for table in [
         "files",
         "notes",
@@ -121,7 +172,7 @@ fn delete_rows(transaction: &Transaction<'_>, path: &VaultPath) -> Result<(), St
         "relations",
         "search",
     ] {
-        transaction.execute(
+        connection.execute(
             &format!("DELETE FROM {table} WHERE path = ?1"),
             [path.as_str()],
         )?;
@@ -139,19 +190,20 @@ fn read_markdown(vault: &Vault, path: &VaultPath) -> Result<Option<String>, Stor
     }
 }
 
+/// Redacted, then cut: cutting first could leave a secret too short for its rule to match.
 fn searchable(text: &str) -> Redacted {
-    redact_text(&cut_bytes(text, INDEX_TEXT_MAX_BYTES))
+    redact_text(text).cut(INDEX_TEXT_MAX_BYTES)
 }
 
 fn insert_search(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     kind: &str,
     reference: &str,
     path: &VaultPath,
     title: &Redacted,
     body: &Redacted,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    connection.execute(
         "INSERT INTO search (title, body, kind, ref, path) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             title.as_str(),
@@ -164,43 +216,46 @@ fn insert_search(
     Ok(())
 }
 
-fn index_note(
-    transaction: &Transaction<'_>,
-    vault: &Vault,
-    path: &VaultPath,
-) -> Result<(), StoreError> {
+fn index_note(connection: &Connection, vault: &Vault, path: &VaultPath) -> Result<(), StoreError> {
     let Some(text) = read_markdown(vault, path)? else {
         return Ok(());
     };
     let (front, body) = split_front_matter(&text);
     let front = front.unwrap_or_default();
+    // A blank id (`id: ""` by hand) would be a row no view can name: the path names it instead.
     let id = front
         .text("id")
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
         .map_or_else(|| path.as_str().to_owned(), str::to_owned);
     let title = body
         .lines()
         .map(|line| line.trim_start_matches('#').trim())
         .find(|line| !line.is_empty())
         .unwrap_or_else(|| path.stem());
-    let title = redact_text(&cut_bytes(title, VAULT_ITEM_MAX_BYTES));
+    let title = redact_text(title).cut(VAULT_ITEM_MAX_BYTES);
     let links = redact_text(&serde_json::to_string(&front.list("links")).unwrap_or_default());
-    transaction.execute(
+    let session = front
+        .text("session")
+        .and_then(|id| SessionId::parse(id.trim()))
+        .map(String::from);
+    connection.execute(
         "INSERT OR IGNORE INTO notes (id, path, title, created, session, links)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             id,
             path.as_str(),
             title.as_str(),
-            front.text("created").unwrap_or_default(),
-            front.text("session"),
+            stamp_of(front.text("created").unwrap_or_default()),
+            session,
             links.as_str()
         ],
     )?;
-    insert_search(transaction, "note", &id, path, &title, &searchable(body))
+    insert_search(connection, "note", &id, path, &title, &searchable(body))
 }
 
 fn index_project(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     vault: &Vault,
     path: &VaultPath,
 ) -> Result<(), StoreError> {
@@ -225,10 +280,11 @@ fn index_project(
         let session = links
             .iter()
             .find_map(|link| link.strip_prefix("session:"))
-            .map(str::to_owned);
+            .and_then(|id| SessionId::parse(id.trim()))
+            .map(String::from);
         let title = redact_text(title);
         let links = redact_text(&serde_json::to_string(&links).unwrap_or_default());
-        transaction.execute(
+        connection.execute(
             "INSERT OR IGNORE INTO tasks (id, path, position, title, project, done, links, session)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
@@ -243,7 +299,7 @@ fn index_project(
             ],
         )?;
         insert_search(
-            transaction,
+            connection,
             "task",
             &id,
             path,
@@ -255,7 +311,7 @@ fn index_project(
 }
 
 fn index_memory(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     vault: &Vault,
     path: &VaultPath,
 ) -> Result<(), StoreError> {
@@ -271,7 +327,7 @@ fn index_memory(
             .id
             .map_or_else(|| format!("{path}#{position}"), |id| id.to_string());
         let memory = redact_text(item.text);
-        transaction.execute(
+        connection.execute(
             "INSERT OR IGNORE INTO memories (id, path, position, file, text)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -282,30 +338,20 @@ fn index_memory(
                 memory.as_str()
             ],
         )?;
-        insert_search(
-            transaction,
-            "memory",
-            &id,
-            path,
-            &redact_text(file),
-            &memory,
-        )?;
+        insert_search(connection, "memory", &id, path, &redact_text(file), &memory)?;
     }
     Ok(())
 }
 
-/// One session row from its folder's log, digest and board.
-fn index_session(
-    transaction: &Transaction<'_>,
-    vault: &Vault,
-    folder: &str,
-) -> Result<(), StoreError> {
+/// One session row from its folder's log, digest and board. `false` when another folder
+/// already holds the session's id, so nothing was indexed for this one.
+fn index_session(connection: &Connection, vault: &Vault, folder: &str) -> Result<bool, StoreError> {
     let (Some(events), Some(digest_path), Some(board)) = (
         VaultPath::session_file(folder, EVENTS_FILE),
         VaultPath::session_file(folder, DIGEST_FILE),
         VaultPath::session_file(folder, BOARD_FILE),
     ) else {
-        return Ok(());
+        return Ok(true);
     };
     let events_file = vault.absolute(&events);
     let log = if events_file.is_file() {
@@ -316,7 +362,7 @@ fn index_session(
     let digest = read_markdown(vault, &digest_path)?.map(|text| parse_digest(&text));
     let has_board = vault.absolute(&board).is_file();
     if log.is_none() && digest.is_none() && !has_board {
-        return Ok(());
+        return Ok(true);
     }
     let id = digest
         .as_ref()
@@ -329,19 +375,19 @@ fn index_session(
             folder,
             "a session folder without a usable id is not indexed"
         );
-        return Ok(());
+        return Ok(true);
     };
     let row = SessionRow::derive(log.as_ref(), digest.as_ref());
     let title = redact_text(&row.title);
-    let inserted = row.insert(transaction, &id, folder, has_board, digest.is_some())?;
+    let inserted = row.insert(connection, &id, folder, has_board, digest.is_some())?;
     if !inserted {
         tracing::warn!(folder, "another folder already holds this session id");
-        return Ok(());
+        return Ok(false);
     }
     if let Some(log) = &log {
         let transcript = searchable(&log.transcript_text());
         insert_search(
-            transaction,
+            connection,
             "transcript",
             id.as_str(),
             &events,
@@ -350,9 +396,9 @@ fn index_session(
         )?;
     }
     if let Some(digest) = &digest {
-        index_digest(transaction, &id, &digest_path, &title, digest)?;
+        index_digest(connection, &id, &digest_path, &title, digest)?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// The session row's values, from the best source for each.
@@ -402,13 +448,13 @@ impl SessionRow {
     /// Inserts the row; `false` when another folder already holds this session id.
     fn insert(
         &self,
-        transaction: &Transaction<'_>,
+        connection: &Connection,
         id: &SessionId,
         folder: &str,
         has_board: bool,
         has_digest: bool,
     ) -> Result<bool, StoreError> {
-        let inserted = transaction.execute(
+        let inserted = connection.execute(
             "INSERT OR IGNORE INTO sessions (id, folder, title, started, started_ms, duration_ms,
                  has_board, has_digest, summary, open_questions)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -430,7 +476,7 @@ impl SessionRow {
 }
 
 fn index_digest(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     id: &SessionId,
     path: &VaultPath,
     title: &Redacted,
@@ -446,7 +492,7 @@ fn index_digest(
         body.push('\n');
     }
     insert_search(
-        transaction,
+        connection,
         "digest",
         id.as_str(),
         path,
@@ -454,7 +500,7 @@ fn index_digest(
         &searchable(&body),
     )?;
     for proposal in &digest.proposals {
-        transaction.execute(
+        connection.execute(
             "INSERT OR IGNORE INTO proposals (id, path, session, about, text, accepted)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
@@ -469,7 +515,7 @@ fn index_digest(
     }
     for entity in &digest.entities {
         let name = redact_text(&entity.name);
-        transaction.execute(
+        connection.execute(
             "INSERT OR IGNORE INTO entities (name, kind, path, session) VALUES (?1, ?2, ?3, ?4)",
             params![
                 name.as_str(),
@@ -480,7 +526,7 @@ fn index_digest(
         )?;
         // Every entity of a digest was mentioned in its session.
         insert_relation(
-            transaction,
+            connection,
             &name,
             RelationKind::MentionedIn,
             id.as_str(),
@@ -494,7 +540,7 @@ fn index_digest(
             redact_text(&relation.object),
         );
         insert_relation(
-            transaction,
+            connection,
             &subject,
             relation.relation,
             object.as_str(),
@@ -506,14 +552,14 @@ fn index_digest(
 }
 
 fn insert_relation(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     subject: &Redacted,
     relation: RelationKind,
     object: &str,
     path: &VaultPath,
     session: &SessionId,
 ) -> Result<(), StoreError> {
-    transaction.execute(
+    connection.execute(
         "INSERT OR IGNORE INTO relations (subject, relation, object, path, session)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
@@ -578,8 +624,20 @@ fn content_hash(reader: &mut impl Read) -> io::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Unit, content_hash};
+    use super::{Unit, content_hash, searchable};
+    use crate::limits::INDEX_TEXT_MAX_BYTES;
     use crate::store::vault::VaultPath;
+
+    /// A key that straddles the index's text bound is redacted whole, never cut into a piece
+    /// that no rule matches (I8).
+    #[test]
+    fn index_text_is_redacted_before_it_is_cut() {
+        let at = INDEX_TEXT_MAX_BYTES - " sk-ant-".len() - 14;
+        let text = format!("{} sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv", "a".repeat(at));
+        let indexed = searchable(&text);
+        assert!(!indexed.as_str().contains("AbCdEfGh"));
+        assert!(indexed.as_str().len() <= INDEX_TEXT_MAX_BYTES + '…'.len_utf8());
+    }
 
     #[test]
     fn units_follow_the_vault_layout() {

@@ -143,6 +143,10 @@ impl<S: StoreSink> Observed<S> {
 }
 
 impl<S: StoreSink> StoreSink for Observed<S> {
+    fn report_to(&self, link: super::StoreLink) {
+        self.inner.report_to(link);
+    }
+
     fn input(&self, at: SessionTime, input: &Input) {
         self.inner.input(at, input);
     }

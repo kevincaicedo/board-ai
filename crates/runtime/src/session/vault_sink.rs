@@ -4,30 +4,37 @@
 //!
 //! - Log entries go straight to the store, which never makes the orchestrator wait.
 //! - Memory writes, forgets and keeps go through one ordered queue to a writer task that applies
-//!   them one at a time. It mirrors the core's captures: "forget that" undoes the newest one the
-//!   store really kept (a write the store refused has nothing to undo), and "yes, keep it" names
-//!   the store's proposal by the core's capture id.
+//!   them one at a time. "Forget that" is turned into the capture it undoes right here, as the
+//!   core emits it: the sink keeps the core's captures in step with the effects (never with the
+//!   store's answers), so a write the queue dropped or the store failed can't shift what "that"
+//!   is, and the store undoes exactly that capture.
+//! - What the store could not do is reported to the core (`Input::MemoryFailed`), which shows it
+//!   and tells the talker: BoardAI already said "Remembered.", "Forgotten." or "Kept.".
+//! - "Don't remember this session" never waits in the queue and is never dropped (I10): the
+//!   store is told at once (no digest for this session, whatever comes first), and the writer
+//!   applies it before anything else still queued.
 //! - Reads, the session's start and its end first wait for the queue to drain, so they see
 //!   every write sent before them.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use boardai_core::effect::{ForgetScope, LogRecord};
 use boardai_core::ids::CaptureId;
 use boardai_core::input::Input;
-use boardai_core::memory::MemoryWrite;
+use boardai_core::memory::{MemoryChange, MemoryWrite};
 use boardai_core::protocol::UiEvent;
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use futures_util::future::BoxFuture;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
+use super::inbox::StoreLink;
 use super::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
 use super::store_views::{read_view, session_context};
 use crate::limits::STORE_WRITES_CAPACITY;
 use crate::llm::LlmProvider;
-use crate::store::{Logged, Remembered, SessionFinished, Store, StoreError, WallClock};
+use crate::store::{Logged, SessionFinished, Store, StoreError, WallClock};
 
 /// A [`StoreSink`] over the vault. The writer task it starts ends once the sink is dropped,
 /// after applying what was queued.
@@ -36,6 +43,13 @@ pub struct VaultSink {
     scribe: Option<Arc<dyn LlmProvider>>,
     clock: Arc<dyn WallClock>,
     writes: mpsc::Sender<Write>,
+    /// The core's captures of this session, newest last: pushed by `remember` and
+    /// `accept_proposal`, popped by "forget that", in the order the core emits them. Bounded by
+    /// the core's `CAPTURES_PER_SESSION_MAX`.
+    captures: Mutex<Vec<CaptureId>>,
+    /// Bumped by "don't remember this session": a signal beside the queue, never full.
+    forget_session: watch::Sender<u64>,
+    reports: Reports,
 }
 
 impl std::fmt::Debug for VaultSink {
@@ -50,20 +64,52 @@ impl std::fmt::Debug for VaultSink {
 /// One memory change, in the order the core made it.
 enum Write {
     Remember(Box<MemoryWrite>),
-    Forget(ForgetScope),
-    Accept(CaptureId),
-    /// A new session: its captures start empty.
-    NewSession,
+    /// "Forget that": undo exactly this capture.
+    Forget(CaptureId),
+    /// "Yes, keep it": keep the proposal made as this capture.
+    Keep(CaptureId),
     /// Answered once everything sent before it was applied.
     Settled(oneshot::Sender<()>),
 }
 
-/// One capture as the store took it.
-struct Captured {
-    /// The store kept it, so "forget that" has something to undo.
-    kept: bool,
-    /// A proposal: the core's capture id and the store's proposal id (`p3`).
-    proposal: Option<(CaptureId, String)>,
+impl Write {
+    /// What the core is told when this change can't be made.
+    fn change(&self) -> Option<MemoryChange> {
+        match self {
+            Self::Remember(memory) => Some(MemoryChange::Remember {
+                capture: memory.capture,
+            }),
+            Self::Forget(capture) => Some(MemoryChange::Forget { capture: *capture }),
+            Self::Keep(capture) => Some(MemoryChange::Keep { capture: *capture }),
+            Self::Settled(_) => None,
+        }
+    }
+}
+
+/// Where failures are reported: the session's link, once it hands it over.
+#[derive(Clone, Default)]
+struct Reports {
+    link: Arc<Mutex<Option<StoreLink>>>,
+}
+
+impl Reports {
+    fn send(&self, change: MemoryChange, detail: String) {
+        tracing::warn!(?change, %detail, "a memory change was not made");
+        let link = self
+            .link
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(link) = link else {
+            return;
+        };
+        if link.memory_failed(change, detail).is_err() {
+            tracing::error!(
+                ?change,
+                "the failure could not be reported: the session is busy"
+            );
+        }
+    }
 }
 
 impl VaultSink {
@@ -75,26 +121,37 @@ impl VaultSink {
         clock: Arc<dyn WallClock>,
     ) -> Self {
         let (writes, queue) = mpsc::channel(STORE_WRITES_CAPACITY);
-        tokio::spawn(apply_writes(queue, store.clone()));
+        let (forget_session, forgets) = watch::channel(0);
+        let reports = Reports::default();
+        tokio::spawn(apply_writes(queue, forgets, store.clone(), reports.clone()));
         Self {
             store,
             scribe,
             clock,
             writes,
+            captures: Mutex::new(Vec::new()),
+            forget_session,
+            reports,
         }
     }
 
     fn enqueue(&self, write: Write) {
-        match self.writes.try_send(write) {
-            Ok(()) => {}
+        let change = write.change();
+        let detail = match self.writes.try_send(write) {
+            Ok(()) => return,
             Err(TrySendError::Full(_)) => {
-                tracing::error!(
-                    capacity = STORE_WRITES_CAPACITY,
-                    "a memory change was dropped: the store is not keeping up"
-                );
+                format!("the store is not keeping up ({STORE_WRITES_CAPACITY} changes are waiting)")
             }
-            Err(TrySendError::Closed(_)) => tracing::warn!("the store's writer has stopped"),
+            Err(TrySendError::Closed(_)) => StoreError::Stopped.to_string(),
+        };
+        if let Some(change) = change {
+            self.reports.send(change, detail);
         }
+    }
+
+    fn captures(&self) -> std::sync::MutexGuard<'_, Vec<CaptureId>> {
+        // The list is only pushed and popped; a panic elsewhere can't leave it half-changed.
+        self.captures.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn logged(logged: Logged) {
@@ -113,88 +170,68 @@ async fn settled(writes: &mpsc::Sender<Write>) {
     }
 }
 
-async fn apply_writes(mut queue: mpsc::Receiver<Write>, store: Store) {
-    // Bounded by the core: a session captures at most `CAPTURES_PER_SESSION_MAX` items.
-    let mut captures: Vec<Captured> = Vec::new();
-    while let Some(write) = queue.recv().await {
-        match write {
-            Write::Remember(memory) => {
-                let capture = memory.capture;
-                let captured = match store.remember(*memory).await {
-                    Ok(Remembered::Proposed { id }) => Captured {
-                        kept: true,
-                        proposal: Some((capture, id.to_string())),
-                    },
-                    Ok(
-                        Remembered::Memory { .. }
-                        | Remembered::Note { .. }
-                        | Remembered::Task { .. }
-                        | Remembered::SessionRecord,
-                    ) => Captured {
-                        kept: true,
-                        proposal: None,
-                    },
-                    Err(error) => {
-                        tracing::warn!(%error, "a memory was not kept");
-                        Captured {
-                            kept: false,
-                            proposal: None,
-                        }
+async fn apply_writes(
+    mut queue: mpsc::Receiver<Write>,
+    mut forgets: watch::Receiver<u64>,
+    store: Store,
+    reports: Reports,
+) {
+    let mut forgets_open = true;
+    loop {
+        tokio::select! {
+            // A forget of the session goes before anything still queued (I10).
+            biased;
+            changed = forgets.changed(), if forgets_open => match changed {
+                Ok(()) => {
+                    forgets.borrow_and_update();
+                    match store.forget_session().await {
+                        // Memory was off (no session started): nothing was kept to forget.
+                        Ok(()) | Err(StoreError::NoSession) => {}
+                        Err(error) => reports.send(MemoryChange::ForgetSession, error.to_string()),
                     }
-                };
-                captures.push(captured);
-            }
-            Write::Forget(ForgetScope::Last) => {
-                let last = captures.pop();
-                if last.is_some_and(|last| last.kept)
-                    && let Err(error) = store.forget_last().await
-                {
-                    tracing::warn!(%error, "\"forget that\" could not undo the last capture");
                 }
-            }
-            Write::Forget(ForgetScope::Session) => {
-                captures.clear();
-                if let Err(error) = store.forget_session().await {
-                    tracing::error!(%error, "\"don't remember this session\" failed");
-                }
-            }
-            Write::Accept(capture) => captures.push(accept(&store, &captures, capture).await),
-            Write::NewSession => captures.clear(),
-            Write::Settled(done) => {
-                let _ = done.send(());
-            }
+                Err(_) => forgets_open = false,
+            },
+            write = queue.recv() => match write {
+                Some(write) => apply(&store, &reports, write).await,
+                None => break,
+            },
         }
     }
 }
 
-/// Keeps the proposal the core captured as `capture`. The keep is itself a capture, so "forget
-/// that" right after undoes it.
-async fn accept(store: &Store, captures: &[Captured], capture: CaptureId) -> Captured {
-    let proposal = captures
-        .iter()
-        .filter_map(|captured| captured.proposal.as_ref())
-        .find(|(proposed, _)| *proposed == capture)
-        .map(|(_, id)| id.clone());
-    let kept = match proposal {
-        Some(id) => match store.accept_proposal(&id).await {
-            Ok(_) => true,
-            Err(error) => {
-                tracing::warn!(%error, "a proposed memory could not be kept");
-                false
-            }
+async fn apply(store: &Store, reports: &Reports, write: Write) {
+    let change = write.change();
+    let failed = match write {
+        Write::Remember(memory) => store.remember(*memory).await.err(),
+        // `Ok(None)`: the write never reached the vault, so nothing is left to undo. With no
+        // session recording, nothing was kept either.
+        Write::Forget(capture) => match store.forget_capture(capture).await {
+            Ok(_) | Err(StoreError::NoSession) => None,
+            Err(error) => Some(error),
         },
-        None => {
-            tracing::warn!(capture = capture.0, "the proposal to keep was never stored");
-            false
+        Write::Keep(capture) => store.keep_proposal(capture).await.err(),
+        Write::Settled(done) => {
+            let _ = done.send(());
+            None
         }
     };
-    Captured {
-        kept,
-        proposal: None,
+    match (failed, change) {
+        // "Don't remember this session" came first: nothing more is kept, as asked.
+        (Some(StoreError::SessionForgotten), _) | (None, _) | (Some(_), None) => {}
+        (Some(error), Some(change)) => reports.send(change, error.to_string()),
     }
 }
 
 impl StoreSink for VaultSink {
+    fn report_to(&self, link: StoreLink) {
+        *self
+            .reports
+            .link
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(link);
+    }
+
     fn input(&self, at: SessionTime, input: &Input) {
         Self::logged(self.store.log_input(at, input.clone()));
     }
@@ -208,15 +245,30 @@ impl StoreSink for VaultSink {
     }
 
     fn remember(&self, _at: SessionTime, memory: &MemoryWrite) {
+        self.captures().push(memory.capture);
         self.enqueue(Write::Remember(Box::new(memory.clone())));
     }
 
     fn forget(&self, _at: SessionTime, scope: ForgetScope) {
-        self.enqueue(Write::Forget(scope));
+        match scope {
+            ForgetScope::Last => {
+                let last = self.captures().pop();
+                // The core says "forget that" only when it captured something.
+                if let Some(capture) = last {
+                    self.enqueue(Write::Forget(capture));
+                }
+            }
+            ForgetScope::Session => {
+                self.captures().clear();
+                self.store.mark_forgotten();
+                self.forget_session.send_modify(|count| *count += 1);
+            }
+        }
     }
 
     fn accept_proposal(&self, _at: SessionTime, capture: CaptureId) {
-        self.enqueue(Write::Accept(capture));
+        self.captures().push(capture);
+        self.enqueue(Write::Keep(capture));
     }
 
     fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
@@ -230,10 +282,10 @@ impl StoreSink for VaultSink {
     }
 
     fn start_session(&self) -> BoxFuture<'static, SessionOpened> {
+        self.captures().clear();
         let store = self.store.clone();
         let writes = self.writes.clone();
         Box::pin(async move {
-            let _ = writes.send(Write::NewSession).await;
             settled(&writes).await;
             let (context, suggestion) = session_context(&store).await;
             let session = match store.start_session(None).await {

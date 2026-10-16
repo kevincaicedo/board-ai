@@ -18,7 +18,9 @@ use boardai_core::protocol::{DrawOp, OrbState, Speaker, Surface, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::logging::bound;
-use boardai_runtime::session::{MemoryStore, SessionClose, SessionOpened, StoreRead, StoreSink};
+use boardai_runtime::session::{
+    MemoryStore, SessionClose, SessionOpened, StoreLink, StoreRead, StoreSink,
+};
 use futures_util::future::BoxFuture;
 
 /// Characters of a tool call or result printed; the rest is cut.
@@ -254,6 +256,10 @@ impl Printer {
 }
 
 impl StoreSink for Printer {
+    fn report_to(&self, link: StoreLink) {
+        self.memory.report_to(link);
+    }
+
     fn input(&self, at: SessionTime, input: &Input) {
         match input {
             Input::TalkerDelta { text } => {
@@ -312,6 +318,11 @@ impl StoreSink for Printer {
             | Input::VoiceStopped { .. }
             | Input::Command(_)
             | Input::Tick => {}
+            Input::MemoryFailed { change, detail } => {
+                let mut detail = format!("{change:?}: {detail}");
+                bound(&mut detail, PRINTED_DETAIL_MAX_BYTES);
+                line(at, "memory", &detail);
+            }
         }
     }
 
