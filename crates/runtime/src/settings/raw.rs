@@ -51,6 +51,7 @@ pub(super) struct RawLlm {
     pub(super) base_url: Option<String>,
     pub(super) secret: Option<String>,
     pub(super) route: Option<Vec<String>>,
+    pub(super) early_start: Option<bool>,
 }
 
 #[derive(Default, Deserialize)]
@@ -134,6 +135,7 @@ fn fallback_llm(role: Role) -> LlmSettings {
         base_url: None,
         secret: SecretName::parse(ANTHROPIC_SECRET),
         route: Vec::new(),
+        early_start: true,
     }
 }
 
@@ -236,6 +238,12 @@ fn llm(raw: RawLlm, role: Role) -> Result<LlmSettings, SettingsError> {
         carries_a_key(&field("base_url"), url)?;
     }
     let route = route(&field("route"), raw.route.as_deref(), base_url.as_deref())?;
+    let early_start = match (role, raw.early_start) {
+        (Role::Scribe, Some(_)) => {
+            return Err(invalid(&field("early_start"), "applies to the talker only"));
+        }
+        (Role::Talker | Role::Scribe, value) => value.unwrap_or(true),
+    };
     Ok(LlmSettings {
         kind,
         model,
@@ -244,6 +252,7 @@ fn llm(raw: RawLlm, role: Role) -> Result<LlmSettings, SettingsError> {
         base_url,
         secret,
         route,
+        early_start,
     })
 }
 

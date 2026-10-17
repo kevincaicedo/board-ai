@@ -265,6 +265,7 @@ impl NarrationStream {
         }
         self.end_word(out);
         self.boundary(out);
+        self.cutter.tag();
         let op = match OpenBlock::open(&tag) {
             Some(Ok(block)) => {
                 self.block = Some(block);
@@ -294,6 +295,7 @@ impl NarrationStream {
         }
         self.end_word(out);
         self.boundary(out);
+        self.cutter.tag();
         self.segments.push(Segment::Tag { written, op: None });
     }
 
@@ -540,6 +542,46 @@ mod tests {
         assert_eq!(
             clauses(&run("A request starts at the client, then the API.", 0)),
             vec!["A request starts at the client,", "then the API."]
+        );
+    }
+
+    /// gpt-oss glues a sentence end to the next tag ("…to a load balancer.<edge …/>The…"):
+    /// the sentence still ends its clause, and the tag's op anchors on the next one (D-263).
+    #[test]
+    fn a_sentence_end_glued_to_a_tag_ends_its_clause() {
+        let out = run(
+            r#"A browser sends a request.<edge from="b" to="lb"/>The balancer forwards it.<x/>OK"#,
+            0,
+        );
+        assert_eq!(
+            clauses(&out),
+            vec![
+                "A browser sends a request.",
+                "The balancer forwards it.",
+                "OK"
+            ]
+        );
+        let anchors: Vec<StreamAnchor> = out
+            .iter()
+            .filter_map(|output| match output {
+                NarrationOutput::Op(op) => Some(op.anchor),
+                NarrationOutput::Clause(_) | NarrationOutput::Dropped(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            anchors,
+            vec![StreamAnchor::Spoken {
+                clause: 1,
+                caption_offset: 0
+            }]
+        );
+        // Without a sentence end, or with an abbreviation, a tag cuts nothing.
+        assert_eq!(
+            clauses(&run(
+                r#"to the <node id="lb"/>balancer like e.g.<x/>Envoy."#,
+                0
+            )),
+            vec!["to the balancer like e.g.Envoy."]
         );
     }
 

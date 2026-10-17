@@ -4,7 +4,7 @@
 //! ([`CLAUSE_FIRST_COMMA_MIN_BYTES`] for the stream's first clause, which the user is waiting
 //! on), at a newline, or at [`CLAUSE_MAX_BYTES`] (on the last space when there is one). Each
 //! boundary needs only the whitespace after it, so a clause is released the moment that
-//! whitespace arrives.
+//! whitespace arrives; a sentence end followed by a tag needs no whitespace at all (D-263).
 //!
 //! An op's anchor is the first spoken char after its tag. Ops are held until their clause is cut
 //! and then released right after it, so an anchor never names a clause that could still change.
@@ -36,6 +36,8 @@ pub struct ClauseCutter {
     next_clause: u32,
     last_clause: Option<(u32, usize)>,
     pending: Vec<PendingOp>,
+    /// A tag came after the last spoken char.
+    tag_after_char: bool,
 }
 
 impl ClauseCutter {
@@ -53,7 +55,21 @@ impl ClauseCutter {
         });
     }
 
+    /// A tag was written: a sentence end right before it ends its clause even when no space
+    /// follows. gpt-oss writes "…to the browser.<edge …/>The load balancer…", and the clause
+    /// ran on to the cap: 45 words that took ~0.5 s to synthesize before the first word played
+    /// (`just e2e`, D-263).
+    pub fn tag(&mut self) {
+        self.tag_after_char = true;
+    }
+
     pub fn push_char(&mut self, ch: char, out: &mut Vec<NarrationOutput>) {
+        if std::mem::take(&mut self.tag_after_char)
+            && !ch.is_whitespace()
+            && ends_sentence(&self.open)
+        {
+            self.cut(out);
+        }
         // Each cut strictly shortens the open clause, so this ends.
         while self.open.len() + ch.len_utf8() > CLAUSE_MAX_BYTES {
             self.cut_at_cap(out);

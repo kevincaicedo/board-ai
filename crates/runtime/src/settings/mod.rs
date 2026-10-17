@@ -59,6 +59,10 @@ pub struct LlmSettings {
     /// OpenRouter only: the only providers tried, in order (`route = ["cerebras"]`, D-152).
     /// Empty leaves the choice to OpenRouter.
     pub route: Vec<ProviderSlug>,
+    /// The talker only: whether a hosted talker may start a turn's request on a finished early
+    /// final (`early_start = false` turns it off, D-262). On by default; it changes nothing
+    /// for a local talker, and the scribe never talks, so `[scribe]` refuses the field.
+    pub early_start: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

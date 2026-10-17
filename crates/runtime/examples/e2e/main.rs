@@ -39,7 +39,9 @@ usage: just e2e [options]
   --say-voice <name>  the macOS voice speaking the user's lines; default the system's
   --vocabulary <a,b>  terms Whisper should expect, as the app gives it the repo's symbols
   --repo <folder>     take Whisper's vocabulary from this repo's symbols, as the app does
-  --strict            also fail on what depends on the model (opening a detour, resuming)";
+  --strict            also fail on what depends on the model (opening a detour, resuming)
+  --no-early-start    a hosted talker's requests wait for the end of the turn instead of
+                      starting on a finished early final (D-262), to measure what that wins";
 
 const DEFAULT_SCRIPT: &str = "\
 How does a request get from the browser to the database?
@@ -80,6 +82,7 @@ pub struct Args {
     pub vocabulary: Vec<String>,
     pub repo: Option<PathBuf>,
     pub strict: bool,
+    pub early_start: bool,
 }
 
 fn args() -> Result<Args, String> {
@@ -96,11 +99,16 @@ fn args() -> Result<Args, String> {
         vocabulary: Vec::new(),
         repo: None,
         strict: false,
+        early_start: true,
     };
     let mut words = std::env::args().skip(1);
     while let Some(flag) = words.next() {
         if flag == "--strict" {
             args.strict = true;
+            continue;
+        }
+        if flag == "--no-early-start" {
+            args.early_start = false;
             continue;
         }
         let value = words

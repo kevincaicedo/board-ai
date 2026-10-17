@@ -86,11 +86,25 @@ fn a_finished_question_ends_the_turn_when_the_detector_calls_the_end() {
 fn an_unpunctuated_final_waits_the_usual_silence_counted_once() {
     let mut sim = Sim::new(config());
     sim.talker.push(ScriptedReply::says("Sure."));
-    let text = "ok go on";
+    let text = "that makes sense to me";
     let speech_end = heard(&mut sim, 0, text, words_ms(text));
     sim.run_until(10_000);
     assert_clean(&sim);
     assert_eq!(talks(&sim), vec![speech_end + END_OF_TURN_SILENCE_MS]);
+}
+
+/// A whole reply needs no closing mark (D-261): Whisper wrote `say`'s "Okay, go on." as
+/// "Okay, go on" in `just e2e`, and the turn waited 600 ms for it.
+#[test]
+fn a_whole_reply_without_its_mark_ends_the_turn_when_the_detector_calls_the_end() {
+    for text in ["Okay, go on", "mm-hmm", "go back", "keep going"] {
+        let mut sim = Sim::new(config());
+        sim.talker.push(ScriptedReply::says("Sure."));
+        let speech_end = heard(&mut sim, 0, text, words_ms(text));
+        sim.run_until(10_000);
+        assert_clean(&sim);
+        assert_eq!(talks(&sim), vec![speech_end + HANGOVER_MS], "{text}");
+    }
 }
 
 /// PRODUCT §6.1: "A pause after 'so the leader…' doesn't end the turn." Whisper marks the

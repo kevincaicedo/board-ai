@@ -616,6 +616,7 @@ fn open_router_talker(preset: Preset, key: &Secret) -> Arc<dyn LlmProvider> {
         base_url: Some(OPENROUTER_BASE_URL.to_owned()),
         secret: Some(name),
         route: preset.route(),
+        early_start: true,
     };
     talker_from_settings(&settings, &secrets, Arc::new(MonotonicClock::start()))
         .expect("talker builds")

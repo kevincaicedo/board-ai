@@ -352,7 +352,7 @@ impl Core {
     }
 
     /// The user's turn is over: resolve the change gate, build the message, and ask the talker.
-    fn end_turn(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+    pub(super) fn end_turn(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         let state = std::mem::replace(&mut self.state, ConversationState::Idle);
         let ConversationState::Listening(utterance) = state else {
             self.state = state;

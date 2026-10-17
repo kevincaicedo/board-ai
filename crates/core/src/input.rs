@@ -30,6 +30,16 @@ pub enum Input {
         text: String,
         is_final: bool,
     },
+    /// The utterance decoded after a short quiet inside speech (LLD §3.4): what its final will
+    /// say if the speaker says nothing more. Either `VoiceResumed` withdraws it, or `VoiceEnd`
+    /// and a final with the same text follow. It never ends a turn: on a cloud talker it may
+    /// start the request early, shown only once the final confirms it (D-262).
+    EarlyFinal {
+        text: String,
+    },
+    /// Speech came back after an `EarlyFinal`, before `VoiceEnd`: that early final no longer
+    /// stands.
+    VoiceResumed,
     /// Streamed narration text from the talker.
     TalkerDelta {
         text: String,

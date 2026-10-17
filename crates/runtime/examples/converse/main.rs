@@ -22,8 +22,8 @@ use boardai_runtime::llm::openrouter::ProviderSlug;
 use boardai_runtime::llm::{ChatStream, LlmCapabilities, LlmProvider};
 use boardai_runtime::session::{
     Observed, Progress, Script, SessionChannels, SessionParts, SpeechInLink, StoreSink,
-    VirtualVoice, VirtualVoiceConfig, run_script, say_typed, talker_from_settings, talker_name,
-    wait_for_answer,
+    VirtualVoice, VirtualVoiceConfig, request_start, run_script, say_typed, talker_from_settings,
+    talker_name, wait_for_answer,
 };
 use boardai_runtime::settings::{LlmSettings, MemorySecretStore};
 use boardai_runtime::tools::{RepoRoots, RepoTools};
@@ -171,6 +171,7 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
             session_context: None,
             suggestion: None,
             repo_reads: tools.repo_reads(),
+            request_start: request_start(&settings),
         },
         clock: TokioClock::start(),
         talker,

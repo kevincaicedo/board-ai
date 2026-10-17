@@ -32,6 +32,12 @@ pub const USER_FINAL_DELAY_MS: u64 = 120;
 /// 32 ms windows.
 pub const USER_ONSET_LEAD_MS: u64 = 160;
 
+/// Live speech in (LLD §3.4): the early final reaches the core this long after the voice stops
+/// (96 ms of quiet, then a ~50 ms decode, `spike_turns`), and `VoiceEnd` with the final after the
+/// detector's 256 ms hangover.
+pub const USER_EARLY_FINAL_MS: u64 = 146;
+pub const USER_HANGOVER_MS: u64 = 256;
+
 /// How long the runtime takes to answer a tool call.
 pub const TOOL_LATENCY_MS: u64 = 15;
 
@@ -204,6 +210,63 @@ impl Sim {
                 is_final: true,
             },
         );
+    }
+
+    /// The user says `text` as live speech in reports it: `VoiceStart`, partials, the early
+    /// final once they go quiet, then `VoiceEnd` after the hangover with the final. With
+    /// `pause: Some((words, ms))` they stop after that many words for `ms` (under the hangover,
+    /// so one utterance): the early final of those words, closed with a period as Whisper closes
+    /// a fragment, is withdrawn by `VoiceResumed`. Returns how long they are busy.
+    pub fn user_says_live(&mut self, at_ms: u64, text: &str, pause: Option<(usize, u64)>) -> u64 {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let count = u64::try_from(words.len()).unwrap_or(1);
+        self.at(at_ms, Input::VoiceStart);
+        let mut voiced_ms = USER_MS_PER_WORD * count;
+        if let Some((before, pause_ms)) = pause
+            && before > 0
+            && before < words.len()
+            && pause_ms < USER_HANGOVER_MS
+        {
+            let stop = at_ms + USER_MS_PER_WORD * u64::try_from(before).unwrap_or(1);
+            if pause_ms > USER_EARLY_FINAL_MS {
+                let text = format!("{}.", words[..before].join(" "));
+                self.at(stop + USER_EARLY_FINAL_MS, Input::EarlyFinal { text });
+                self.at(stop + pause_ms, Input::VoiceResumed);
+            }
+            voiced_ms += pause_ms;
+        }
+        let mut partial_at = USER_PARTIAL_EVERY_MS;
+        while partial_at < voiced_ms {
+            let said = usize::try_from(partial_at / USER_MS_PER_WORD)
+                .unwrap_or(0)
+                .min(words.len());
+            if said > 0 {
+                let text = words[..said].join(" ");
+                let partial = Input::Transcript {
+                    text,
+                    is_final: false,
+                };
+                self.at(at_ms + partial_at, partial);
+            }
+            partial_at += USER_PARTIAL_EVERY_MS;
+        }
+        let stop = at_ms + voiced_ms;
+        let early = Input::EarlyFinal {
+            text: text.to_owned(),
+        };
+        self.at(stop + USER_EARLY_FINAL_MS, early);
+        let end = Input::VoiceEnd {
+            voiced_ms: u32::try_from(voiced_ms).unwrap_or(u32::MAX),
+            silence_ms: u32::try_from(USER_HANGOVER_MS).unwrap_or(u32::MAX),
+        };
+        self.at(stop + USER_HANGOVER_MS, end);
+        let text = text.to_owned();
+        let final_text = Input::Transcript {
+            text,
+            is_final: true,
+        };
+        self.at(stop + USER_HANGOVER_MS, final_text);
+        voiced_ms + USER_HANGOVER_MS + 50
     }
 
     /// A short backchannel over BoardAI's voice; I7 is checked for it.

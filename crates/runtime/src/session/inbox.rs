@@ -210,6 +210,16 @@ impl SpeechInLink {
     pub async fn transcript(&self, text: String, is_final: bool) -> Result<(), SessionClosed> {
         self.inbox.send(Input::Transcript { text, is_final }).await
     }
+
+    /// The final as decoded after a short quiet inside speech (D-262).
+    pub async fn early_final(&self, text: String) -> Result<(), SessionClosed> {
+        self.inbox.send(Input::EarlyFinal { text }).await
+    }
+
+    /// Speech came back after an early final: it no longer stands.
+    pub async fn voice_resumed(&self) -> Result<(), SessionClosed> {
+        self.inbox.send(Input::VoiceResumed).await
+    }
 }
 
 /// What speech out tells the core (LLD §2.1, §2.4). Every accepted `Synthesize` is answered

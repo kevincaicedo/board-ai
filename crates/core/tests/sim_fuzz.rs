@@ -24,7 +24,7 @@ use boardai_core::protocol::{
 };
 use boardai_core::sim::talker::ScriptedReply;
 use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD, USER_ONSET_LEAD_MS};
-use boardai_core::{CoreConfig, MicMode};
+use boardai_core::{CoreConfig, MicMode, RequestStart};
 use common::config;
 
 /// xorshift64*: a tiny deterministic generator, in test code only (the core never sees one).
@@ -296,6 +296,18 @@ fn act(sim: &mut Sim, rng: &mut Rng) -> u64 {
     }
 }
 
+/// A question as live speech in reports it (early final, `VoiceEnd` after the hangover), half
+/// the time with a pause mid-question that Whisper closes with a period (D-262).
+fn live_act(sim: &mut Sim, live: &mut Rng) -> u64 {
+    let now = sim.now().as_ms();
+    let text = live.pick(QUESTIONS);
+    let pause = (live.below(2) == 0).then(|| {
+        let words = usize::try_from(1 + live.below(3)).unwrap_or(1);
+        (words, 100 + live.below(150))
+    });
+    sim.user_says_live(now, text, pause)
+}
+
 /// What the user says while drawing (artboard 13): labels, controls, a question and talk.
 const DRAWING_WORDS: &[&str] = &[
     "this is the cache",
@@ -421,6 +433,12 @@ const PATHS: &[(&str, Reached)] = &[
         "change asked",
         |effect| matches!(effect, Effect::Synthesize { text, .. } if text.ends_with(CHANGE_QUESTION_END)),
     ),
+    ("early request", |effect| {
+        *effect
+            == Effect::Log(LogRecord::Milestone {
+                milestone: Milestone::SpeculativeRequest,
+            })
+    }),
     ("onset duck", |effect| {
         *effect
             == Effect::Log(LogRecord::Milestone {
@@ -584,16 +602,28 @@ fn end_the_session(sim: &mut Sim, ending: &mut Rng) {
     }
 }
 
+/// Half the seeds talk to a hosted talker, whose requests may start on an early final.
+fn seed_config(seed: u64, mic: MicMode) -> CoreConfig {
+    let request_start = if seed.is_multiple_of(2) {
+        RequestStart::OnEarlyFinal
+    } else {
+        RequestStart::AtTurnEnd
+    };
+    CoreConfig {
+        mic,
+        suggestion: Some("Pick up where we left off?".to_owned()),
+        request_start,
+        ..config()
+    }
+}
+
 fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut memory = Rng(seed.wrapping_mul(0xbf58_476d_1ce4_e5b9) | 1);
     let mut drawing = Rng(seed.wrapping_mul(0x94d0_49bb_1331_11eb) | 1);
     let mut ending = Rng(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) | 1);
-    let mut sim = Sim::new(CoreConfig {
-        mic,
-        suggestion: Some("Pick up where we left off?".to_owned()),
-        ..config()
-    });
+    let mut live = Rng(seed.wrapping_mul(0xd6e8_feb8_6659_fd93) | 1);
+    let mut sim = Sim::new(seed_config(seed, mic));
     sim.talker.chunk_interval_ms = 10 + rng.below(300);
     sim.talker.first_token_ms = 100 + rng.below(1_500);
     sim.harness.run_ms = 1_000 + rng.below(10_000);
@@ -618,6 +648,8 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
             saying(&mut sim, now, memory.pick(CONTROLS))
         } else if drawing.below(24) == 0 || (sim.core().is_drawing() && drawing.below(3) > 0) {
             draw_act(&mut sim, &mut drawing)
+        } else if live.below(4) == 0 {
+            live_act(&mut sim, &mut live)
         } else {
             act(&mut sim, &mut rng)
         };
@@ -663,6 +695,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "lifeline growth",
         "stop voice",
         "onset duck",
+        "early request",
         "backchannel",
         "freeze",
         "resume",

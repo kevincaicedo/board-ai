@@ -182,6 +182,8 @@ impl Args {
             base_url,
             secret: secret.as_ref().map(|(name, _)| name.clone()),
             route,
+            // Typed lines have no early final to start on.
+            early_start: true,
         };
         Ok((settings, secret))
     }

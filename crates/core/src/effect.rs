@@ -139,6 +139,9 @@ pub enum Milestone {
     BargeInStop,
     /// The voice ducked on a voice onset, before `VoiceStart` confirmed speech.
     OnsetDuck,
+    /// A cloud talker's request went out on a finished early final, before the turn was
+    /// confirmed (D-262). `TalkerRequested` still marks when the turn ended.
+    SpeculativeRequest,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

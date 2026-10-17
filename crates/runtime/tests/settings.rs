@@ -282,6 +282,7 @@ fn ollama(model: &str) -> LlmChoice {
         base_url: None,
         secret: None,
         route: Vec::new(),
+        early_start: None,
     }
 }
 
@@ -354,6 +355,7 @@ fn edits_switch_back_to_the_defaults_and_pick_a_microphone_by_name() {
         base_url: None,
         secret: SecretName::parse("anthropic"),
         route: Vec::new(),
+        early_start: None,
     };
     let back = Settings::edit(
         &path,
@@ -517,6 +519,7 @@ fn an_edit_writes_a_preset_with_its_route() {
         base_url: Some("https://openrouter.ai/api/v1".to_owned()),
         secret: SecretName::parse("openrouter"),
         route: GPT_OSS_120B.route(),
+        early_start: None,
     };
     let edited = Settings::edit(
         &path,
@@ -533,6 +536,54 @@ fn an_edit_writes_a_preset_with_its_route() {
     let written = std::fs::read_to_string(&path).expect("written");
     assert!(written.contains("route = [\"cerebras\"]"), "{written}");
     assert_eq!(Settings::load(&path, home).expect("reloads"), edited);
+}
+
+/// D-262: a hosted talker starts a request on the early final unless `[talker] early_start =
+/// false`; the scribe never talks, so its section refuses the field.
+#[test]
+fn the_early_start_is_on_until_the_talker_turns_it_off() {
+    assert!(parse("").expect("parses").talker.early_start);
+    let off = parse(&format!("{OPEN_ROUTER_TALKER}early_start = false")).expect("parses");
+    assert!(!off.talker.early_start);
+    assert!(off.scribe.early_start);
+    let on = parse(&format!("{OPEN_ROUTER_TALKER}early_start = true")).expect("parses");
+    assert!(on.talker.early_start);
+    assert_eq!(
+        invalid_field("[scribe]\nearly_start = false"),
+        "scribe.early_start"
+    );
+    assert!(parse("[talker]\nearly_start = \"no\"").is_err());
+}
+
+/// The edit writes the field, and picking another model keeps the user's `early_start = false`.
+#[test]
+fn an_edit_writes_the_early_start_and_a_new_model_keeps_it() {
+    let folder = TempFolder::new("settings-early-start");
+    let home = Path::new(HOME);
+    let path = folder.path.join("settings.toml");
+    let choice = |early_start| LlmChoice {
+        kind: LlmKind::OpenAiCompatible,
+        model: Some(GPT_OSS_120B.model.to_owned()),
+        effort: None,
+        max_tokens: None,
+        base_url: Some("https://openrouter.ai/api/v1".to_owned()),
+        secret: SecretName::parse("openrouter"),
+        route: GPT_OSS_120B.route(),
+        early_start,
+    };
+    let edit = |talker: LlmChoice| SettingsEdit::Llm {
+        talker,
+        scribe: ollama("qwen3.5:2b"),
+    };
+    let off = Settings::edit(&path, home, &[edit(choice(Some(false)))]).expect("edited");
+    assert!(!off.talker.early_start);
+    let written = std::fs::read_to_string(&path).expect("written");
+    assert!(written.contains("early_start = false"), "{written}");
+    let kept = Settings::edit(&path, home, &[edit(choice(None))]).expect("edited");
+    assert!(!kept.talker.early_start, "a new pick keeps it off");
+    assert_eq!(Settings::load(&path, home).expect("reloads"), kept);
+    let on = Settings::edit(&path, home, &[edit(choice(Some(true)))]).expect("edited");
+    assert!(on.talker.early_start);
 }
 
 #[test]

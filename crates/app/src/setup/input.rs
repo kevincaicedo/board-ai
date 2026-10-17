@@ -161,6 +161,7 @@ fn talker(
                 base_url: None,
                 secret: secret_name(KeyName::Anthropic),
                 route: Vec::new(),
+                early_start: None,
             };
             (claude.clone(), claude)
         }
@@ -186,6 +187,7 @@ fn talker(
                 base_url: None,
                 secret: None,
                 route: Vec::new(),
+                early_start: None,
             };
             (local.clone(), local)
         }
@@ -222,6 +224,7 @@ fn scribe(
                         base_url: Some(OPENROUTER_BASE_URL.to_owned()),
                         secret: secret_name(KeyName::OpenRouter),
                         route: Vec::new(),
+                        early_start: None,
                     }
                 }
             }
@@ -234,6 +237,7 @@ fn scribe(
             base_url: None,
             secret: None,
             route: Vec::new(),
+            early_start: None,
         },
         TalkerProvider::Claude => {
             return Err("With Claude, memory digests use Claude Haiku.".to_owned());
@@ -256,6 +260,7 @@ fn open_router_preset(preset: Preset, role: LlmRole) -> LlmChoice {
         base_url: Some(OPENROUTER_BASE_URL.to_owned()),
         secret: secret_name(KeyName::OpenRouter),
         route: preset.route(),
+        early_start: None,
     }
 }
 
@@ -279,6 +284,7 @@ fn open_router_model(id: &str, listed: Option<&ModelInfo>) -> Result<LlmChoice, 
         base_url: Some(OPENROUTER_BASE_URL.to_owned()),
         secret: secret_name(KeyName::OpenRouter),
         route: Vec::new(),
+        early_start: None,
     })
 }
 

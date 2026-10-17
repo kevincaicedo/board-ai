@@ -58,7 +58,7 @@ pub use script::{
 };
 pub use shelf::{MemoryShelf, ShelfError, SourceShelf, VaultShelf};
 pub use talker::{
-    TalkerSetupError, UnconfiguredTalker, scribe_from_settings, talker_config,
+    TalkerSetupError, UnconfiguredTalker, request_start, scribe_from_settings, talker_config,
     talker_from_settings, talker_name,
 };
 pub use timings::estimate_timings;

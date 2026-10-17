@@ -134,7 +134,9 @@ async fn forward(link: &SpeechInLink, input: Input) -> Result<(), SessionClosed>
             silence_ms,
         } => link.voice_end(voiced_ms, silence_ms).await,
         Input::Transcript { text, is_final } => link.transcript(text, is_final).await,
-        // Speech in produces only the four above; anything else is a broken invariant there.
+        Input::EarlyFinal { text } => link.early_final(text).await,
+        Input::VoiceResumed => link.voice_resumed().await,
+        // Speech in produces only the six above; anything else is a broken invariant there.
         other @ (Input::TalkerDelta { .. }
         | Input::TalkerToolCall { .. }
         | Input::TalkerDone { .. }

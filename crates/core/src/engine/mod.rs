@@ -20,6 +20,7 @@ mod repo_names;
 mod reveal;
 mod shared;
 mod sources;
+mod speculate;
 mod stage;
 mod stop;
 pub mod text;
@@ -51,6 +52,7 @@ use listen::UserSide;
 use memory::Memory;
 use ops::OpQueue;
 use reply::{ContextTracker, Reply};
+use speculate::TalkerInput;
 use stop::PendingStop;
 
 #[cfg(feature = "sim")]
@@ -80,6 +82,8 @@ pub struct CoreConfig {
     pub suggestion: Option<String>,
     /// Whether the talker's requests offer the repo reads over an open repo (D-232).
     pub repo_reads: RepoReads,
+    /// When a turn's request may leave (D-262).
+    pub request_start: RequestStart,
 }
 
 impl Default for CoreConfig {
@@ -90,8 +94,21 @@ impl Default for CoreConfig {
             session_context: None,
             suggestion: None,
             repo_reads: RepoReads::NotOffered,
+            request_start: RequestStart::AtTurnEnd,
         }
     }
+}
+
+/// When a turn's talker request may leave (D-262). The runtime chooses by where the talker
+/// runs; the turn itself ends by the same rules either way (LLD §2.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestStart {
+    /// When the turn ends. A local talker: a request the user's next words cancel would hold
+    /// the GPU that Whisper and the voice share.
+    AtTurnEnd,
+    /// On a finished early final, before the detector confirms the end, and seen only once the
+    /// final confirms it. A hosted talker, where a cancelled request costs a fraction of a cent.
+    OnEarlyFinal,
 }
 
 /// Where the pointer is, and when it last landed on a target (barge-in rule d).
@@ -165,6 +182,8 @@ pub struct Core {
     staging: reveal::Staging,
     /// What the user shared to read, the project, and briefs on their way (D-184, D-185).
     sources: shared::SourceDesk,
+    /// A request started on an early final, not yet confirmed (D-262).
+    speculation: Option<Box<speculate::Speculation>>,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -209,6 +228,7 @@ impl Core {
             repo_names: repo_names::RepoNames::default(),
             staging: reveal::Staging::default(),
             sources: shared::SourceDesk::default(),
+            speculation: None,
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }
@@ -238,6 +258,8 @@ impl Core {
     /// The only way state changes. Same inputs at the same times → same effects.
     pub fn step(&mut self, now: SessionTime, input: Input, effects: &mut Vec<Effect>) {
         let first = effects.len();
+        // The early final's own request is not its confirmation.
+        let settles = !matches!(input, Input::EarlyFinal { .. });
         match input {
             Input::VoiceOnset => self.on_voice_onset(now, effects),
             Input::VoiceStart => self.on_voice_start(now, effects),
@@ -248,9 +270,17 @@ impl Core {
             Input::Transcript { text, is_final } => {
                 self.on_transcript(now, &text, is_final, effects);
             }
-            Input::TalkerDelta { text } => self.on_talker_delta(now, &text, effects),
-            Input::TalkerToolCall { invocation } => self.on_tool_call(now, invocation, effects),
-            Input::TalkerDone { stop, raw } => self.on_talker_done(now, stop, raw, effects),
+            Input::EarlyFinal { text } => self.on_early_final(now, &text, effects),
+            Input::VoiceResumed => self.cancel_speculation(effects),
+            Input::TalkerDelta { text } => {
+                self.on_talker_input(now, TalkerInput::Delta(text), effects);
+            }
+            Input::TalkerToolCall { invocation } => {
+                self.on_talker_input(now, TalkerInput::ToolCall(invocation), effects);
+            }
+            Input::TalkerDone { stop, raw } => {
+                self.on_talker_input(now, TalkerInput::Done { stop, raw }, effects);
+            }
             Input::ClauseReady { clause, timings } => {
                 if self.voice.ready(clause, timings) && self.state == ConversationState::Thinking {
                     self.state = ConversationState::Speaking;
@@ -291,6 +321,9 @@ impl Core {
             Input::Command(UiCommand::Sources { action }) => {
                 self.on_sources_command(action, effects);
             }
+        }
+        if settles {
+            self.settle_speculation(now, first, effects);
         }
         self.after_step(now, effects);
         self.yield_view(first, effects);

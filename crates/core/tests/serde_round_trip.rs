@@ -83,6 +83,10 @@ fn speech_and_command_inputs() -> Vec<Input> {
         },
         Input::PlaybackAt { position },
         Input::PlaybackDrained,
+        Input::EarlyFinal {
+            text: "Why Redis first?".to_owned(),
+        },
+        Input::VoiceResumed,
         Input::VoiceStopped {
             last: Some(position),
         },

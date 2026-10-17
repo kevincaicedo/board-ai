@@ -38,7 +38,7 @@ use boardai_runtime::llm::LlmProvider;
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
     MemoryShelf, MemoryStore, SessionChannels, SessionHandle, SessionParts, SourceParts,
-    SourceShelf, SpeechOut, StoreSink, UnconfiguredTalker, VaultShelf, VaultSink,
+    SourceShelf, SpeechOut, StoreSink, UnconfiguredTalker, VaultShelf, VaultSink, request_start,
     scribe_from_settings, talker_from_settings, talker_name,
 };
 use boardai_runtime::settings::{self, HarnessChoice, Settings};
@@ -343,6 +343,7 @@ async fn parts(
             session_context: None,
             suggestion: None,
             repo_reads: opened.tools.repo_reads(),
+            request_start: request_start(&settings.talker),
         },
         clock: TokioClock::start(),
         talker,

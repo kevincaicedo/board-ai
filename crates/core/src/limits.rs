@@ -54,6 +54,16 @@ pub const END_OF_TURN_SILENCE_MS: u64 = 600;
 /// trailing-off mark ("so the leader…").
 pub const END_OF_TURN_GRACE_MS: u64 = 1_500;
 
+/// A request started on an early final (D-262) is cancelled if its turn is not confirmed by
+/// then. Speech in follows an early final with `VoiceResumed`, or `VoiceEnd` and the final, within
+/// the detector's hangover (~160 ms after it); this only bounds a speech in that never says.
+pub const SPECULATION_MAX_MS: u64 = 1_000;
+
+/// Talker inputs held for a request started on an early final before its turn is confirmed; one
+/// past this cancels it (its turn then asks again when it ends). A whole answer from Cerebras
+/// came in 7–31 deltas (`just e2e`).
+pub const SPECULATION_HELD_INPUTS_MAX: usize = 1_024;
+
 /// Barge-in: speech still undecided this long after `VoiceStart` is an interruption. It must
 /// outlast the longest backchannel: measured with `say` (five voices, 150 wpm to 220 wpm, every
 /// phrase of the lexicon Whisper heard as itself), the detector reports up to 960 ms of voice,

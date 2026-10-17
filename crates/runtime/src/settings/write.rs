@@ -75,9 +75,16 @@ fn llm(out: &mut String, name: &str, raw: &RawLlm) {
     if let Some(route) = &raw.route {
         if !set {
             let _ = writeln!(out, "\n[{name}]");
+            set = true;
         }
         let items: Vec<String> = route.iter().map(|slug| quoted(slug)).collect();
         let _ = writeln!(out, "route = [{}]", items.join(", "));
+    }
+    if let Some(early_start) = raw.early_start {
+        if !set {
+            let _ = writeln!(out, "\n[{name}]");
+        }
+        let _ = writeln!(out, "early_start = {early_start}");
     }
 }
 

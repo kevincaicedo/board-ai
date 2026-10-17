@@ -27,7 +27,7 @@ const PREROLL_FRAMES: u64 = (SPEECH_PREROLL_MS * MIC_RATE_HZ / 1_000) as u64;
 /// What was dropped at a limit, counted (LLD §5).
 #[derive(Debug, Default)]
 pub struct SpeechInCounters {
-    /// Partial transcripts dropped because the orchestrator's queue was full.
+    /// Partial transcripts and early finals dropped because the orchestrator's queue was full.
     pub partials_dropped: AtomicU64,
     /// Windows dropped because the speech-to-text queue was full.
     pub windows_dropped: AtomicU64,

@@ -7,6 +7,8 @@
 //! - **Backchannels:** the voiced length the detector reports for every phrase of the lexicon,
 //!   at several voices and rates (barge-in rule (c) must stay above all of them, I7), and what an
 //!   early Whisper partial makes of them.
+//! - **End-of-turn levers** (`levers`): when each candidate rule would end the turn, and how
+//!   often too early.
 //! - **Cue words:** how soon after the onset a Whisper partial hears an interruption cue, and
 //!   what a decode costs on the GPU and on the CPU, idle or while Ollama generates.
 //!
@@ -15,6 +17,8 @@
 //! `BOARDAI_SPIKE_OLLAMA=gemma4:latest` keeps Ollama generating during the cue-word decodes.
 #![allow(clippy::expect_used, reason = "spikes fail loudly")]
 #![allow(clippy::print_stdout, reason = "spikes print their measurements")]
+
+mod levers;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};

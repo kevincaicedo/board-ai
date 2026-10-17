@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use boardai_core::RequestStart;
 use boardai_core::effect::TalkRequest;
 use boardai_core::history::Conversation;
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
@@ -386,12 +387,31 @@ pub fn talker_name(settings: &LlmSettings) -> String {
     }
 }
 
+/// When a turn's request may leave (D-262). A hosted API (Anthropic, OpenRouter) starts it on a
+/// finished early final, where a request the user's next words cancel costs a fraction of a cent
+/// (gpt-oss-120b on Cerebras ~$0.0003), unless `early_start = false`. Any other server waits for
+/// the end of the turn: a local one shares the GPU with Whisper and the voice, and a self-hosted
+/// one would queue the real request behind the cancelled one.
+#[must_use]
+pub fn request_start(settings: &LlmSettings) -> RequestStart {
+    let hosted = match settings.kind {
+        LlmKind::Anthropic => true,
+        LlmKind::OpenAiCompatible => settings.base_url.as_deref().is_some_and(is_openrouter),
+    };
+    if hosted && settings.early_start {
+        RequestStart::OnEarlyFinal
+    } else {
+        RequestStart::AtTurnEnd
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CompatibleApi, compatible_api, talker_name};
+    use super::{CompatibleApi, compatible_api, request_start, talker_name};
     use crate::llm::Effort;
     use crate::llm::openrouter::ProviderSlug;
     use crate::settings::{LlmKind, LlmSettings};
+    use boardai_core::RequestStart;
 
     fn settings(kind: LlmKind, base_url: Option<&str>) -> LlmSettings {
         LlmSettings {
@@ -402,6 +422,7 @@ mod tests {
             base_url: base_url.map(str::to_owned),
             secret: None,
             route: Vec::new(),
+            early_start: true,
         }
     }
 
@@ -415,6 +436,31 @@ mod tests {
         assert_eq!(name(LlmKind::OpenAiCompatible, open_router), "OpenRouter");
         let other = Some("http://gpu-box:1234/v1");
         assert_eq!(name(LlmKind::OpenAiCompatible, other), "the model");
+    }
+
+    #[test]
+    fn only_a_hosted_talker_starts_a_request_early() {
+        let start = |kind, url| request_start(&settings(kind, url));
+        assert_eq!(start(LlmKind::Anthropic, None), RequestStart::OnEarlyFinal);
+        let open_router = Some("https://openrouter.ai/api/v1");
+        assert_eq!(
+            start(LlmKind::OpenAiCompatible, open_router),
+            RequestStart::OnEarlyFinal
+        );
+        let mut off = settings(LlmKind::OpenAiCompatible, open_router);
+        off.early_start = false;
+        assert_eq!(request_start(&off), RequestStart::AtTurnEnd, "turned off");
+        for local in [
+            None,
+            Some("http://localhost:11434/v1"),
+            Some("http://gpu-box:1234/v1"),
+        ] {
+            assert_eq!(
+                start(LlmKind::OpenAiCompatible, local),
+                RequestStart::AtTurnEnd,
+                "{local:?}"
+            );
+        }
     }
 
     #[test]

@@ -55,6 +55,9 @@ pub struct LlmChoice {
     pub secret: Option<SecretName>,
     /// OpenRouter's provider route; empty writes none.
     pub route: Vec<ProviderSlug>,
+    /// The talker's early start (D-262); `None` keeps what the file says, so picking another
+    /// model never turns back on what the user turned off.
+    pub early_start: Option<bool>,
 }
 
 pub(super) fn apply(
@@ -83,7 +86,10 @@ pub(super) fn apply(
 fn change(raw: &mut RawSettings, edit: &SettingsEdit) {
     match edit {
         SettingsEdit::Llm { talker, scribe } => {
-            raw.talker = Some(llm(talker));
+            let kept = raw.talker.as_ref().and_then(|talker| talker.early_start);
+            let mut talker = llm(talker);
+            talker.early_start = talker.early_start.or(kept);
+            raw.talker = Some(talker);
             raw.scribe = Some(llm(scribe));
         }
         SettingsEdit::Scribe(scribe) => raw.scribe = Some(llm(scribe)),
@@ -165,6 +171,7 @@ fn llm(choice: &LlmChoice) -> RawLlm {
                 .map(|slug| slug.as_str().to_owned())
                 .collect()
         }),
+        early_start: choice.early_start,
     }
 }
 

@@ -50,6 +50,8 @@ impl Heard {
             | Input::VoiceStart
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }
+            | Input::EarlyFinal { .. }
+            | Input::VoiceResumed
             | Input::TalkerDelta { .. }
             | Input::TalkerToolCall { .. }
             | Input::TalkerDone { .. }

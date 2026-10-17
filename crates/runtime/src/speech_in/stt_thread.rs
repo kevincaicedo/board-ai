@@ -6,6 +6,10 @@
 //! The early final is what keeps the final fast: the VAD reports the end only after 250 ms of
 //! silence, so decoding as soon as the speaker has been quiet for 96 ms usually finishes before
 //! `VoiceEnd`. If they speak again it is thrown away and the final is decoded at the end.
+//!
+//! The early final also goes to the core at once (`EarlyFinal`), and speech that comes back after
+//! it is reported (`VoiceResumed`), so a hosted talker's request can start before `VoiceEnd`
+//! (D-262). Both come from this thread, so they reach the core in order with the final.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,6 +64,8 @@ struct Utterance {
     last_partial_text: String,
     /// The final, decoded while the speaker was quiet; valid until they speak again.
     early_final: Option<String>,
+    /// The core was told of `early_final`, so it must hear if speech resumes.
+    early_sent: bool,
 }
 
 impl SttWorker {
@@ -130,6 +136,7 @@ impl SttWorker {
                     quiet: false,
                     last_partial_text: String::new(),
                     early_final: None,
+                    early_sent: false,
                 });
             }
             SttMessage::Audio(audio) => {
@@ -138,11 +145,15 @@ impl SttWorker {
                     current.new_audio = true;
                 }
             }
-            SttMessage::Quiet => self.decode_early_final(),
+            SttMessage::Quiet => return self.decode_early_final(),
             SttMessage::Resumed => {
-                if let Some(current) = self.utterance.as_mut() {
-                    current.quiet = false;
-                    current.early_final = None;
+                let Some(current) = self.utterance.as_mut() else {
+                    return true;
+                };
+                current.quiet = false;
+                current.early_final = None;
+                if std::mem::take(&mut current.early_sent) {
+                    return self.events.blocking_send(Input::VoiceResumed).is_ok();
                 }
             }
             SttMessage::End => return self.finish(),
@@ -155,17 +166,37 @@ impl SttWorker {
         true
     }
 
-    fn decode_early_final(&mut self) {
+    /// Decodes the final early and tells the core; false when the orchestrator is gone. A full
+    /// queue drops the early final as it drops a partial: the core then just waits for the end.
+    fn decode_early_final(&mut self) -> bool {
         let Some(current) = self.utterance.as_mut() else {
-            return;
+            return true;
         };
         current.quiet = true;
-        match self.stt.partial() {
-            Ok(text) => current.early_final = Some(text.unwrap_or_default()),
+        let text = match self.stt.partial() {
+            Ok(text) => text.unwrap_or_default(),
             Err(error) => {
                 self.counters.decode_errors.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(%error, "early final transcript failed");
+                return true;
             }
+        };
+        current.early_final = Some(text.clone());
+        if text.trim().is_empty() {
+            return true;
+        }
+        match self.events.try_send(Input::EarlyFinal { text }) {
+            Ok(()) => {
+                current.early_sent = true;
+                true
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.counters
+                    .partials_dropped
+                    .fetch_add(1, Ordering::Relaxed);
+                true
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     }
 

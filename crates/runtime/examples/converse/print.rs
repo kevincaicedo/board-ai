@@ -175,6 +175,7 @@ impl Printer {
             | Milestone::FinalTranscript
             | Milestone::TalkerRequested
             | Milestone::OnsetDuck
+            | Milestone::SpeculativeRequest
             | Milestone::BargeInDuck => None,
         };
         if let Some(slot) = slot
@@ -405,6 +406,8 @@ impl StoreSink for Printer {
             }
             Input::VoiceOnset
             | Input::VoiceStart
+            | Input::EarlyFinal { .. }
+            | Input::VoiceResumed
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }
             | Input::ClauseReady { .. }

@@ -110,6 +110,31 @@ fn next(events: &mut mpsc::Receiver<Input>) -> Input {
     }
 }
 
+/// Inputs up to the final transcript. The detector's (`VoiceEnd`) and speech-to-text's
+/// (transcripts, `EarlyFinal`, `VoiceResumed`) come from two threads; each thread's own come in
+/// order, and `VoiceEnd` before the final it belongs to. Returns `(VoiceEnd seen before the final,
+/// speech-to-text's inputs)`.
+fn until_final(events: &mut mpsc::Receiver<Input>) -> (bool, Vec<Input>) {
+    let mut ended = false;
+    let mut stt = Vec::new();
+    loop {
+        let input = next(events);
+        if matches!(input, Input::VoiceEnd { .. }) {
+            ended = true;
+            continue;
+        }
+        let is_final = matches!(input, Input::Transcript { is_final: true, .. });
+        stt.push(input);
+        if is_final {
+            return (ended, stt);
+        }
+    }
+}
+
+fn heard(frames: usize) -> String {
+    format!("heard {frames}")
+}
+
 /// The onset comes first, at the first loud window; `VoiceStart` once the speech has lasted.
 fn expect_start(events: &mut mpsc::Receiver<Input>) {
     assert_eq!(next(events), Input::VoiceOnset);
@@ -142,20 +167,16 @@ fn an_utterance_gives_start_end_and_a_final_with_its_preroll() {
     // 1.8 s in all: within the 2 s ring even if the VAD thread has not read any of it yet.
     writer.write(&audio(400, 0.0));
     expect_start(&mut events);
-    assert_eq!(
-        next(&mut events),
-        Input::VoiceEnd {
-            voiced_ms: 1_024,
-            silence_ms: 256,
-        }
-    );
-    let Input::Transcript { text, is_final } = next(&mut events) else {
-        panic!("a transcript")
-    };
-    assert!(is_final);
+    let (ended, stt) = until_final(&mut events);
+    assert!(ended, "VoiceEnd before the final");
     // Decoded early, after 96 ms of quiet: 300 ms of pre-roll, the speech, three quiet windows.
-    let expected = (300 + 1_024 + 96) * FRAMES_PER_MS;
-    assert_eq!(text, format!("heard {expected}"));
+    // The core hears it at once (D-262), then as the final.
+    let early = heard((300 + 1_024 + 96) * FRAMES_PER_MS);
+    let final_text = Input::Transcript {
+        text: early.clone(),
+        is_final: true,
+    };
+    assert_eq!(stt, vec![Input::EarlyFinal { text: early }, final_text]);
     speech.shutdown();
 }
 
@@ -169,21 +190,24 @@ fn speaking_again_after_a_pause_discards_the_early_final() {
     writer.write(&audio(512, 0.5));
     writer.write(&audio(320, 0.0));
     expect_start(&mut events);
+    let (ended, stt) = until_final(&mut events);
+    assert!(ended, "VoiceEnd before the final");
+    // The first early final (after 300 + 512 + 96 ms) was thrown away when speech resumed, and
+    // the core told so; the one taken in the last pause covers both phrases.
+    let first = heard((300 + 512 + 96) * FRAMES_PER_MS);
+    let last = heard((300 + 512 + 160 + 512 + 96) * FRAMES_PER_MS);
     assert_eq!(
-        next(&mut events),
-        Input::VoiceEnd {
-            voiced_ms: 1_184,
-            silence_ms: 256,
-        }
+        stt,
+        vec![
+            Input::EarlyFinal { text: first },
+            Input::VoiceResumed,
+            Input::EarlyFinal { text: last.clone() },
+            Input::Transcript {
+                text: last,
+                is_final: true
+            },
+        ]
     );
-    let Input::Transcript { text, is_final } = next(&mut events) else {
-        panic!("a transcript")
-    };
-    assert!(is_final);
-    // The first early final (after 300 + 512 + 96 ms) was thrown away when speech resumed; the
-    // one taken in the last pause covers both phrases.
-    let expected = (300 + 512 + 160 + 512 + 96) * FRAMES_PER_MS;
-    assert_eq!(text, format!("heard {expected}"));
     speech.shutdown();
 }
 
@@ -198,6 +222,10 @@ fn partials_arrive_while_you_speak() {
         let input = next(&mut events);
         if matches!(input, Input::VoiceEnd { .. }) {
             break;
+        }
+        // In real time it comes before the end, once the speaker has been quiet.
+        if matches!(input, Input::EarlyFinal { .. }) {
+            continue;
         }
         let Input::Transcript {
             text,
@@ -271,7 +299,8 @@ fn muting_drops_the_utterance_unheard() {
     writer.write(&audio(400, 0.5));
     writer.write(&audio(400, 0.0));
     expect_start(&mut events);
-    assert!(matches!(next(&mut events), Input::VoiceEnd { .. }));
+    let (ended, _) = until_final(&mut events);
+    assert!(ended);
     speech.shutdown();
 }
 

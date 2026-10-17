@@ -14,7 +14,7 @@ use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::{OrbState, UiBatch, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
-use boardai_core::{CoreConfig, MicMode, RepoReads};
+use boardai_core::{CoreConfig, MicMode, RepoReads, RequestStart};
 use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, stream};
 
@@ -375,6 +375,7 @@ fn start_configured(
             session_context: None,
             suggestion: None,
             repo_reads: RepoReads::NotOffered,
+            request_start: RequestStart::AtTurnEnd,
         },
         clock: TokioClock::start(),
         talker: Arc::clone(&talker) as Arc<dyn LlmProvider>,
@@ -424,6 +425,7 @@ async fn close(harness: Harness) -> (SessionStats, Arc<Recorder>, Arc<ScriptedTa
 }
 
 mod documents;
+mod early_start;
 mod flow;
 mod lifecycle;
 mod live;

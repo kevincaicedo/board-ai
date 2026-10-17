@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use boardai_core::history::{Conversation, Message, UserPart};
 use boardai_core::time::SessionTime;
-use boardai_core::{CoreConfig, MicMode, RepoReads};
+use boardai_core::{CoreConfig, MicMode, RepoReads, RequestStart};
 use boardai_runtime::audio::{
     AudioConfig, AudioIo, ClipPlayed, FileMic, MIC_RING_FRAMES, NullOutput, VOICE_RING_FRAMES,
     VoiceOutput, mic_ring, voice_ring,
@@ -23,7 +23,7 @@ use boardai_runtime::llm::{ChatEvent, Effort, LlmProvider};
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
     Cue, LiveListener, LiveVoice, Observed, Progress, Script, SessionChannels, SessionParts,
-    SessionStats, StoreSink, talker_from_settings, wait_for_answer,
+    SessionStats, StoreSink, request_start, talker_from_settings, wait_for_answer,
 };
 use boardai_runtime::settings::{
     LlmKind, LlmSettings, MemorySecretStore, Secret, SecretName, TtsKind, TtsSettings,
@@ -55,6 +55,7 @@ struct Prepared {
     stt: WhisperStt,
     voice: ChosenVoice,
     talker: Arc<dyn LlmProvider>,
+    request_start: RequestStart,
 }
 
 async fn prepare(args: &Args) -> Result<Prepared, String> {
@@ -90,12 +91,18 @@ async fn prepare(args: &Args) -> Result<Prepared, String> {
         }
     );
     warm_up(&talker).await;
+    // `--no-early-start` is the setting's `early_start = false`.
+    let request_start = request_start(&settings);
+    if request_start == RequestStart::OnEarlyFinal {
+        println!("e2e: requests start on a finished early final (D-262)");
+    }
     Ok(Prepared {
         clips,
         vad,
         stt,
         voice,
         talker,
+        request_start,
     })
 }
 
@@ -124,10 +131,11 @@ pub async fn run(args: &Args) -> Result<bool, String> {
     let (store, mut progress) = Observed::new(Arc::clone(&recorder));
     let ui_log = Arc::new(UiLog::create(&out.join("events.jsonl"))?);
     let clock = TokioClock::start();
-    let config = core_config(args.model.as_deref().unwrap_or(match args.provider {
+    let model = args.model.as_deref().unwrap_or(match args.provider {
         Provider::Ollama => OLLAMA_DEFAULT_MODEL,
         Provider::OpenRouter => TALKER_PRESET.model,
-    }));
+    });
+    let config = core_config(model, prepared.request_start);
     let parts = SessionParts {
         core: config.clone(),
         clock,
@@ -273,7 +281,7 @@ fn tts_settings(voice: Voice) -> TtsSettings {
     }
 }
 
-fn core_config(model: &str) -> CoreConfig {
+fn core_config(model: &str, request_start: RequestStart) -> CoreConfig {
     CoreConfig {
         talker_name: model.to_owned(),
         mic: MicMode::OpenMic,
@@ -281,6 +289,7 @@ fn core_config(model: &str) -> CoreConfig {
         suggestion: None,
         // The e2e opens no repo (`RepoTools::default()`).
         repo_reads: RepoReads::NotOffered,
+        request_start,
     }
 }
 
@@ -300,6 +309,7 @@ fn talker(args: &Args) -> Result<(Arc<dyn LlmProvider>, LlmSettings), String> {
             base_url: Some(OLLAMA_BASE_URL.to_owned()),
             secret: None,
             route: Vec::new(),
+            early_start: args.early_start,
         },
         Provider::OpenRouter => {
             let model = args
@@ -331,6 +341,7 @@ fn talker(args: &Args) -> Result<(Arc<dyn LlmProvider>, LlmSettings), String> {
                 base_url: Some(OPENROUTER_BASE_URL.to_owned()),
                 secret: Some(name),
                 route,
+                early_start: args.early_start,
             }
         }
     };

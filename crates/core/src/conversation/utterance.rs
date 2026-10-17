@@ -232,11 +232,14 @@ mod tests {
     /// and a trailing-off mark or a continuation word earns the grace.
     #[test]
     fn a_finished_final_ends_the_turn_soonest() {
-        let cases: [(&str, bool, u64); 6] = [
+        let cases: [(&str, bool, u64); 8] = [
             ("Why Redis first?", true, END_OF_TURN_FINISHED_SILENCE_MS),
             ("Okay, go on.", true, END_OF_TURN_FINISHED_SILENCE_MS),
             ("How does a request get?", false, END_OF_TURN_SILENCE_MS),
-            ("OK go on", true, END_OF_TURN_SILENCE_MS),
+            ("show me the code", true, END_OF_TURN_SILENCE_MS),
+            // A whole reply needs no mark (D-261), but only a final can say so.
+            ("OK go on", true, END_OF_TURN_FINISHED_SILENCE_MS),
+            ("OK go on", false, END_OF_TURN_SILENCE_MS),
             ("So the leader...", true, END_OF_TURN_GRACE_MS),
             ("So the leader and the.", true, END_OF_TURN_GRACE_MS),
         ];

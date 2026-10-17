@@ -132,6 +132,8 @@ async fn deliver(link: &SpeechOutLink, report: Input) -> Result<(), SessionClose
         | Input::VoiceStart
         | Input::VoiceEnd { .. }
         | Input::Transcript { .. }
+        | Input::EarlyFinal { .. }
+        | Input::VoiceResumed
         | Input::TalkerDelta { .. }
         | Input::TalkerToolCall { .. }
         | Input::TalkerDone { .. }

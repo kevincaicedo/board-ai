@@ -9,7 +9,7 @@ use std::time::Duration;
 use boardai_core::effect::{Gain, Milestone};
 use boardai_core::input::{Input, TimingSource, WordTiming};
 use boardai_core::protocol::{MicAction, UiCommand, UiEvent};
-use boardai_core::{CoreConfig, MicMode, RepoReads};
+use boardai_core::{CoreConfig, MicMode, RepoReads, RequestStart};
 use futures_util::stream;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -108,6 +108,7 @@ fn parts(
             session_context: None,
             suggestion: None,
             repo_reads: RepoReads::NotOffered,
+            request_start: RequestStart::AtTurnEnd,
         },
         clock: TokioClock::start(),
         talker: Arc::clone(talker) as Arc<dyn LlmProvider>,

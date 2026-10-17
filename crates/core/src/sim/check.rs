@@ -6,6 +6,7 @@ mod drawing;
 mod history;
 mod nudges;
 mod sources;
+mod speculation;
 mod staged;
 mod tasks;
 
@@ -14,7 +15,7 @@ pub use history::history_shape;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::conversation::{ConversationState, cues};
-use crate::effect::{Effect, ForgetScope, Gain};
+use crate::effect::{Effect, ForgetScope, Gain, LogRecord, Milestone};
 use crate::engine::Core;
 use crate::engine::text::change_question;
 use crate::geometry::Point;
@@ -74,6 +75,8 @@ pub struct Checker {
     read: sources::ReadLines,
     /// Requests that asked the talker again this turn (law 5).
     nudges: nudges::Nudges,
+    /// A request started on an early final shows nothing until it is confirmed (D-262).
+    speculation: speculation::Speculation,
 }
 
 impl Checker {
@@ -152,6 +155,8 @@ impl Checker {
             Input::VoiceOnset => self.last_onset = Some(now),
             Input::Harness { task, event } => self.tasks.reported(*task, event),
             Input::TalkerToolCall { .. }
+            | Input::EarlyFinal { .. }
+            | Input::VoiceResumed
             | Input::VoiceStart
             | Input::VoiceEnd { .. }
             | Input::Transcript { .. }
@@ -178,6 +183,8 @@ impl Checker {
         speech: &FakeSpeech,
     ) {
         self.read.on_effect(effect);
+        self.speculation
+            .on_effect(now, effect, &mut self.violations);
         match effect {
             // I5: one talker stream at a time; CancelTalk precedes a new Talk.
             Effect::Talk { request } => {
@@ -187,8 +194,12 @@ impl Checker {
                 self.nudges.on_talk(now, request, &mut self.violations);
                 self.yours.on_talk(now, &mut self.violations);
                 self.talk_in_flight = true;
-                self.user_finals.clear();
             }
+            // The user's words went to the talker: marked with the turn's own request, which a
+            // request started on an early final precedes (D-262).
+            Effect::Log(LogRecord::Milestone {
+                milestone: Milestone::TalkerRequested,
+            }) => self.user_finals.clear(),
             Effect::CancelTalk => self.talk_in_flight = false,
             // The duck ends (gain back to full) just before the backchannel's acknowledgement,
             // so only a new duck moves the mark; an interruption clears it.
@@ -566,6 +577,7 @@ impl Checker {
             self.violate(now, problem);
         }
         self.history = messages.to_vec();
+        self.speculation.after_step(now, core, &mut self.violations);
         // I4: pushes and pops balance with the open detours.
         let open = self.layer_pushes.saturating_sub(self.layer_pops);
         if open != core.thread().depth() || core.thread().depth() > DETOUR_DEPTH_MAX {
@@ -598,10 +610,6 @@ impl Checker {
     }
 }
 
-/// What the providers require of the history's shape, which an append-only history can never
-/// repair (D-036, review findings 1 and 11): it starts with the user, every `tool_use` is answered
-/// in the very next message, and every tool result answers a call of the message right before.
-#[must_use]
 fn op_id(op: &DrawOp) -> OpId {
     match op {
         DrawOp::Node { op, .. }

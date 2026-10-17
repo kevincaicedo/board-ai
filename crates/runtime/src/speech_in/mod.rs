@@ -1,6 +1,6 @@
 //! Speech in (LLD §3.1, §3.4): voice activity detection and speech-to-text on the mic ring,
-//! producing `VoiceOnset`, `VoiceStart`, `VoiceEnd { voiced_ms, silence_ms }` and
-//! `Transcript { text, is_final }`.
+//! producing `VoiceOnset`, `VoiceStart`, `VoiceEnd { voiced_ms, silence_ms }`,
+//! `Transcript { text, is_final }`, and `EarlyFinal { text }` and `VoiceResumed` around a pause.
 //!
 //! Two dedicated threads, never async tasks, since both run inference:
 //!

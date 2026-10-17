@@ -19,7 +19,7 @@ use boardai_core::memory::{MemoryAction, MemoryKind};
 use boardai_core::protocol::{Speaker, UiBatch, UiEvent};
 use boardai_core::tools::{ToolCall, ToolInvocation};
 use boardai_core::views::View;
-use boardai_core::{CoreConfig, MicMode, RepoReads};
+use boardai_core::{CoreConfig, MicMode, RepoReads, RequestStart};
 use boardai_runtime::bridge::{UiSink, UiSinkClosed};
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::TokioClock;
@@ -151,6 +151,7 @@ fn start_session(store: &Store, test: &TestStore, talker: Arc<Replies>) -> Runni
             session_context: None,
             suggestion: None,
             repo_reads: RepoReads::NotOffered,
+            request_start: RequestStart::AtTurnEnd,
         },
         clock: TokioClock::start(),
         talker,

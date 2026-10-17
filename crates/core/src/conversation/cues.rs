@@ -425,11 +425,24 @@ pub fn completeness(text: &str) -> Completeness {
         return Completeness::Unfinished;
     }
     let closed = text.trim_end().trim_end_matches(TRANSCRIPT_CLOSERS);
-    if closed.ends_with(SENTENCE_END_MARKS) {
+    if closed.ends_with(SENTENCE_END_MARKS) || is_whole_reply(text) {
         Completeness::Finished
     } else {
         Completeness::Unclear
     }
+}
+
+/// Words that are a whole reply by what they are, closing mark or not: an acknowledgment or a
+/// yes ("mm-hm", "yeah, okay"), going on ("Okay, go on") or going back ("go back", "back
+/// out"). Whisper often leaves the mark off a short phrase (`just e2e` heard "Okay, go on." as
+/// "Okay, go on"), which made such a turn wait the unclear 600 ms. The table matches the whole
+/// utterance, so "go on with the cache" stays unclear. Controls that can't be taken back
+/// (ending the session, forgetting) are left out: they keep the longer wait.
+fn is_whole_reply(text: &str) -> bool {
+    !words(text).is_empty()
+        && (is_backchannel(text)
+            || super::stage_cues::main_board_cue(text).is_some()
+            || super::detail_cues::is_back_out(text))
 }
 
 /// The words end with a question mark, give or take closing quotes ("…how it evicts?").
@@ -542,6 +555,49 @@ mod tests {
         }
         assert!(!ends_unfinished("how does the leader get elected?"));
         assert!(!ends_unfinished(""));
+    }
+
+    /// A whole reply sounds finished without its closing mark (D-261): every acknowledgment,
+    /// going on, going back and backing out, as Whisper writes them bare. Near misses and the
+    /// controls that can't be taken back keep the unclear wait.
+    #[test]
+    fn a_whole_reply_sounds_finished_without_its_mark() {
+        use super::super::detail_cues::BACK_OUT_PHRASES;
+        use super::super::stage_cues::{
+            BACK_TO_MAIN_PHRASES, CONTINUE_PHRASES, END_SESSION_PHRASES,
+        };
+        use super::{Completeness, completeness};
+        let tables: [&[&str]; 4] = [
+            BACKCHANNELS,
+            CONTINUE_PHRASES,
+            BACK_TO_MAIN_PHRASES,
+            BACK_OUT_PHRASES,
+        ];
+        for phrase in tables.into_iter().flatten() {
+            // A continuation word still wins ("back to where we were"), so "go on and" waits.
+            let whole = if ends_unfinished(phrase) {
+                Completeness::Unfinished
+            } else {
+                Completeness::Finished
+            };
+            assert_eq!(completeness(phrase), whole, "{phrase}");
+            let noisy = format!("Okay, {}", phrase.to_uppercase());
+            assert_eq!(completeness(&noisy), whole, "{noisy}");
+            let more = format!("{phrase} with the cache");
+            assert_eq!(completeness(&more), Completeness::Unclear, "{more}");
+            let unfinished = format!("{phrase} and");
+            assert_eq!(
+                completeness(&unfinished),
+                Completeness::Unfinished,
+                "{unfinished}"
+            );
+        }
+        for phrase in END_SESSION_PHRASES.iter().chain(FORGET_SESSION_PHRASES) {
+            assert_eq!(completeness(phrase), Completeness::Unclear, "{phrase}");
+        }
+        for unclear in ["", "  ", "show me the code", "how does it work", "redis"] {
+            assert_eq!(completeness(unclear), Completeness::Unclear, "{unclear:?}");
+        }
     }
 
     #[test]

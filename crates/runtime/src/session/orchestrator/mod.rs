@@ -703,6 +703,9 @@ fn opens_a_session(input: &Input, muted: bool) -> bool {
             | UiCommand::OpenSource { .. },
         )
         | Input::VoiceEnd { .. }
+        // Only after the `VoiceStart` that opened one.
+        | Input::EarlyFinal { .. }
+        | Input::VoiceResumed
         | Input::TalkerDelta { .. }
         | Input::TalkerToolCall { .. }
         | Input::TalkerDone { .. }
