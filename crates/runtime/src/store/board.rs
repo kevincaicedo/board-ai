@@ -1,7 +1,7 @@
 //! The last board state of a session, rebuilt from its log for `open_session`: the layers still
 //! open at the end, each with its ops in order and its last camera frame (the core frames each
 //! layer on its own). Detours closed before the end are gone from the board, so their ops are
-//! left out.
+//! left out, and so are the user's own shapes (artboard 13), which a past board doesn't show yet.
 
 use boardai_core::ids::LayerId;
 use boardai_core::protocol::UiEvent;
@@ -17,6 +17,17 @@ struct Layer {
     camera: Option<UiEvent>,
 }
 
+impl Layer {
+    fn opened(id: LayerId, push: Option<UiEvent>) -> Self {
+        Self {
+            id,
+            push,
+            ops: Vec::new(),
+            camera: None,
+        }
+    }
+}
+
 /// Board events rebuilt from log lines, and how many were left out at the bound.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BoardState {
@@ -27,12 +38,7 @@ pub(crate) struct BoardState {
 /// Folds a log into its final board. Memory is bounded: ops past `SESSION_BOARD_EVENTS_MAX`
 /// are counted, not kept.
 pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
-    let mut layers = vec![Layer {
-        id: LayerId::MAIN,
-        push: None,
-        ops: Vec::new(),
-        camera: None,
-    }];
+    let mut layers = vec![Layer::opened(LayerId::MAIN, None)];
     let mut kept = 0_usize;
     let mut skipped = 0_u64;
     for line in lines {
@@ -40,12 +46,7 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
             continue;
         };
         match event {
-            UiEvent::LayerPush { layer, .. } => layers.push(Layer {
-                id: layer,
-                push: Some(event),
-                ops: Vec::new(),
-                camera: None,
-            }),
+            UiEvent::LayerPush { layer, .. } => layers.push(Layer::opened(layer, Some(event))),
             UiEvent::LayerPop { layer } => {
                 if layer != LayerId::MAIN
                     && let Some(position) = layers.iter().rposition(|open| open.id == layer)
@@ -86,7 +87,11 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
             | UiEvent::OpenSettings
-            | UiEvent::SessionEnd => {}
+            | UiEvent::SessionEnd
+            | UiEvent::DrawMode { .. }
+            | UiEvent::UserShape { .. }
+            | UiEvent::UserShapeRemove { .. }
+            | UiEvent::LabelHint { .. } => {}
         }
     }
     let mut events = Vec::new();

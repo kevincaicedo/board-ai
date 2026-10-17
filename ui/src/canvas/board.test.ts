@@ -334,6 +334,32 @@ test("the camera fits its frame in the board's area and eases between frames", (
   assert.equal(depthOfField({ ...camera, focus: null, previousFocus: "redis" }, 1420, 420), 0);
 });
 
+test("a first frame over shapes you drew eases from where you drew them; BoardAI's jumps", () => {
+  const out = { scale: 1, x: 0, y: 0 };
+  const area = { x: 0, y: 0, w: 1440, h: 900, maxScale: 1 };
+  const first = {
+    frame: { x: 100, y: 100, w: 720, h: 450 },
+    previous: null,
+    at: 1000,
+    focus: null,
+    previousFocus: null,
+    focusAt: 1000,
+  };
+  cameraAt({ ...first, fromIdentity: true }, 1000, area, 900, out);
+  assert.deepEqual(out, { scale: 1, x: 0, y: 0 }, "still where you drew");
+  cameraAt({ ...first, fromIdentity: true }, 1900, area, 900, out);
+  assert.deepEqual(out, { scale: 1, x: 260, y: 125 }, "then framed");
+  cameraAt(first, 1000, area, 900, out);
+  assert.deepEqual(out, { scale: 1, x: 260, y: 125 }, "an empty layer's first frame jumps");
+  const model = new BoardModel(tokens);
+  const lead = { nibAtRest: () => "out" as const, flightLead: () => ({ waitMs: 0, flightMs: 0 }) };
+  const camera = { type: "Camera" as const, layer: 0, frame: first.frame, focus: null };
+  model.apply(camera, 1000, lead, true);
+  assert.equal(model.main.camera.fromIdentity, true);
+  model.apply(camera, 2000, lead, true);
+  assert.equal(model.main.camera.fromIdentity, false, "only the first frame");
+});
+
 test("the stage area clears the thread bar and captions; small boards keep natural size", () => {
   const area = stageArea({ width: 1440, height: 900 }, tokens, emptyArea());
   assert.deepEqual(area, {

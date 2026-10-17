@@ -240,7 +240,7 @@ fn assert_apart(board: &Builder) {
         .iter()
         .filter(|element| match &element.kind {
             ElementKind::Node { .. } | ElementKind::Cells { .. } => true,
-            ElementKind::Participant { .. } => true,
+            ElementKind::Participant { .. } | ElementKind::User { .. } => true,
             ElementKind::Edge { .. }
             | ElementKind::Annotation { .. }
             | ElementKind::Trace

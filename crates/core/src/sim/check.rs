@@ -1,6 +1,8 @@
 //! Invariants checked on every simulator step (LLD §2.9). A violation is recorded with the time
 //! it happened; scenarios and the fuzzer assert there are none.
 
+mod drawing;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::conversation::{ConversationState, cues};
@@ -54,6 +56,8 @@ pub struct Checker {
     frames: BTreeMap<LayerId, Rect>,
     /// The latest voice onset: the one thing that may keep the voice ducked while it speaks.
     last_onset: Option<SessionTime>,
+    /// Drawing together: I14 and I6 for the user's shapes.
+    yours: drawing::Yours,
 }
 
 impl Checker {
@@ -161,6 +165,7 @@ impl Checker {
                 if self.talk_in_flight {
                     self.violate(now, "I5: Talk while another stream is in flight".into());
                 }
+                self.yours.on_talk(now, &mut self.violations);
                 self.talk_in_flight = true;
                 self.user_finals.clear();
             }
@@ -305,6 +310,8 @@ impl Checker {
     }
 
     fn on_ui(&mut self, now: SessionTime, event: &UiEvent, core: &Core, speech: &FakeSpeech) {
+        self.yours
+            .on_ui(now, event, self.talk_in_flight, &mut self.violations);
         match event {
             UiEvent::OpStart { layer, op, .. } => {
                 self.check_anchor(now, op, core, speech);
@@ -336,7 +343,11 @@ impl Checker {
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
-            | UiEvent::OpenSettings => {}
+            | UiEvent::OpenSettings
+            | UiEvent::DrawMode { .. }
+            | UiEvent::UserShape { .. }
+            | UiEvent::UserShapeRemove { .. }
+            | UiEvent::LabelHint { .. } => {}
         }
     }
 

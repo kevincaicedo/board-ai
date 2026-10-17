@@ -3,6 +3,7 @@
 // split moves letter by letter. Nothing is allocated for strokes that are already done, and an
 // attribute is written only when its value changes.
 
+import type { YoursView } from "../draw/inkView.ts";
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
@@ -49,6 +50,8 @@ export interface BoardViewOptions {
   readonly card: Viewport;
   readonly reducedMotion: boolean;
   readonly onPointer: (target: PointerTarget | null) => void;
+  /** Your shapes (13 · You draw), drawn into each layer above BoardAI's handwriting. */
+  readonly yours?: YoursView;
 }
 
 function svg<K extends keyof SVGElementTagNameMap>(
@@ -195,6 +198,7 @@ export class BoardView {
     this.#syncedVersion = -1;
     this.#lastPush = "";
     this.#hovered = null;
+    this.#options.yours?.reset();
   }
 
   /**
@@ -211,6 +215,7 @@ export class BoardView {
       this.#sync();
       this.#syncedVersion = this.#model.version;
     }
+    this.#options.yours?.sync();
     for (const view of this.#layers.values()) {
       const layer = this.#model.layers.get(view.id);
       if (layer === undefined) {
@@ -235,6 +240,7 @@ export class BoardView {
       if (!this.#model.layers.has(id)) {
         view.svg.remove();
         this.#layers.delete(id);
+        this.#options.yours?.detach(id);
       }
     }
     for (const layer of this.#model.layers.values()) {
@@ -285,6 +291,7 @@ export class BoardView {
     hover.setAttribute("rx", "20");
     const strokes = svg("g", camera);
     const labels = svg("g", camera);
+    this.#options.yours?.attach(id, svg("g", camera));
     const host = this.#hosts.get(id) ?? null;
     if (host !== null) {
       if (id === 0) {
@@ -593,6 +600,10 @@ export class BoardView {
           : easeOut(ramp(at, span.closeAt, span.closeAt + tokens.durationSceneMs));
       amount = rise * (1 - fall);
       break;
+    }
+    // While you draw, the main board you draw on stays sharp (13 · You draw).
+    if (this.#options.yours?.lifted === true) {
+      amount = 0;
     }
     const rounded = amount <= 0.001 ? 0 : Math.round(amount * 1000) / 1000;
     const ended = this.#model.endedAmount(at, tokens.durationSceneMs);

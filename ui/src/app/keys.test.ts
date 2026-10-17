@@ -74,3 +74,48 @@ test("other keys while holding Space don't end the hold; Space's key-up does", (
   assert.deepEqual(talk.up("Space"), { type: "Mic", action: "TalkUp" });
   assert.equal(talk.up("Space"), null, "a key-up without a hold sends nothing");
 });
+
+const drawingNow = { ...live, drawing: true } as const;
+
+test("D starts drawing, muted too (you draw silently); not in a replay or already drawing", () => {
+  assert.deepEqual(keyDownCommand(press("KeyD"), live), {
+    type: "Draw",
+    action: { kind: "Start" },
+  });
+  assert.deepEqual(keyDownCommand(press("KeyD"), { ...live, muted: true }), {
+    type: "Draw",
+    action: { kind: "Start" },
+  });
+  for (const context of [{ ...live, replay: true }, drawingNow]) {
+    assert.equal(keyDownCommand(press("KeyD"), context), null, JSON.stringify(context));
+  }
+  assert.equal(keyDownCommand(press("KeyD", { editable: true }), live), null);
+  assert.equal(keyDownCommand(press("KeyD", { repeat: true }), live), null);
+});
+
+test("while you draw, Enter is Done, Esc leaves drawing and ⌘Z undoes", () => {
+  assert.deepEqual(keyDownCommand(press("Enter"), drawingNow), {
+    type: "Draw",
+    action: { kind: "Done" },
+  });
+  assert.equal(keyDownCommand(press("Enter"), live), null, "Enter means nothing otherwise");
+  assert.deepEqual(keyDownCommand(press("Escape"), drawingNow), {
+    type: "Draw",
+    action: { kind: "Cancel" },
+  });
+  // A view open over the board still closes first.
+  assert.deepEqual(keyDownCommand(press("Escape"), { ...drawingNow, escape: "close-view" }), {
+    type: "CloseView",
+  });
+  const undo = press("KeyZ", { modified: true, shortcut: true });
+  assert.deepEqual(keyDownCommand(undo, drawingNow), { type: "Draw", action: { kind: "Undo" } });
+  assert.equal(keyDownCommand(undo, live), null, "⌘Z is not ours outside drawing");
+  assert.equal(keyDownCommand(press("KeyZ", { modified: true }), drawingNow), null, "⌥Z");
+  assert.equal(keyDownCommand(press("KeyZ"), drawingNow), null, "Z alone");
+  assert.equal(keyDownCommand({ ...undo, editable: true }, drawingNow), null, "typing");
+  // Space still talks while you draw: your labels.
+  assert.deepEqual(keyDownCommand(press("Space"), drawingNow), {
+    type: "Mic",
+    action: "TalkDown",
+  });
+});

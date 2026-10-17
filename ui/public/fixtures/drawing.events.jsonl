@@ -1,0 +1,150 @@
+{"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
+{"v":1,"t":600,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":60}}
+{"v":1,"t":600,"k":"ui","event":{"type":"Caption","who":"User","text":"How","is_final":false}}
+{"v":1,"t":799,"k":"ui","event":{"type":"Caption","who":"User","text":"How would","is_final":false}}
+{"v":1,"t":1064,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you","is_final":false}}
+{"v":1,"t":1263,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put","is_final":false}}
+{"v":1,"t":1462,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a","is_final":false}}
+{"v":1,"t":1595,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache","is_final":false}}
+{"v":1,"t":1860,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in","is_final":false}}
+{"v":1,"t":2026,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in front","is_final":false}}
+{"v":1,"t":2291,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in front of","is_final":false}}
+{"v":1,"t":2457,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in front of our","is_final":false}}
+{"v":1,"t":2656,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in front of our API?","is_final":false}}
+{"v":1,"t":3115,"k":"ui","event":{"type":"Caption","who":"User","text":"How would you put a cache in front of our API?","is_final":true}}
+{"v":1,"t":3415,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":4015,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":4015,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A","is_final":false}}
+{"v":1,"t":4148,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache","is_final":false}}
+{"v":1,"t":4413,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually","is_final":false}}
+{"v":1,"t":4744,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits","is_final":false}}
+{"v":1,"t":4976,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside","is_final":false}}
+{"v":1,"t":5274,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside the","is_final":false}}
+{"v":1,"t":5473,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside the API,","is_final":false}}
+{"v":1,"t":5822,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside the API, so","is_final":false}}
+{"v":1,"t":5988,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside the API, so it—","is_final":false}}
+{"v":1,"t":6078,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":60}}
+{"v":1,"t":6078,"k":"ui","event":{"type":"Caption","who":"User","text":"Let","is_final":false}}
+{"v":1,"t":6138,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"A cache usually sits beside the API, so it—","is_final":true}}
+{"v":1,"t":6277,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me","is_final":false}}
+{"v":1,"t":6443,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me draw","is_final":false}}
+{"v":1,"t":6675,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me draw what","is_final":false}}
+{"v":1,"t":6907,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me draw what I","is_final":false}}
+{"v":1,"t":7040,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me draw what I mean.","is_final":false}}
+{"v":1,"t":7532,"k":"ui","event":{"type":"Caption","who":"User","text":"Let me draw what I mean.","is_final":true}}
+{"v":1,"t":7782,"k":"ui","event":{"type":"DrawMode","drawing":true}}
+{"v":1,"t":7782,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":8232,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":8232,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go","is_final":false}}
+{"v":1,"t":8398,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead.","is_final":false}}
+{"v":1,"t":8923,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say","is_final":false}}
+{"v":1,"t":9122,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what","is_final":false}}
+{"v":1,"t":9354,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each","is_final":false}}
+{"v":1,"t":9586,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part","is_final":false}}
+{"v":1,"t":9818,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is","is_final":false}}
+{"v":1,"t":9984,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as","is_final":false}}
+{"v":1,"t":10150,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you","is_final":false}}
+{"v":1,"t":10349,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw,","is_final":false}}
+{"v":1,"t":10731,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and","is_final":false}}
+{"v":1,"t":10930,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and “done”","is_final":false}}
+{"v":1,"t":11162,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and “done” when","is_final":false}}
+{"v":1,"t":11394,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and “done” when you're","is_final":false}}
+{"v":1,"t":11659,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and “done” when you're ready.","is_final":false}}
+{"v":1,"t":12184,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Go ahead. Say what each part is as you draw, and “done” when you're ready.","is_final":true}}
+{"v":1,"t":12384,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
+{"v":1,"t":12584,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u1","kind":{"kind":"Box","rect":{"x":262,"y":326,"w":120,"h":72}},"label":null,"note":null}}}
+{"v":1,"t":13484,"k":"ui","event":{"type":"Caption","who":"User","text":"This","is_final":false}}
+{"v":1,"t":13484,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u1","words":"This"}}}
+{"v":1,"t":13716,"k":"ui","event":{"type":"Caption","who":"User","text":"This is","is_final":false}}
+{"v":1,"t":13716,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u1","words":"This is"}}}
+{"v":1,"t":13882,"k":"ui","event":{"type":"Caption","who":"User","text":"This is the","is_final":false}}
+{"v":1,"t":13882,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u1","words":"This is the"}}}
+{"v":1,"t":14081,"k":"ui","event":{"type":"Caption","who":"User","text":"This is the client.","is_final":false}}
+{"v":1,"t":14081,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u1","words":"This is the client."}}}
+{"v":1,"t":14639,"k":"ui","event":{"type":"Caption","who":"User","text":"This is the client.","is_final":true}}
+{"v":1,"t":14889,"k":"ui","event":{"type":"LabelHint","hint":null}}
+{"v":1,"t":14889,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u1","kind":{"kind":"Box","rect":{"x":262,"y":326,"w":120,"h":72}},"label":"Client","note":null}}}
+{"v":1,"t":15539,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u2","kind":{"kind":"Arrow","start":{"x":382,"y":364},"end":{"x":522,"y":362},"from":"u1","to":null},"label":null,"note":null}}}
+{"v":1,"t":16539,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u3","kind":{"kind":"Box","rect":{"x":530,"y":318,"w":142,"h":88}},"label":null,"note":null}}}
+{"v":1,"t":16539,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u2","kind":{"kind":"Arrow","start":{"x":382,"y":364},"end":{"x":522,"y":362},"from":"u1","to":"u3"},"label":null,"note":null}}}
+{"v":1,"t":17239,"k":"ui","event":{"type":"Caption","who":"User","text":"Then","is_final":false}}
+{"v":1,"t":17239,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u3","words":"Then"}}}
+{"v":1,"t":17471,"k":"ui","event":{"type":"Caption","who":"User","text":"Then the","is_final":false}}
+{"v":1,"t":17471,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u3","words":"Then the"}}}
+{"v":1,"t":17670,"k":"ui","event":{"type":"Caption","who":"User","text":"Then the API.","is_final":false}}
+{"v":1,"t":17670,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u3","words":"Then the API."}}}
+{"v":1,"t":18129,"k":"ui","event":{"type":"Caption","who":"User","text":"Then the API.","is_final":true}}
+{"v":1,"t":18379,"k":"ui","event":{"type":"LabelHint","hint":null}}
+{"v":1,"t":18379,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u3","kind":{"kind":"Box","rect":{"x":530,"y":318,"w":142,"h":88}},"label":"API","note":null}}}
+{"v":1,"t":19029,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u4","kind":{"kind":"Arrow","start":{"x":672,"y":363},"end":{"x":842,"y":363},"from":"u3","to":null},"label":null,"note":null}}}
+{"v":1,"t":20329,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u5","kind":{"kind":"Ink","strokes":[[{"x":852,"y":326},{"x":854,"y":323},{"x":861,"y":321},{"x":871,"y":319},{"x":883,"y":318},{"x":896,"y":318},{"x":909,"y":318},{"x":922,"y":319},{"x":932,"y":320},{"x":939,"y":323},{"x":942,"y":326},{"x":943,"y":362},{"x":943,"y":398},{"x":940,"y":401},{"x":933,"y":404},{"x":923,"y":406},{"x":911,"y":407},{"x":898,"y":407},{"x":884,"y":407},{"x":872,"y":406},{"x":862,"y":404},{"x":855,"y":401},{"x":852,"y":398},{"x":852,"y":362},{"x":852,"y":327}]],"bounds":{"x":852,"y":318,"w":91,"h":89}},"label":null,"note":null}}}
+{"v":1,"t":20329,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u4","kind":{"kind":"Arrow","start":{"x":672,"y":363},"end":{"x":842,"y":363},"from":"u3","to":"u5"},"label":null,"note":null}}}
+{"v":1,"t":21129,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u5","kind":{"kind":"Ink","strokes":[[{"x":852,"y":326},{"x":854,"y":323},{"x":861,"y":321},{"x":871,"y":319},{"x":883,"y":318},{"x":896,"y":318},{"x":909,"y":318},{"x":922,"y":319},{"x":932,"y":320},{"x":939,"y":323},{"x":942,"y":326},{"x":943,"y":362},{"x":943,"y":398},{"x":940,"y":401},{"x":933,"y":404},{"x":923,"y":406},{"x":911,"y":407},{"x":898,"y":407},{"x":884,"y":407},{"x":872,"y":406},{"x":862,"y":404},{"x":855,"y":401},{"x":852,"y":398},{"x":852,"y":362},{"x":852,"y":327}],[{"x":852,"y":326},{"x":855,"y":329},{"x":861,"y":332},{"x":871,"y":334},{"x":884,"y":335},{"x":897,"y":335},{"x":910,"y":335},{"x":923,"y":334},{"x":933,"y":332},{"x":939,"y":329},{"x":942,"y":326}]],"bounds":{"x":852,"y":318,"w":91,"h":89}},"label":null,"note":null}}}
+{"v":1,"t":21929,"k":"ui","event":{"type":"Caption","who":"User","text":"And","is_final":false}}
+{"v":1,"t":21929,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"And"}}}
+{"v":1,"t":22128,"k":"ui","event":{"type":"Caption","who":"User","text":"And this","is_final":false}}
+{"v":1,"t":22128,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"And this"}}}
+{"v":1,"t":22360,"k":"ui","event":{"type":"Caption","who":"User","text":"And this is","is_final":false}}
+{"v":1,"t":22360,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"And this is"}}}
+{"v":1,"t":22526,"k":"ui","event":{"type":"Caption","who":"User","text":"And this is Postgres,","is_final":false}}
+{"v":1,"t":22526,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"And this is Postgres,"}}}
+{"v":1,"t":23040,"k":"ui","event":{"type":"Caption","who":"User","text":"And this is Postgres,","is_final":true}}
+{"v":1,"t":23290,"k":"ui","event":{"type":"LabelHint","hint":null}}
+{"v":1,"t":23290,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u5","kind":{"kind":"Ink","strokes":[[{"x":852,"y":326},{"x":854,"y":323},{"x":861,"y":321},{"x":871,"y":319},{"x":883,"y":318},{"x":896,"y":318},{"x":909,"y":318},{"x":922,"y":319},{"x":932,"y":320},{"x":939,"y":323},{"x":942,"y":326},{"x":943,"y":362},{"x":943,"y":398},{"x":940,"y":401},{"x":933,"y":404},{"x":923,"y":406},{"x":911,"y":407},{"x":898,"y":407},{"x":884,"y":407},{"x":872,"y":406},{"x":862,"y":404},{"x":855,"y":401},{"x":852,"y":398},{"x":852,"y":362},{"x":852,"y":327}],[{"x":852,"y":326},{"x":855,"y":329},{"x":861,"y":332},{"x":871,"y":334},{"x":884,"y":335},{"x":897,"y":335},{"x":910,"y":335},{"x":923,"y":334},{"x":933,"y":332},{"x":939,"y":329},{"x":942,"y":326}]],"bounds":{"x":852,"y":318,"w":91,"h":89}},"label":"Postgres","note":null}}}
+{"v":1,"t":23940,"k":"ui","event":{"type":"Caption","who":"User","text":"the","is_final":false}}
+{"v":1,"t":23940,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"the"}}}
+{"v":1,"t":24139,"k":"ui","event":{"type":"Caption","who":"User","text":"the source","is_final":false}}
+{"v":1,"t":24139,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"the source"}}}
+{"v":1,"t":24437,"k":"ui","event":{"type":"Caption","who":"User","text":"the source of","is_final":false}}
+{"v":1,"t":24437,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"the source of"}}}
+{"v":1,"t":24603,"k":"ui","event":{"type":"Caption","who":"User","text":"the source of truth.","is_final":false}}
+{"v":1,"t":24603,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u5","words":"the source of truth."}}}
+{"v":1,"t":25128,"k":"ui","event":{"type":"Caption","who":"User","text":"the source of truth.","is_final":true}}
+{"v":1,"t":25378,"k":"ui","event":{"type":"LabelHint","hint":null}}
+{"v":1,"t":25378,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u5","kind":{"kind":"Ink","strokes":[[{"x":852,"y":326},{"x":854,"y":323},{"x":861,"y":321},{"x":871,"y":319},{"x":883,"y":318},{"x":896,"y":318},{"x":909,"y":318},{"x":922,"y":319},{"x":932,"y":320},{"x":939,"y":323},{"x":942,"y":326},{"x":943,"y":362},{"x":943,"y":398},{"x":940,"y":401},{"x":933,"y":404},{"x":923,"y":406},{"x":911,"y":407},{"x":898,"y":407},{"x":884,"y":407},{"x":872,"y":406},{"x":862,"y":404},{"x":855,"y":401},{"x":852,"y":398},{"x":852,"y":362},{"x":852,"y":327}],[{"x":852,"y":326},{"x":855,"y":329},{"x":861,"y":332},{"x":871,"y":334},{"x":884,"y":335},{"x":897,"y":335},{"x":910,"y":335},{"x":923,"y":334},{"x":933,"y":332},{"x":939,"y":329},{"x":942,"y":326}]],"bounds":{"x":852,"y":318,"w":91,"h":89}},"label":"Postgres","note":"source of truth"}}}
+{"v":1,"t":26928,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u6","kind":{"kind":"Box","rect":{"x":548,"y":510,"w":116,"h":60}},"label":null,"note":null}}}
+{"v":1,"t":27828,"k":"ui","event":{"type":"Caption","who":"User","text":"And","is_final":false}}
+{"v":1,"t":27828,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And"}}}
+{"v":1,"t":28027,"k":"ui","event":{"type":"Caption","who":"User","text":"And this","is_final":false}}
+{"v":1,"t":28027,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And this"}}}
+{"v":1,"t":28259,"k":"ui","event":{"type":"Caption","who":"User","text":"And this one","is_final":false}}
+{"v":1,"t":28259,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And this one"}}}
+{"v":1,"t":28458,"k":"ui","event":{"type":"Caption","who":"User","text":"And this one is","is_final":false}}
+{"v":1,"t":28458,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And this one is"}}}
+{"v":1,"t":28624,"k":"ui","event":{"type":"Caption","who":"User","text":"And this one is the","is_final":false}}
+{"v":1,"t":28624,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And this one is the"}}}
+{"v":1,"t":28823,"k":"ui","event":{"type":"Caption","who":"User","text":"And this one is the cache.","is_final":false}}
+{"v":1,"t":28823,"k":"ui","event":{"type":"LabelHint","hint":{"target":"u6","words":"And this one is the cache."}}}
+{"v":1,"t":29348,"k":"ui","event":{"type":"Caption","who":"User","text":"And this one is the cache.","is_final":true}}
+{"v":1,"t":29598,"k":"ui","event":{"type":"LabelHint","hint":null}}
+{"v":1,"t":29598,"k":"ui","event":{"type":"UserShape","layer":0,"shape":{"id":"u6","kind":{"kind":"Box","rect":{"x":548,"y":510,"w":116,"h":60}},"label":"cache","note":null}}}
+{"v":1,"t":30948,"k":"ui","event":{"type":"Caption","who":"User","text":"Does","is_final":false}}
+{"v":1,"t":31180,"k":"ui","event":{"type":"Caption","who":"User","text":"Does this","is_final":false}}
+{"v":1,"t":31412,"k":"ui","event":{"type":"Caption","who":"User","text":"Does this make","is_final":false}}
+{"v":1,"t":31644,"k":"ui","event":{"type":"Caption","who":"User","text":"Does this make sense?","is_final":false}}
+{"v":1,"t":32169,"k":"ui","event":{"type":"Caption","who":"User","text":"Does this make sense?","is_final":true}}
+{"v":1,"t":32419,"k":"ui","event":{"type":"DrawMode","drawing":false}}
+{"v":1,"t":32419,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
+{"v":1,"t":33519,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":33519,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes.","is_final":false}}
+{"v":1,"t":33978,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your","is_final":false}}
+{"v":1,"t":33978,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":202,"y":248,"w":840,"h":382},"focus":null}}
+{"v":1,"t":33978,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"a:0","op":0,"target":"u3","mark":"Circle","rect":{"x":520,"y":308,"w":162,"h":108},"text":null,"fill":null},"budget_ms":729}}
+{"v":1,"t":33978,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
+{"v":1,"t":34210,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API","is_final":false}}
+{"v":1,"t":34409,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks","is_final":false}}
+{"v":1,"t":34707,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the","is_final":false}}
+{"v":1,"t":34707,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Edge","id":"u6>u3","op":1,"from":"u6","to":"u3","path":{"start":{"x":606,"y":510},"control":null,"end":{"x":601,"y":406}},"label":"read first","style":"Solid"},"budget_ms":1400}}
+{"v":1,"t":34906,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache","is_final":false}}
+{"v":1,"t":35171,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first,","is_final":false}}
+{"v":1,"t":35586,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and","is_final":false}}
+{"v":1,"t":35785,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only","is_final":false}}
+{"v":1,"t":36017,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes","is_final":false}}
+{"v":1,"t":36249,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to","is_final":false}}
+{"v":1,"t":36415,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to Postgres","is_final":false}}
+{"v":1,"t":36779,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to Postgres on","is_final":false}}
+{"v":1,"t":36907,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
+{"v":1,"t":36945,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to Postgres on a","is_final":false}}
+{"v":1,"t":37078,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to Postgres on a miss.","is_final":false}}
+{"v":1,"t":37570,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API checks the cache first, and only goes to Postgres on a miss.","is_final":true}}
+{"v":1,"t":37870,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}

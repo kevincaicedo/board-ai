@@ -131,6 +131,8 @@ impl Core {
                     UiEvent::OpStart { .. }
                         | UiEvent::LayerPush { .. }
                         | UiEvent::SurfaceShow { .. }
+                        | UiEvent::DrawMode { drawing: true }
+                        | UiEvent::UserShape { .. }
                 )
             )
         };

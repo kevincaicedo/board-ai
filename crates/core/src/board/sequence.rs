@@ -152,7 +152,7 @@ impl Board {
         layer.grid.occupy_rect(line, id);
         layer.insert(Element {
             id: id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Participant {
                 span,
                 lifeline_bottom,
@@ -214,7 +214,7 @@ impl Board {
         let id = generated_id("m", op);
         layer.insert(Element {
             id: id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Message {
                 from: message.from.clone(),
                 to: message.to.clone(),

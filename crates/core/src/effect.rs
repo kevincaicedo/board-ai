@@ -141,6 +141,12 @@ pub enum Dropped {
     NarrationTag,
     Op,
     Detour,
+    /// A shape the user drew that the core refused (out of range, too many points or shapes, a
+    /// closed layer), or an undo with nothing of this drawing to undo.
+    UserShape,
+    /// A drawing command that means nothing now: Done or Esc while not drawing, or Done while
+    /// muted.
+    DrawCommand,
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ import {
 import type { Vec } from "../canvas/geometry.ts";
 import { type OrbPlacement, orbPlacement } from "../canvas/presence.ts";
 import { BoardView } from "../canvas/renderer.ts";
+import { YoursView } from "../draw/inkView.ts";
 import { emptyParams } from "../orb/dynamics.ts";
 import { OrbView } from "../orb/orb.ts";
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
@@ -114,6 +115,7 @@ export class Runtime {
       card: this.#card,
       reducedMotion: this.reducedMotion,
       onPointer: (target) => this.pointer(target),
+      yours: new YoursView(this.scene.draw, this.tokens, (target) => this.pointer(target)),
     });
     this.#orb = new OrbView(orbHost, "BoardAI");
     this.#measure(stage);

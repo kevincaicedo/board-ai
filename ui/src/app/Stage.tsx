@@ -2,6 +2,7 @@
 // surfaces float over it. The canvas and orb are imperative views mounted into hosts here.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { Drawing, DrawingSurface } from "../draw/Drawing.tsx";
 import { Views } from "../views/Views.tsx";
 import { Captions } from "./Captions.tsx";
 import { Chips } from "./Chips.tsx";
@@ -63,6 +64,7 @@ export function Stage({
         <div class="board-shell">
           <div class="board" ref={boardRef} />
         </div>
+        <DrawingSurface />
         <div class="orb-host" ref={orbRef} />
         <Suggestion />
         <ThreadBar />
@@ -71,6 +73,7 @@ export function Stage({
         <Chips />
         <Captions />
         <MicButton />
+        <Drawing raised={runtime.replay !== null && controls} />
         {runtime.replay !== null && controls ? <ReplayControls replay={runtime.replay} /> : null}
         {perf ? <PerfReadout runtime={runtime} /> : null}
       </main>

@@ -2,6 +2,8 @@
 //! lowercase, with surrounding punctuation stripped, so "Mm-hmm." and "mm-hmm" are the same.
 //! Tests iterate the tables, so a new entry is covered the moment it is added.
 
+pub mod drawing;
+
 use crate::limits::BARGE_IN_CUE_WORDS;
 
 /// Last words that mean the speaker isn't done ("so the leader… and"): the end of turn waits for

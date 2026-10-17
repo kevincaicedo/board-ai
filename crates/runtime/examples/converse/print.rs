@@ -257,6 +257,36 @@ impl Printer {
                     line(at, "orb", &format!("{state:?}"));
                 }
             }
+            UiEvent::DrawMode { .. }
+            | UiEvent::UserShape { .. }
+            | UiEvent::UserShapeRemove { .. }
+            | UiEvent::LabelHint { .. } => self.print_drawing(at, event),
+        }
+    }
+
+    /// You draw (artboard 13): the mode, your shapes and, verbose, the label hint.
+    fn print_drawing(&self, at: SessionTime, event: &UiEvent) {
+        if let UiEvent::DrawMode { drawing } = event {
+            let mode = if *drawing {
+                "you draw"
+            } else {
+                "you stopped drawing"
+            };
+            line(at, "draw", mode);
+        } else if let UiEvent::UserShape { layer, shape } = event {
+            let label = shape.label.as_deref().unwrap_or("");
+            let text = format!("L{} {} \"{label}\"", layer.0, shape.id.as_str());
+            line(at, "yours", &text);
+        } else if let UiEvent::UserShapeRemove { layer, id } = event {
+            line(at, "yours", &format!("L{} {} undone", layer.0, id.as_str()));
+        } else if let UiEvent::LabelHint { hint } = event
+            && self.verbose
+        {
+            let hint = hint.as_ref().map_or_else(
+                || "(cleared)".to_owned(),
+                |hint| format!("{} ← \"{}\"", hint.target.as_str(), hint.words),
+            );
+            line(at, "hint", &hint);
         }
     }
 }
@@ -350,7 +380,7 @@ impl StoreSink for Printer {
                 self.with_answer(|answer| match what {
                     Dropped::NarrationTag => answer.dropped_tags += count,
                     Dropped::Op => answer.dropped_ops += count,
-                    Dropped::Detour => {}
+                    Dropped::Detour | Dropped::UserShape | Dropped::DrawCommand => {}
                 });
                 line(at, "drop", &format!("{what:?} x{count}"));
             }

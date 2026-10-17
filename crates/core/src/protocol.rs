@@ -154,6 +154,29 @@ pub enum UiEvent {
     /// session when it applies it, and sends it itself after the idle timeout. It is never
     /// written to the session's log, so a replay never sees it.
     SessionEnd,
+    /// You draw (artboard 13): you started (`drawing`) or stopped drawing. While it is on, the
+    /// drawing tools show, the top reads "You're drawing · BoardAI is watching", and BoardAI
+    /// waits: no talker request starts until you finish.
+    DrawMode {
+        drawing: bool,
+    },
+    /// One of your shapes as the core keeps it: the committed copy of what the UI previewed
+    /// while the pointer was down. It is re-sent whole when it changes (a pen stroke joins it, a
+    /// spoken label lands), and the UI replaces its drawing, keyed by the shape's id.
+    UserShape {
+        layer: LayerId,
+        shape: UserShape,
+    },
+    /// Your shape `id` was undone.
+    UserShapeRemove {
+        layer: LayerId,
+        id: ElementId,
+    },
+    /// While you speak in drawing mode: the words so far will label `target` ("…and this one
+    /// is the cache" → will label this shape). `None` clears the hint.
+    LabelHint {
+        hint: Option<LabelHint>,
+    },
 }
 
 /// The orb states on the design canvas (frame 10a).
@@ -455,6 +478,87 @@ pub enum UiCommand {
         path: String,
         line: u32,
     },
+    /// You draw (artboard 13): the pen button or `D`, a finished shape, undo, Done (or Enter),
+    /// and Esc.
+    Draw {
+        action: DrawAction,
+    },
+}
+
+/// What you do with the drawing tools.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum DrawAction {
+    /// The pen button or `D`: BoardAI stops if it was speaking (an interruption) and watches
+    /// while you draw.
+    Start,
+    /// A shape you finished (the pointer came up), in world units of `layer`.
+    Shape { layer: LayerId, drawn: DrawnShape },
+    /// Undo your last shape of this drawing (a pen shape loses its last stroke).
+    Undo,
+    /// Done or Enter: BoardAI looks at your drawing and answers.
+    Done,
+    /// Esc: you stop drawing without asking BoardAI anything; your shapes stay.
+    Cancel,
+}
+
+/// One finished shape as the UI captured it. The core parses it once (bounded point counts,
+/// coordinates in range, nothing smaller than a click) before it reaches the board.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "tool")]
+#[ts(export)]
+pub enum DrawnShape {
+    /// The pen: one stroke's sampled points, at most `USER_STROKE_POINTS_MAX`.
+    Pen { points: Vec<Point> },
+    /// The box tool: the rectangle you dragged out.
+    Box { rect: Rect },
+    /// The arrow tool: where your drag started and ended.
+    Arrow { start: Point, end: Point },
+}
+
+/// A shape you drew (artboard 13), drawn in your ink. Its id (`u1`, `u2`…) is the session's, so
+/// BoardAI can name it (`annotate target="u2"`), but BoardAI never moves or redraws it (I6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UserShape {
+    pub id: ElementId,
+    pub kind: UserShapeKind,
+    /// What you said it is ("cache"): written inside a box or a pen shape, above an arrow.
+    pub label: Option<String>,
+    /// A second thing you said about it ("source of truth"), written under it.
+    pub note: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum UserShapeKind {
+    /// The box tool: a tidy rectangle.
+    Box { rect: Rect },
+    /// The arrow tool, from `start` to `end`. An end that landed on a shape connects to it
+    /// (`from`, `to`) and sits on that shape's outline.
+    Arrow {
+        start: Point,
+        end: Point,
+        from: Option<ElementId>,
+        to: Option<ElementId>,
+    },
+    /// The pen: freehand strokes exactly as drawn. Strokes drawn one after another that overlap
+    /// make one shape (a cylinder's body and its lid); `bounds` covers them all.
+    Ink {
+        strokes: Vec<Vec<Point>>,
+        bounds: Rect,
+    },
+}
+
+/// The hint shown while you speak a label: the words heard so far, and the shape they will
+/// label.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LabelHint {
+    pub target: ElementId,
+    pub words: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

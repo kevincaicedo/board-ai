@@ -85,6 +85,11 @@ export interface Camera {
   readonly focus: string | null;
   readonly previousFocus: string | null;
   readonly focusAt: number;
+  /**
+   * The layer's first frame came after you drew on it at the identity view (13 · You draw):
+   * the view eases from identity instead of jumping, so your drawing glides into the frame.
+   */
+  readonly fromIdentity?: boolean;
 }
 
 export interface Layer {
@@ -207,7 +212,8 @@ export class BoardModel {
     return open.sort((a, b) => a.pushedAt - b.pushedAt);
   }
 
-  apply(event: BoardEvent, at: number, lead: LeadDecision): void {
+  /** `drawnAtIdentity`: you drew on the event's layer before it had a frame. */
+  apply(event: BoardEvent, at: number, lead: LeadDecision, drawnAtIdentity = false): void {
     switch (event.type) {
       case "OpStart":
         this.#start(event.layer, event.op, event.budget_ms, at, lead);
@@ -225,7 +231,7 @@ export class BoardModel {
         this.#pop(event.layer, at);
         break;
       case "Camera":
-        this.#camera(event.layer, event.frame, event.focus, at);
+        this.#camera(event.layer, event.frame, event.focus, at, drawnAtIdentity);
         break;
     }
   }
@@ -418,7 +424,13 @@ export class BoardModel {
     this.version += 1;
   }
 
-  #camera(layerId: number, frame: Rect, focus: string | null, at: number): void {
+  #camera(
+    layerId: number,
+    frame: Rect,
+    focus: string | null,
+    at: number,
+    drawnAtIdentity: boolean,
+  ): void {
     const layer = this.layers.get(layerId);
     if (layer === undefined) {
       this.counters.orphanEvents += 1;
@@ -432,6 +444,7 @@ export class BoardModel {
       focus,
       previousFocus: camera.focus,
       focusAt: focus === camera.focus ? camera.focusAt : at,
+      fromIdentity: camera.frame === null && drawnAtIdentity,
     };
   }
 

@@ -145,6 +145,10 @@ impl Core {
         if self.reply.is_none() {
             self.recap_leaves(effects);
         }
+        debug_assert!(
+            !self.is_drawing(),
+            "I14: no talker request while the user draws"
+        );
         let planned_depth = self.queue.planned_depth(self.thread.depth());
         if self.reply.as_ref().is_some_and(|reply| reply.in_flight) {
             effects.push(Effect::CancelTalk);
@@ -691,10 +695,12 @@ impl Core {
 
     /// Harness results are reported when the conversation is idle (LLD §3.3).
     pub(super) fn maybe_report(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        // While the user draws, BoardAI waits: a report goes out once they finish (I14).
         let idle = self.state == crate::conversation::ConversationState::Idle
             && self.reply.is_none()
             && self.stop.is_none()
-            && !self.has_ended();
+            && !self.has_ended()
+            && !self.is_drawing();
         if idle && !self.context.reports.is_empty() {
             // The report turn asks its own questions: a yes to one of them must not answer
             // BoardAI's question about a change (I9).

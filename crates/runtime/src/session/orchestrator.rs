@@ -20,7 +20,7 @@ use std::time::Duration;
 use boardai_core::conversation::ConversationState;
 use boardai_core::effect::{Effect, LogRecord, Milestone};
 use boardai_core::input::{Input, PlaybackPosition};
-use boardai_core::protocol::{MicAction, UiCommand, UiEvent};
+use boardai_core::protocol::{DrawAction, MicAction, UiCommand, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::{Core, CoreConfig};
 use tokio::sync::{mpsc, watch};
@@ -437,6 +437,13 @@ impl Orchestrator {
             return;
         }
         *last_activity = now;
+        // Finishing a drawing asks BoardAI something, as words do (artboard 13).
+        let asked = matches!(
+            input,
+            Input::Command(UiCommand::Draw {
+                action: DrawAction::Done
+            })
+        );
         if let Input::Transcript {
             text,
             is_final: true,
@@ -445,6 +452,7 @@ impl Orchestrator {
         {
             *spoke = true;
         }
+        *spoke |= asked;
     }
 
     fn idle_at(&self) -> Option<tokio::time::Instant> {
@@ -673,11 +681,16 @@ impl Orchestrator {
 }
 
 /// Whether an input that arrives while resting opens a new session: the user's own voice or
-/// typed words, or the push-to-talk key. While muted, only an unmute does, so noise never
-/// starts a session nobody asked for.
+/// typed words, the push-to-talk key, or the pen (a stroke drawn on a stage the last session
+/// left showing lands in the new one). While muted, only an unmute does, so noise never starts
+/// a session nobody asked for.
 fn opens_a_session(input: &Input, muted: bool) -> bool {
     match input {
         Input::VoiceStart | Input::Transcript { .. } => !muted,
+        Input::Command(UiCommand::Draw { action }) => match action {
+            DrawAction::Start | DrawAction::Shape { .. } => !muted,
+            DrawAction::Undo | DrawAction::Done | DrawAction::Cancel => false,
+        },
         Input::Command(UiCommand::Mic { action }) => match action {
             MicAction::TalkDown => !muted,
             MicAction::Unmute => muted,

@@ -7,6 +7,7 @@
 //! simulator and session replay rely on.
 
 mod camera;
+mod draw;
 mod gate;
 mod listen;
 mod memory;
@@ -38,6 +39,7 @@ use crate::voice::Voice;
 use text::SYNTHESIS_FAILED_DETAIL;
 
 use camera::Cameras;
+use draw::Drawing;
 use gate::ChangeGate;
 use listen::UserSide;
 use memory::Memory;
@@ -139,6 +141,8 @@ pub struct Core {
     ending: stage::SessionEnding,
     /// Views read for tool calls the talker wrote as tags (D-143).
     written_reads: written::WrittenReads,
+    /// Whether the user is drawing, and what BoardAI keeps while it watches (artboard 13).
+    drawing: Drawing,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -178,6 +182,7 @@ impl Core {
             library_return: views::LibraryReturn::default(),
             ending: stage::SessionEnding::Continuing,
             written_reads: written::WrittenReads::default(),
+            drawing: Drawing::Off,
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }
@@ -251,6 +256,7 @@ impl Core {
             Input::Command(UiCommand::OpenSource { path, line }) => {
                 self.open_source(&path, line, effects);
             }
+            Input::Command(UiCommand::Draw { action }) => self.on_draw(now, action, effects),
             Input::Tick => self.on_tick(now, effects),
             Input::MemoryFailed { change, detail } => {
                 self.on_memory_failed(change, &detail, effects);
@@ -357,6 +363,7 @@ impl Core {
         self.arm_change_gate(now);
         self.maybe_finish_reply(effects);
         self.maybe_report(now, effects);
+        self.settle_hint(effects);
         self.update_orb(now, effects);
     }
 
@@ -379,7 +386,16 @@ impl Core {
         let linger_until = self
             .drawing_until
             .map(|until| until.plus_ms(ORB_DRAWING_LINGER_MS));
-        let base = self.state.orb();
+        // While the user draws, a quiet BoardAI is listening and watching (artboard 13).
+        let base = match self.state.orb() {
+            OrbState::Idle if self.is_drawing() => OrbState::Listening,
+            state @ (OrbState::Idle
+            | OrbState::Listening
+            | OrbState::Thinking
+            | OrbState::Speaking
+            | OrbState::Drawing
+            | OrbState::Muted) => state,
+        };
         let state = match linger_until {
             Some(until) if base == OrbState::Speaking && now < until => OrbState::Drawing,
             Some(_) | None => base,

@@ -121,7 +121,11 @@ mod tests {
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
             | UiEvent::OpenSettings
-            | UiEvent::SessionEnd => None,
+            | UiEvent::SessionEnd
+            | UiEvent::DrawMode { .. }
+            | UiEvent::UserShape { .. }
+            | UiEvent::UserShapeRemove { .. }
+            | UiEvent::LabelHint { .. } => None,
         }
     }
 

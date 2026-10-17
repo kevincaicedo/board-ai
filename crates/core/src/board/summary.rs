@@ -4,7 +4,8 @@
 //! Each visible layer (main and every open detour) is one line. Nodes follow their edges as
 //! chains in the order they were drawn; edges that don't continue a chain are listed after. A row
 //! of cells shows its values (`arr[3|1|_|4]`, cell `arr.2` empty), and a sequence diagram its
-//! participants and messages in order.
+//! participants and messages in order. Shapes the user drew come last on their layer's line, as
+//! `drawn by the user: u1 "Client" → u2 "API"` (artboard 13).
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -71,11 +72,14 @@ fn layer_summary(layer: &Layer) -> String {
             | ElementKind::Participant { .. }
             | ElementKind::Message { .. }
             | ElementKind::Cells { .. }
-            | ElementKind::Cell { .. } => None,
+            | ElementKind::Cell { .. }
+            | ElementKind::User { .. } => None,
         })
         .collect();
     let sequence = sequence(layer);
-    if nodes.is_empty() && edges.is_empty() && sequence.is_none() {
+    // Your shapes come last, as their own description (artboard 13).
+    let yours = super::user::describe(layer).map(|drawing| format!("drawn by the user: {drawing}"));
+    if nodes.is_empty() && edges.is_empty() && sequence.is_none() && yours.is_none() {
         return "empty".to_owned();
     }
     let mut used = vec![false; edges.len()];
@@ -99,6 +103,7 @@ fn layer_summary(layer: &Layer) -> String {
     if !marks.is_empty() {
         parts.push(format!("marks: {}", marks.join(", ")));
     }
+    parts.extend(yours);
     parts.join("; ")
 }
 
@@ -127,7 +132,8 @@ fn sequence(layer: &Layer) -> Option<String> {
             | ElementKind::Annotation { .. }
             | ElementKind::Trace
             | ElementKind::Cells { .. }
-            | ElementKind::Cell { .. } => {}
+            | ElementKind::Cell { .. }
+            | ElementKind::User { .. } => {}
         }
     }
     if participants.is_empty() {
@@ -182,7 +188,8 @@ fn chain_from<'a>(
         | ElementKind::Trace
         | ElementKind::Participant { .. }
         | ElementKind::Message { .. }
-        | ElementKind::Cell { .. } => node_token(start),
+        | ElementKind::Cell { .. }
+        | ElementKind::User { .. } => node_token(start),
     };
     let mut current = &start.id;
     // Each step marks an edge used, so the walk is bounded by the edge count.
@@ -275,7 +282,8 @@ fn marks(layer: &Layer) -> Vec<String> {
             | ElementKind::Participant { .. }
             | ElementKind::Message { .. }
             | ElementKind::Cells { .. }
-            | ElementKind::Cell { .. } => None,
+            | ElementKind::Cell { .. }
+            | ElementKind::User { .. } => None,
         })
         .collect()
 }

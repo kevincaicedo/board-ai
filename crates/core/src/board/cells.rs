@@ -56,7 +56,7 @@ impl Board {
         }
         layer.insert(Element {
             id: spec.id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Cells {
                 vertical: spec.vertical,
                 span: span.map(|(span, _)| span),
@@ -69,7 +69,7 @@ impl Board {
         for (index, cell) in (0_u8..).zip(&cells) {
             layer.insert(Element {
                 id: cell.id.clone(),
-                op,
+                op: Some(op),
                 kind: ElementKind::Cell {
                     strip: spec.id.clone(),
                     index,
@@ -106,6 +106,7 @@ impl Board {
             .element(target)
             .filter(|element| element.state != ElementState::Pending)
             .ok_or_else(|| Rejected::UnknownElement(target.clone()))?;
+        super::user::not_yours(existing)?;
         if !existing.label.trim().is_empty() {
             return Ok(if existing.label == text {
                 Placed::Unchanged

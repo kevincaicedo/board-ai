@@ -69,6 +69,8 @@ pub(super) enum GateClosed {
     Mute,
     /// A harness report turn started before the user answered.
     Report,
+    /// The user started drawing instead of answering (artboard 13).
+    Drawing,
 }
 
 impl GateClosed {
@@ -89,6 +91,10 @@ impl GateClosed {
                 "A background task reported before the user answered BoardAI's question, so the \
                  proposed change was cancelled. Nothing was changed; propose it again if it still \
                  makes sense."
+            }
+            Self::Drawing => {
+                "The user started drawing instead of answering, so the proposed change was \
+                 cancelled. Nothing was changed."
             }
         }
     }

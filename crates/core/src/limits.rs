@@ -246,3 +246,39 @@ pub const MEMORY_FAILURE_DETAIL_MAX_BYTES: usize = 200;
 /// Items per list the talker reads about a view on screen (sessions, tasks, notes, memories);
 /// the rest are counted ("N more on screen"). Past boards list up to three times as many labels.
 pub const VIEW_TALKER_ITEMS_MAX: usize = 8;
+
+// ---- You draw (artboard 13, LLD §2.5 "Your shapes") ----
+
+/// Points in one pen stroke. The UI samples at most this many; a longer stroke is refused
+/// (dropped and counted, and the UI's preview goes away with no echo).
+pub const USER_STROKE_POINTS_MAX: usize = 512;
+
+/// Pen strokes joined into one shape (a cylinder's body and lid). Past it, the next stroke
+/// starts a shape of its own.
+pub const USER_SHAPE_STROKES_MAX: usize = 32;
+
+/// Your shapes on one layer, so a drawing never leaves BoardAI no room of the layer's
+/// [`ELEMENTS_PER_LAYER_MAX`]. A shape past it is refused (dropped and counted).
+pub const USER_SHAPES_PER_LAYER_MAX: usize = 200;
+
+/// Largest coordinate a drawn shape may use, in world units either way from the origin. A
+/// shape past it is refused, which keeps every geometry sum far from overflow.
+pub const USER_COORDINATE_MAX: i32 = 1_000_000;
+
+/// A box or an arrow smaller than this in both directions, or a pen stroke shorter than this,
+/// is a click, not a shape: refused.
+pub const USER_SHAPE_MIN_UNITS: u32 = 6;
+
+/// Words after a label lead-in ("this one is the cache") that still make a label; longer is
+/// talk about the drawing, kept for the talker.
+pub const USER_LABEL_WORDS_MAX: usize = 4;
+
+/// Words that label the latest shape on their own, with no lead-in ("cache", "the API").
+pub const USER_BARE_LABEL_WORDS_MAX: usize = 3;
+
+/// What you say while drawing that is not a label, kept for the talker's turn; words past it
+/// are dropped and the kept text ends with "…".
+pub const DRAWING_WORDS_MAX_BYTES: usize = 1_024;
+
+/// The description of your drawing in the talker's turn; a longer one ends with "…".
+pub const DRAWING_DESCRIPTION_MAX_BYTES: usize = 2_048;

@@ -53,15 +53,23 @@ export function MicButton() {
         runtime.replays.local.value !== null,
         runtime.scene.views.open !== null,
       );
+      // Enter on a focused button is the button's own click.
+      const pressing = event.code === "Enter" && event.target instanceof HTMLButtonElement;
       const key = {
         code: event.code,
         repeat: event.repeat,
         modified: event.metaKey || event.ctrlKey || event.altKey,
-        editable: editable(event.target),
+        editable: editable(event.target) || pressing,
+        shortcut: (event.metaKey || event.ctrlKey) && !event.altKey,
       };
       // Read at the key press, so a mute never re-binds these handlers mid-hold.
       const muted = runtime.scene.store.orb.peek().state === "Muted";
-      const context = { muted, replay: runtime.replay !== null, escape: closing };
+      const context = {
+        muted,
+        replay: runtime.replay !== null,
+        escape: closing,
+        drawing: runtime.scene.draw.drawing.peek(),
+      };
       if (event.code === "Escape" && closing === "close-replay") {
         if (!key.repeat && !key.modified && !key.editable) {
           event.preventDefault();
@@ -71,6 +79,9 @@ export function MicButton() {
       }
       const command = talk.down(key, context);
       if (command?.type === "Mic" && command.action === "TalkDown") {
+        event.preventDefault();
+      }
+      if (command?.type === "Draw") {
         event.preventDefault();
       }
       send(command);

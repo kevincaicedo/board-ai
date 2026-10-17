@@ -3,7 +3,7 @@
 //! the 200 × 140 grid can't do. Such a drawing is nudged past anything in its way, never the
 //! other way round (I6), and marks the grid cells it covers so grid placement keeps clear of it.
 
-use crate::board::{ElementKind, Layer, layout};
+use crate::board::{ElementKind, Layer, UserMark, layout};
 use crate::geometry::Rect;
 use crate::limits::FREE_NUDGE_STEPS_MAX;
 use crate::narration::ops::Direction;
@@ -20,8 +20,9 @@ const NUDGE_GAP: i32 = 48;
 const CLEARANCE: i32 = 12;
 
 /// What a new drawing must keep clear of: every node, row of cells and participant laid out on
-/// the layer, labels included. Group frames hold other things, and connectors, marks, messages
-/// and single cells (their row covers them) are drawn over or between.
+/// the layer, and every box or pen shape you drew, labels included. Group frames hold other
+/// things, and connectors (your arrows too), marks, messages and single cells (their row covers
+/// them) are drawn over or between.
 fn obstacles(layer: &Layer) -> Vec<Rect> {
     layer
         .elements()
@@ -29,6 +30,7 @@ fn obstacles(layer: &Layer) -> Vec<Rect> {
         .filter(|element| match &element.kind {
             ElementKind::Node { shape, .. } => *shape != NodeShape::Group,
             ElementKind::Cells { .. } | ElementKind::Participant { .. } => true,
+            ElementKind::User { mark, .. } => !matches!(mark, UserMark::Arrow { .. }),
             ElementKind::Edge { .. }
             | ElementKind::Annotation { .. }
             | ElementKind::Trace

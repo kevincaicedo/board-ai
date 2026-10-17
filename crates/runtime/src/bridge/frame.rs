@@ -106,7 +106,11 @@ impl Frame {
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
             | UiEvent::OpenSettings
-            | UiEvent::SessionEnd => key,
+            | UiEvent::SessionEnd
+            | UiEvent::DrawMode { .. }
+            | UiEvent::UserShape { .. }
+            | UiEvent::UserShapeRemove { .. }
+            | UiEvent::LabelHint { .. } => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -139,7 +143,12 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::ViewShow { .. }
         | UiEvent::ViewDismiss
         | UiEvent::OpenSettings
-        | UiEvent::SessionEnd => None,
+        | UiEvent::SessionEnd
+        // The user's shapes are few and each one matters; a hint changes at most per partial.
+        | UiEvent::DrawMode { .. }
+        | UiEvent::UserShape { .. }
+        | UiEvent::UserShapeRemove { .. }
+        | UiEvent::LabelHint { .. } => None,
     }
 }
 

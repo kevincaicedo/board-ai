@@ -5,8 +5,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use boardai_core::geometry::Rect;
 use boardai_core::history::Message;
-use boardai_core::protocol::{MicAction, UiCommand, UiEvent};
+use boardai_core::ids::LayerId;
+use boardai_core::protocol::{DrawAction, DrawnShape, MicAction, UiCommand, UiEvent};
 
 use super::{ScriptedTalker, close, idle_after_speaking, run_until, start, start_with_store};
 use crate::limits::{SESSION_IDLE_TIMEOUT_MS, SESSION_START_TIMEOUT_MS};
@@ -130,6 +132,48 @@ async fn a_muted_session_rests_and_wakes_only_on_unmute() {
         recorder.lifecycle(),
         vec!["start", "digest", "start", "discard"]
     );
+}
+
+/// You draw (artboard 13): finishing a drawing asks BoardAI something, so the session is kept
+/// with its digest though nothing was said; resting, the pen opens a new session.
+#[tokio::test(start_paused = true)]
+async fn a_finished_drawing_keeps_the_session_and_the_pen_wakes_the_next() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("That's a client.");
+    let harness = start(Arc::clone(&talker), false);
+    let draw = |action: DrawAction| UiCommand::Draw { action };
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        w: 120,
+        h: 60,
+    };
+    let shape = || DrawAction::Shape {
+        layer: LayerId::MAIN,
+        drawn: DrawnShape::Box { rect },
+    };
+    assert!(harness.session.command(draw(DrawAction::Start)).is_ok());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(harness.session.command(draw(shape())).is_ok());
+    assert!(harness.session.command(draw(DrawAction::Done)).is_ok());
+    assert!(run_until(20_000, || talker.requests().len() == 1).await);
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    past_the_idle_timeout().await;
+    assert_eq!(recorder.lifecycle(), vec!["start", "digest"]);
+    // Undo while resting opens nothing; a stroke does.
+    assert!(harness.session.command(draw(DrawAction::Undo)).is_ok());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(recorder.lifecycle(), vec!["start", "digest"]);
+    assert!(harness.session.command(draw(shape())).is_ok());
+    assert!(run_until(2_000, || recorder.lifecycle().len() == 3).await);
+    let drawn = recorder
+        .events()
+        .iter()
+        .filter(|event| matches!(event, UiEvent::UserShape { .. }))
+        .count();
+    assert_eq!(drawn, 2, "the stroke that woke the session landed in it");
+    close(harness).await;
 }
 
 /// How long closing may take once the store's session start hangs: nothing else is waited on,

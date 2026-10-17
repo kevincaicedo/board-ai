@@ -23,6 +23,7 @@ const CHAPTER_NAMES: { readonly [K in ChapterKind]: string } = {
   Recap: "Recap",
   Capture: "Capture",
   Resume: "Resume",
+  Drawing: "You draw",
 };
 
 export function ReplayControls({

@@ -117,6 +117,12 @@ const TOKEN_SPEC = {
   recallBoardSoften: ["--recall-board-soften", "px"],
   captionWidth: ["--caption-width", "px"],
   setupOrb: ["--setup-orb", "px"],
+  handNote: ["--hand-note", "px"],
+  handNoteOpacity: ["--hand-note-opacity", "number"],
+  inkYouWidth: ["--ink-you-width", "px"],
+  drawHintLeft: ["--draw-hint-left", "px"],
+  drawHintBelow: ["--draw-hint-below", "px"],
+  durationDrawPreviewHoldMs: ["--duration-draw-preview-hold", "ms"],
 } as const satisfies Record<string, readonly [string, "px" | "ms" | "number"]>;
 
 export type Tokens = { readonly [K in keyof typeof TOKEN_SPEC]: number };

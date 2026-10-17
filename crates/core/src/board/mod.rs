@@ -23,6 +23,7 @@ mod sequence;
 pub mod summary;
 mod tone;
 mod tree;
+pub mod user;
 
 use std::collections::BTreeMap;
 
@@ -36,6 +37,7 @@ use layout::{CellSpan, Grid};
 use place::{Spot, edge_between, repeated, spot, strike};
 use sequence::{RowCommit, Sequence};
 use tone::Tones;
+pub use user::UserMark;
 
 /// A highlight's tone when the talker names none.
 const HIGHLIGHT_FILL: Fill = Fill::Blush;
@@ -43,8 +45,9 @@ const HIGHLIGHT_FILL: Fill = Fill::Blush;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Element {
     pub id: ElementId,
-    /// The op that drew it; a group's growth redraws under the same op.
-    pub op: OpId,
+    /// The op that drew it (a group's growth redraws under the same op); `None` for a shape
+    /// you drew, and only for one.
+    pub op: Option<OpId>,
     pub kind: ElementKind,
     pub label: String,
     pub geometry: Geometry,
@@ -102,6 +105,14 @@ pub enum ElementKind {
         index: u8,
         index_label: Option<String>,
     },
+    /// A shape you drew (artboard 13). It is yours: BoardAI never moves, redraws, strikes or
+    /// removes it (I6), and layout keeps clear of it. Its geometry is its box (a pen shape's
+    /// bounds), or an arrow's line; its label is what you said it is.
+    User {
+        mark: UserMark,
+        /// A second thing you said about it, written under it ("source of truth").
+        note: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,7 +144,7 @@ impl Geometry {
 
 impl Element {
     /// Everything the element covers on the board: its geometry, plus a participant's lifeline
-    /// and a row of cells' labels.
+    /// and a row of cells' labels, and the words written beside one of your shapes.
     #[must_use]
     pub fn area(&self) -> Rect {
         match (&self.kind, &self.geometry) {
@@ -148,6 +159,9 @@ impl Element {
                 *lifeline_bottom,
             )),
             (ElementKind::Cells { extent, .. }, _) => *extent,
+            (ElementKind::User { mark, note }, _) => {
+                user::area(mark, &self.label, note.as_deref(), &self.geometry)
+            }
             (
                 ElementKind::Node { .. }
                 | ElementKind::Edge { .. }
@@ -213,6 +227,8 @@ pub enum Rejected {
     IdTaken(ElementId),
     /// A message needs two participants, or one for a message to itself.
     NotParticipant(ElementId),
+    /// A shape you drew: BoardAI never redraws, strikes or writes over it (I6).
+    Yours(ElementId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -279,6 +295,11 @@ impl Layer {
         if self.index.contains_key(&element.id) {
             return Err(Rejected::IdTaken(element.id));
         }
+        debug_assert_eq!(
+            element.op.is_none(),
+            matches!(element.kind, ElementKind::User { .. }),
+            "only your shapes have no op"
+        );
         self.index.insert(element.id.clone(), self.elements.len());
         self.elements.push(element);
         Ok(())
@@ -296,15 +317,29 @@ impl Layer {
                 ElementKind::Node { span, .. } | ElementKind::Cells { span, .. },
                 Geometry::Box(rect),
             ) => Ok((*rect, *span)),
-            (ElementKind::Cell { .. } | ElementKind::Participant { .. }, Geometry::Box(rect)) => {
-                Ok((*rect, None))
-            }
+            (
+                ElementKind::Cell { .. }
+                | ElementKind::Participant { .. }
+                | ElementKind::User {
+                    mark: UserMark::Box | UserMark::Ink { .. },
+                    ..
+                },
+                Geometry::Box(rect),
+            ) => Ok((*rect, None)),
             (
                 ElementKind::Node { .. }
                 | ElementKind::Cells { .. }
                 | ElementKind::Cell { .. }
-                | ElementKind::Participant { .. },
+                | ElementKind::Participant { .. }
+                | ElementKind::User { .. },
                 Geometry::Path(_) | Geometry::Points(_),
+            )
+            | (
+                ElementKind::User {
+                    mark: UserMark::Arrow { .. },
+                    ..
+                },
+                Geometry::Box(_),
             )
             | (
                 ElementKind::Edge { .. }
@@ -339,7 +374,9 @@ impl Layer {
 
     /// The elements one op made, in the order it made them.
     fn made_by(&self, op: OpId) -> impl Iterator<Item = &Element> {
-        self.elements.iter().filter(move |element| element.op == op)
+        self.elements
+            .iter()
+            .filter(move |element| element.op == Some(op))
     }
 
     /// The frozen element, if a stroke on this layer was stopped mid-way.
@@ -364,6 +401,8 @@ pub struct FrozenOp {
 pub struct Board {
     layers: Vec<Layer>,
     tones: Tones,
+    /// The number of your last shape's id (`u3`); ids of yours never repeat in a session.
+    next_user: u32,
 }
 
 impl Default for Board {
@@ -378,6 +417,7 @@ impl Board {
         Self {
             layers: vec![Layer::new(LayerId::MAIN, "main".to_owned())],
             tones: Tones::default(),
+            next_user: 0,
         }
     }
 
@@ -421,6 +461,7 @@ impl Board {
         node: NodeRequest<'_>,
     ) -> Result<Placed, Rejected> {
         if let Some(existing) = self.layer_mut(layer_id)?.element(node.id) {
+            user::not_yours(existing)?;
             return Ok(repeated(existing, op, node.label));
         }
         if let Placement::Child { parent, side } = node.placement
@@ -461,7 +502,7 @@ impl Board {
         };
         let element = Element {
             id: node.id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Node {
                 shape,
                 stack: node.stack,
@@ -474,7 +515,7 @@ impl Board {
             geometry: Geometry::Box(rect),
             state: ElementState::Pending,
         };
-        let draw = node_draw(&element, rect, None);
+        let draw = node_draw(&element, op, rect, None);
         layer.insert(element)?;
         Ok(Placed::New {
             id: node.id.clone(),
@@ -514,6 +555,14 @@ impl Board {
                 {
                     Some(*rect)
                 }
+                // An edge bows around your shapes as it does around nodes.
+                (
+                    ElementKind::User {
+                        mark: UserMark::Box | UserMark::Ink { .. },
+                        ..
+                    },
+                    Geometry::Box(rect),
+                ) => Some(*rect),
                 (
                     ElementKind::Node { .. }
                     | ElementKind::Edge { .. }
@@ -522,7 +571,8 @@ impl Board {
                     | ElementKind::Participant { .. }
                     | ElementKind::Message { .. }
                     | ElementKind::Cells { .. }
-                    | ElementKind::Cell { .. },
+                    | ElementKind::Cell { .. }
+                    | ElementKind::User { .. },
                     _,
                 ) => None,
             })
@@ -539,7 +589,7 @@ impl Board {
         };
         layer.insert(Element {
             id: id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Edge {
                 from: edge.from.clone(),
                 to: edge.to.clone(),
@@ -591,7 +641,7 @@ impl Board {
         };
         layer.insert(Element {
             id: id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Annotation {
                 target: target.clone(),
                 mark,
@@ -617,6 +667,7 @@ impl Board {
             .element(target)
             .filter(|element| element.state != ElementState::Pending)
             .ok_or_else(|| Rejected::UnknownElement(target.clone()))?;
+        user::not_yours(existing)?;
         Ok(strike(existing, op, text))
     }
 
@@ -651,7 +702,7 @@ impl Board {
         };
         layer.insert(Element {
             id: id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Trace,
             label: String::new(),
             geometry: Geometry::Points(points),
@@ -703,7 +754,8 @@ fn generated_id(prefix: &str, op: OpId) -> ElementId {
     ElementId::parse(&format!("{prefix}:{}", op.0)).expect("generated ids are valid")
 }
 
-fn node_draw(element: &Element, rect: Rect, link: Option<EdgePath>) -> DrawOp {
+/// The `Node` op that draws `element` (a node) under `op` at `rect`.
+fn node_draw(element: &Element, op: OpId, rect: Rect, link: Option<EdgePath>) -> DrawOp {
     let (shape, stack, fill) = match element.kind {
         ElementKind::Node {
             shape, stack, fill, ..
@@ -714,11 +766,12 @@ fn node_draw(element: &Element, rect: Rect, link: Option<EdgePath>) -> DrawOp {
         | ElementKind::Participant { .. }
         | ElementKind::Message { .. }
         | ElementKind::Cells { .. }
-        | ElementKind::Cell { .. } => (NodeShape::Note, 1, None),
+        | ElementKind::Cell { .. }
+        | ElementKind::User { .. } => (NodeShape::Note, 1, None),
     };
     DrawOp::Node {
         id: element.id.clone(),
-        op: element.op,
+        op,
         shape,
         label: element.label.clone(),
         rect,

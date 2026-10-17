@@ -250,6 +250,10 @@ export class SessionStore {
       case "SessionStart":
       case "ViewShow":
       case "ViewDismiss":
+      case "DrawMode":
+      case "UserShape":
+      case "UserShapeRemove":
+      case "LabelHint":
         break;
     }
   }

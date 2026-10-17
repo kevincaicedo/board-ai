@@ -33,12 +33,17 @@ pub(super) struct UserContext {
     pub dropped_ops: usize,
     /// The words cut BoardAI off, so a detour opened in reply answers them.
     pub interrupted: bool,
+    /// The user's drawing, described for the talker when they finish it (artboard 13).
+    pub drawing: Option<String>,
 }
 
 impl UserContext {
-    fn merge(&mut self, later: Self) {
+    pub(super) fn merge(&mut self, later: Self) {
         if later.note.is_some() {
             self.note = later.note;
+        }
+        if later.drawing.is_some() {
+            self.drawing = later.drawing;
         }
         self.frozen.extend(later.frozen);
         self.dropped_ops += later.dropped_ops;
@@ -190,13 +195,16 @@ impl Core {
             | ConversationState::Muted => return,
         };
         utterance.transcript(text, is_final);
+        let said = utterance.text();
+        let deadline = utterance.end_of_turn_at();
         let caption = UiEvent::Caption {
             who: Speaker::User,
-            text: utterance.text(),
+            text: said.clone(),
             is_final,
         };
-        let deadline = utterance.end_of_turn_at();
         effects.push(Effect::Ui(caption));
+        // While the user draws, words that could label their newest shape say so (artboard 13).
+        self.hint_label(&said, effects);
         if is_final {
             milestone(effects, Milestone::FinalTranscript);
         }
@@ -328,6 +336,10 @@ impl Core {
             self.settle_stop(None, effects);
         }
         let mut text = utterance.text();
+        // While the user draws, their words label shapes or finish the drawing (artboard 13).
+        if self.drawing_heard(now, &text, effects) {
+            return;
+        }
         // When these words began. Joined earlier words began before anything was proposed.
         let mut began = utterance.started_at();
         let mut context = std::mem::take(&mut self.user.context);
@@ -355,6 +367,7 @@ impl Core {
         if self.memory_control(&text, effects)
             || self.open_settings_by_voice(&text, effects)
             || self.end_session_by_voice(&text, effects)
+            || self.draw_by_voice(now, &text, effects)
         {
             self.user.context = context;
             return;
@@ -380,7 +393,7 @@ impl Core {
     /// What a detour opened in reply would answer: the user's words without their lead-in, when
     /// they cut BoardAI off or follow up on what is drawn. A first question on an empty board
     /// isn't a detour's question, even if the talker opens one.
-    fn question_of(&self, text: &str, context: &UserContext) -> Option<String> {
+    pub(super) fn question_of(&self, text: &str, context: &UserContext) -> Option<String> {
         let follows_up = self
             .board
             .layers()
@@ -409,13 +422,20 @@ impl Core {
         ));
     }
 
-    /// The user's message: the interruption note first, then the words, then where they were.
-    fn user_message(&self, text: &str, context: &UserContext) -> Message {
+    /// The user's message: the interruption note first, then their drawing and their words,
+    /// then where they were.
+    pub(super) fn user_message(&self, text: &str, context: &UserContext) -> Message {
         let mut lines = Vec::new();
         if let Some(note) = &context.note {
             lines.push(note.clone());
         }
-        lines.push(text.to_owned());
+        if let Some(drawing) = &context.drawing {
+            lines.push(drawing.clone());
+        }
+        // A finished drawing may come with no words at all.
+        if !text.trim().is_empty() {
+            lines.push(text.to_owned());
+        }
         if let Some(pointer) = self.describe_pointer() {
             lines.push(pointer);
         }

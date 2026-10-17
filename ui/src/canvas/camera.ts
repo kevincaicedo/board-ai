@@ -79,7 +79,10 @@ export function fitFrame(frame: Rect, area: FitArea, out: Transform): Transform 
 const fromScratch: Transform = { scale: 1, x: 0, y: 0 };
 const toScratch: Transform = { scale: 1, x: 0, y: 0 };
 
-/** The view at `at`: identity with no frame, else easing from the previous frame to the new one. */
+/**
+ * The view at `at`: identity with no frame, else easing from the previous frame (or from identity,
+ * for a first frame over shapes you drew) to the new one.
+ */
 export function cameraAt(
   camera: Camera,
   at: number,
@@ -94,13 +97,20 @@ export function cameraAt(
     return out;
   }
   fitFrame(camera.frame, area, toScratch);
-  if (camera.previous === null) {
+  if (camera.previous === null && camera.fromIdentity !== true) {
     out.scale = toScratch.scale;
     out.x = toScratch.x;
     out.y = toScratch.y;
     return out;
   }
-  fitFrame(camera.previous, area, fromScratch);
+  if (camera.previous === null) {
+    // Drawn on before any frame (13 · You draw): ease from where it was drawn.
+    fromScratch.scale = 1;
+    fromScratch.x = 0;
+    fromScratch.y = 0;
+  } else {
+    fitFrame(camera.previous, area, fromScratch);
+  }
   const f = easeOut(ramp(at, camera.at, camera.at + durationMs));
   out.scale = lerp(fromScratch.scale, toScratch.scale, f);
   out.x = lerp(fromScratch.x, toScratch.x, f);

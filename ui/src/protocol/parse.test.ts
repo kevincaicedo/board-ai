@@ -265,7 +265,59 @@ const EVERY_EVENT: UiEvent[] = [
   ...EVERY_VIEW.map((view): UiEvent => ({ type: "ViewShow", view, today: "2026-10-15" })),
   { type: "ViewDismiss" },
   { type: "OpenSettings" },
+  { type: "DrawMode", drawing: true },
+  { type: "DrawMode", drawing: false },
+  {
+    type: "UserShape",
+    layer: 0,
+    shape: {
+      id: "u1",
+      kind: { kind: "Box", rect: { x: 262, y: 326, w: 120, h: 72 } },
+      label: "Client",
+      note: null,
+    },
+  },
+  {
+    type: "UserShape",
+    layer: 1,
+    shape: {
+      id: "u2",
+      kind: { kind: "Arrow", start: { x: 1, y: 2 }, end: { x: 90, y: 2 }, from: "u1", to: null },
+      label: null,
+      note: null,
+    },
+  },
+  {
+    type: "UserShape",
+    layer: 0,
+    shape: {
+      id: "u5",
+      kind: {
+        kind: "Ink",
+        strokes: [
+          [
+            { x: -4, y: 0 },
+            { x: 9, y: 12 },
+          ],
+          [{ x: 3, y: 3 }],
+        ],
+        bounds: { x: -4, y: 0, w: 13, h: 12 },
+      },
+      label: "Postgres",
+      note: "source of truth",
+    },
+  },
+  { type: "UserShapeRemove", layer: 0, id: "u2" },
+  { type: "LabelHint", hint: { target: "u6", words: "and this one is the" } },
+  { type: "LabelHint", hint: null },
 ];
+
+const POINT = { x: 0, y: 0 };
+
+/** A drawn shape event with `kind`, for the malformed cases. */
+function userShapeWith(kind: unknown, id: unknown = "u1"): unknown {
+  return { type: "UserShape", layer: 0, shape: { id, kind, label: null, note: null } };
+}
 
 test("every protocol event round-trips through the parser unchanged", () => {
   for (const event of EVERY_EVENT) {
@@ -288,6 +340,28 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
     { type: "Caption", who: "Robot", text: "hi", is_final: false },
     { type: "Freeze", layer: 256 },
     { type: "Freeze", layer: -1 },
+    { type: "DrawMode", drawing: "yes" },
+    { type: "DrawMode" },
+    { type: "UserShapeRemove", layer: 0, id: "a b" },
+    { type: "LabelHint" },
+    { type: "LabelHint", hint: { target: "u1" } },
+    userShapeWith({ kind: "Box", rect: { x: 0, y: 0, w: -1, h: 1 } }),
+    userShapeWith({ kind: "Box", rect: { x: 0, y: 0, w: 1, h: 1 } }, "has space"),
+    userShapeWith({ kind: "Arrow", start: POINT, end: POINT, from: "x y", to: null }),
+    userShapeWith({ kind: "Ink", strokes: [], bounds: { x: 0, y: 0, w: 1, h: 1 } }),
+    userShapeWith({ kind: "Ink", strokes: [[]], bounds: { x: 0, y: 0, w: 1, h: 1 } }),
+    // Past the core's bounds: 513 points in a stroke, 33 strokes in a shape.
+    userShapeWith({
+      kind: "Ink",
+      strokes: [Array.from({ length: 513 }, () => POINT)],
+      bounds: { x: 0, y: 0, w: 1, h: 1 },
+    }),
+    userShapeWith({
+      kind: "Ink",
+      strokes: Array.from({ length: 33 }, () => [POINT]),
+      bounds: { x: 0, y: 0, w: 1, h: 1 },
+    }),
+    userShapeWith({ kind: "Scribble" }),
     {
       type: "OpStart",
       layer: 0,

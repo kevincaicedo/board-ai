@@ -18,9 +18,9 @@ impl Board {
         budget_ms: u32,
     ) -> Option<DrawOp> {
         let layer = self.layer_mut(layer_id).ok()?;
-        let op = layer.element(id)?.op;
+        let op = layer.element(id)?.op?;
         for element in &mut layer.elements {
-            if element.op == op && element.state == ElementState::Pending {
+            if element.op == Some(op) && element.state == ElementState::Pending {
                 element.state = ElementState::Drawing {
                     started_at: now,
                     budget_ms,
@@ -47,13 +47,14 @@ impl Board {
         let Geometry::Box(old) = group_element.geometry else {
             return None;
         };
+        let group_op = group_element.op?;
         let needed = layout::inflate(child, layout::GROUP_PADDING, layout::GROUP_LABEL_SPACE);
         let grown = old.union(needed);
         if grown == old {
             return None;
         }
         group_element.geometry = Geometry::Box(grown);
-        Some(node_draw(group_element, grown, None))
+        Some(node_draw(group_element, group_op, grown, None))
     }
 
     pub fn apply_strike(&mut self, layer_id: LayerId, target: &ElementId, label: &str) {
@@ -76,7 +77,7 @@ impl Board {
         let Some(op) = layer
             .element(id)
             .filter(|element| element.state == ElementState::Pending)
-            .map(|element| element.op)
+            .and_then(|element| element.op)
         else {
             return;
         };
@@ -87,7 +88,7 @@ impl Board {
             .collect();
         layer
             .elements
-            .retain(|element| !(element.op == op && element.state == ElementState::Pending));
+            .retain(|element| !(element.op == Some(op) && element.state == ElementState::Pending));
         for id in &removed {
             layer.grid.release(id);
         }
@@ -127,7 +128,7 @@ impl Board {
             .elements
             .iter()
             .filter_map(|element| match element.state {
-                ElementState::Drawing { started_at, .. } => Some((started_at, element.op)),
+                ElementState::Drawing { started_at, .. } => Some((started_at, element.op?)),
                 ElementState::Pending
                 | ElementState::Drawn
                 | ElementState::Frozen { .. }
@@ -142,7 +143,7 @@ impl Board {
             else {
                 continue;
             };
-            if element.op != latest_op {
+            if element.op != Some(latest_op) {
                 element.state = ElementState::Drawn;
                 continue;
             }

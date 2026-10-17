@@ -1,0 +1,156 @@
+/* Drawing together, transcribed from the design canvas (13 · You draw): the tools at bottom
+   left, the line at the top, the hint under the shape your words will label, and the surface
+   that takes the pointer while you draw. Only tokens here. */
+
+/* Over the board and under every control that follows it in the stage. */
+.draw-surface {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.draw-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.draw-preview path {
+  fill: none;
+  stroke: var(--ink-you);
+  stroke-width: var(--ink-you-width);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.draw-tools {
+  position: absolute;
+  left: var(--draw-tools-left);
+  bottom: var(--draw-tools-bottom);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--draw-tools-gap);
+  padding: var(--draw-tools-gap);
+  border-radius: var(--draw-tools-radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-draw-tools);
+}
+
+/* In a replay with its controls showing, the tools sit above them. */
+.draw-tools-raised {
+  bottom: calc(var(--controls-bottom) + var(--size-control) + var(--draw-tools-left));
+}
+
+.draw-tool {
+  width: var(--size-control);
+  height: var(--size-control);
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.draw-tool-on {
+  background: var(--you-soft);
+}
+
+.draw-tool svg {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.draw-tools-rule {
+  width: 1px;
+  height: 24px;
+  margin: 0 4px;
+  background: var(--grey-100);
+}
+
+.draw-done {
+  height: var(--draw-done-height);
+  padding: 0 var(--draw-done-padding);
+  border-radius: var(--draw-done-radius);
+  border: none;
+  background: var(--bg);
+  box-shadow: inset 0 0 0 var(--draw-done-ring) var(--ink-you);
+  font-family: inherit;
+  font-size: var(--type-draw-done);
+  color: var(--ink-you);
+  cursor: pointer;
+}
+
+.draw-done:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.draw-tool:focus-visible,
+.draw-done:focus-visible {
+  outline: 2px solid var(--ink-you);
+  outline-offset: 3px;
+}
+
+.draw-watching {
+  position: absolute;
+  left: 50%;
+  top: var(--draw-line-top);
+  width: var(--draw-line-width);
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: var(--type-draw-line);
+  color: var(--ink-2);
+  pointer-events: none;
+}
+
+.draw-watching-dot {
+  width: var(--draw-line-dot);
+  height: var(--draw-line-dot);
+  border-radius: 50%;
+  background: var(--ink-you);
+}
+
+.draw-hint {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: var(--draw-hint-radius);
+  background: var(--bg);
+  box-shadow: var(--shadow-control);
+  font-size: var(--type-draw-hint);
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.draw-hint-action {
+  color: var(--ink-2);
+}
+
+.draw-mic {
+  fill: none;
+  stroke: var(--ink-you);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

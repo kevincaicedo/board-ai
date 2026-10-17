@@ -6,6 +6,28 @@
 // The parser tables are typed by the generated unions, so a new protocol variant fails typecheck
 // until it is handled here.
 
+import {
+  elementId,
+  fields,
+  flag,
+  i32,
+  integer,
+  list,
+  nullable,
+  oneOf,
+  optional,
+  point,
+  type RowSkips,
+  rect,
+  rows,
+  SESSION_TIME_MAX,
+  type Tagged,
+  tagged,
+  text,
+  U32_MAX,
+  u8,
+  u32,
+} from "./fields.ts";
 import type { CellBox } from "./generated/CellBox.ts";
 import type { CellMark } from "./generated/CellMark.ts";
 import type { ChipKind } from "./generated/ChipKind.ts";
@@ -23,8 +45,6 @@ import type { NodeShape } from "./generated/NodeShape.ts";
 import type { NoteRow } from "./generated/NoteRow.ts";
 import type { OrbState } from "./generated/OrbState.ts";
 import type { PastLayer } from "./generated/PastLayer.ts";
-import type { Point } from "./generated/Point.ts";
-import type { Rect } from "./generated/Rect.ts";
 import type { SessionCard } from "./generated/SessionCard.ts";
 import type { SessionRef } from "./generated/SessionRef.ts";
 import type { SourceRef } from "./generated/SourceRef.ts";
@@ -36,126 +56,9 @@ import type { UiBatch } from "./generated/UiBatch.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { UiLogLine } from "./generated/UiLogLine.ts";
 import type { View } from "./generated/View.ts";
+import { labelHint, userShape } from "./yours.ts";
 
-type Fields = { readonly [key: string]: unknown };
-
-/** Rows of a view (sessions, tasks, notes, memories, past ops) skipped because they didn't parse. */
-export interface RowSkips {
-  rows: number;
-}
-
-const U8_MAX = 255;
-const U32_MAX = 4_294_967_295;
-const I32_MIN = -2_147_483_648;
-const I32_MAX = 2_147_483_647;
-/** `SessionTime` is a u64 on the wire; JavaScript numbers are exact up to 2^53. */
-const SESSION_TIME_MAX = Number.MAX_SAFE_INTEGER;
-
-function fields(value: unknown): Fields | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Fields)
-    : null;
-}
-
-function integer(value: unknown, low: number, high: number): number | null {
-  return typeof value === "number" && Number.isInteger(value) && value >= low && value <= high
-    ? value
-    : null;
-}
-
-const u8 = (value: unknown): number | null => integer(value, 0, U8_MAX);
-const u32 = (value: unknown): number | null => integer(value, 0, U32_MAX);
-const i32 = (value: unknown): number | null => integer(value, I32_MIN, I32_MAX);
-
-function text(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function flag(value: unknown): boolean | null {
-  return typeof value === "boolean" ? value : null;
-}
-
-function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
-  return typeof value === "string" && (allowed as readonly string[]).includes(value)
-    ? (value as T)
-    : null;
-}
-
-/** `null` stays `null`; anything else must parse. `undefined` marks a parse failure. */
-function nullable<T>(value: unknown, parse: (value: unknown) => T | null): T | null | undefined {
-  if (value === null) {
-    return null;
-  }
-  const parsed = parse(value);
-  return parsed === null ? undefined : parsed;
-}
-
-/**
- * A field protocol v2 added: a missing key reads as `null`, so event logs written before it
- * still replay; a present value must parse like a `nullable` one. `undefined` marks a failure.
- */
-function optional<T>(value: unknown, parse: (value: unknown) => T | null): T | null | undefined {
-  return value === undefined ? null : nullable(value, parse);
-}
-
-function list<T>(value: unknown, parse: (value: unknown) => T | null): T[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const out: T[] = [];
-  for (const entry of value) {
-    const parsed = parse(entry);
-    if (parsed === null) {
-      return null;
-    }
-    out.push(parsed);
-  }
-  return out;
-}
-
-/** A view's rows: each one parses on its own, and one that doesn't is skipped and counted. */
-function rows<T>(
-  value: unknown,
-  parse: (value: unknown, skips: RowSkips) => T | null,
-  skips: RowSkips,
-): T[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const out: T[] = [];
-  for (const entry of value) {
-    const parsed = parse(entry, skips);
-    if (parsed === null) {
-      skips.rows += 1;
-    } else {
-      out.push(parsed);
-    }
-  }
-  return out;
-}
-
-/** Element ids follow `ElementId::parse`: 1 to 64 bytes of letters, digits and `_ - . : >`. */
-const ELEMENT_ID = /^[A-Za-z0-9_\-.:>]{1,64}$/;
-
-function elementId(value: unknown): string | null {
-  return typeof value === "string" && ELEMENT_ID.test(value) ? value : null;
-}
-
-function point(value: unknown): Point | null {
-  const f = fields(value);
-  const x = i32(f?.x);
-  const y = i32(f?.y);
-  return x === null || y === null ? null : { x, y };
-}
-
-function rect(value: unknown): Rect | null {
-  const f = fields(value);
-  const x = i32(f?.x);
-  const y = i32(f?.y);
-  const w = u32(f?.w);
-  const h = u32(f?.h);
-  return x === null || y === null || w === null || h === null ? null : { x, y, w, h };
-}
+export type { RowSkips } from "./fields.ts";
 
 /** `[begin, end)` in characters; an empty or reversed range is malformed. */
 function columnRange(value: unknown): ColumnRange | null {
@@ -226,13 +129,6 @@ function sourceRef(value: unknown): SourceRef | null {
   const line = integer(f?.line, 1, U32_MAX);
   return path === null || line === null ? null : { path, line };
 }
-
-type Tagged<U, Tag extends string> = {
-  [K in U extends Record<Tag, infer N extends string> ? N : never]: (
-    f: Fields,
-    skips: RowSkips,
-  ) => Extract<U, Record<Tag, K>> | null;
-};
 
 const DRAW_OPS: Tagged<DrawOp, "kind"> = {
   Node: (f) => {
@@ -362,21 +258,6 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
       : { kind: "Write", op, target, label, rect: r };
   },
 };
-
-function tagged<U>(
-  table: Record<string, (f: Fields, skips: RowSkips) => U | null>,
-  tag: string,
-  value: unknown,
-  skips: RowSkips = { rows: 0 },
-): U | null {
-  const f = fields(value);
-  const name = f?.[tag];
-  if (f === null || typeof name !== "string" || !Object.hasOwn(table, name)) {
-    return null;
-  }
-  const parse = table[name];
-  return parse === undefined ? null : parse(f, skips);
-}
 
 export function parseDrawOp(value: unknown): DrawOp | null {
   return tagged<DrawOp>(DRAW_OPS, "kind", value);
@@ -694,6 +575,24 @@ const EVENTS: Tagged<UiEvent, "type"> = {
   ViewDismiss: () => ({ type: "ViewDismiss" }),
   OpenSettings: () => ({ type: "OpenSettings" }),
   SessionEnd: () => ({ type: "SessionEnd" }),
+  DrawMode: (f) => {
+    const drawing = flag(f.drawing);
+    return drawing === null ? null : { type: "DrawMode", drawing };
+  },
+  UserShape: (f) => {
+    const layer = u8(f.layer);
+    const shape = userShape(f.shape);
+    return layer === null || shape === null ? null : { type: "UserShape", layer, shape };
+  },
+  UserShapeRemove: (f) => {
+    const layer = u8(f.layer);
+    const id = elementId(f.id);
+    return layer === null || id === null ? null : { type: "UserShapeRemove", layer, id };
+  },
+  LabelHint: (f) => {
+    const hint = nullable(f.hint, labelHint);
+    return hint === undefined ? null : { type: "LabelHint", hint };
+  },
 };
 
 export function parseUiEvent(value: unknown, skips: RowSkips = { rows: 0 }): UiEvent | null {

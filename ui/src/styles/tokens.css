@@ -347,6 +347,33 @@
   --type-setup-note: 13px;
   --type-setup-note-line: 18px;
   --type-setup-start: 17px;
+
+  /* You draw (13 · You draw): your ink, the drawing tools at bottom left, the line at the top
+     and the hint under the shape your words will label. */
+  --ink-you: #5b5bd6;
+  --you-soft: #eeedfb;
+  --hand-note: 17px;
+  --hand-note-opacity: 0.8;
+  --ink-you-width: 2.2px;
+  --draw-tools-left: 28px;
+  --draw-tools-bottom: 32px;
+  --draw-tools-gap: 6px;
+  --draw-tools-radius: 28px;
+  --shadow-draw-tools: 0 10px 30px rgba(20, 20, 40, 0.1);
+  --draw-done-height: 44px;
+  --draw-done-padding: 18px;
+  --draw-done-radius: 22px;
+  --draw-done-ring: 1.5px;
+  --type-draw-done: 15px;
+  --draw-line-top: 28px;
+  --draw-line-width: 400px;
+  --draw-line-dot: 8px;
+  --type-draw-line: 13px;
+  --draw-hint-left: 28px;
+  --draw-hint-below: 20px;
+  --draw-hint-radius: 14px;
+  --type-draw-hint: 13px;
+  --duration-draw-preview-hold: 600ms;
 }
 
 html,

@@ -4,6 +4,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { demoJsonl } from "./demo.ts";
 import { diagramsJsonl } from "./diagrams.ts";
+import { drawingJsonl } from "./drawing.ts";
 import { primitivesJsonl } from "./primitives.ts";
 import { sessionFixtures, viewsJsonl } from "./views.ts";
 
@@ -13,6 +14,7 @@ for (const [name, text] of [
   ["primitives", primitivesJsonl()],
   ["diagrams", diagramsJsonl()],
   ["views", viewsJsonl()],
+  ["drawing", drawingJsonl()],
   ...sessionFixtures().map(([id, log]) => [`sessions/${id}`, log] as const),
 ] as const) {
   const target = new URL(`../../public/fixtures/${name}.events.jsonl`, import.meta.url);

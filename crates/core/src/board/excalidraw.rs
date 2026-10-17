@@ -2,10 +2,13 @@
 //! rectangles, ellipses, arrows, lines and text, hand-drawn (`roughness` 1) in Excalifont
 //! (`fontFamily` 5), with the board's hachure tones. Sequence diagrams export as head boxes,
 //! dashed lifelines and arrows; rows of cells as one rectangle per cell with its value, index
-//! and label texts; a tree's links as plain lines. One layer exports alone, or the whole
-//! session exports as one document with a frame per layer, side by side. Seeds come from element
-//! ids, so the same board always exports the same file, and nothing here reads a clock or a
-//! random source.
+//! and label texts; a tree's links as plain lines; shapes the user drew in their own ink (a
+//! rectangle, an arrow bound to what it joins, freehand strokes). One layer exports alone, or
+//! the whole session exports as one document with a frame per layer, side by side. Seeds come
+//! from element ids, so the same board always exports the same file, and nothing here reads a
+//! clock or a random source.
+
+mod user;
 
 use serde_json::{Value, json};
 
@@ -183,6 +186,9 @@ fn export_element(elements: &mut Vec<Value>, layer: &Layer, prefix: &str, elemen
             | ElementKind::Cell { .. },
             _,
         ) => export_diagram(elements, layer, &id, element),
+        (ElementKind::User { mark, note }, _) => {
+            user::export(elements, prefix, element, mark, note.as_deref());
+        }
         (
             ElementKind::Node { .. }
             | ElementKind::Edge { .. }
@@ -231,7 +237,8 @@ fn export_diagram(elements: &mut Vec<Value>, layer: &Layer, id: &str, element: &
             | ElementKind::Participant { .. }
             | ElementKind::Message { .. }
             | ElementKind::Cells { .. }
-            | ElementKind::Cell { .. },
+            | ElementKind::Cell { .. }
+            | ElementKind::User { .. },
             _,
         ) => debug_assert!(false, "kind and geometry always match"),
     }

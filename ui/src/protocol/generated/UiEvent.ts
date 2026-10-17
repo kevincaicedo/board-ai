@@ -2,6 +2,7 @@
 import type { ChipKind } from "./ChipKind.ts";
 import type { DrawOp } from "./DrawOp.ts";
 import type { ElementId } from "./ElementId.ts";
+import type { LabelHint } from "./LabelHint.ts";
 import type { LayerId } from "./LayerId.ts";
 import type { OrbState } from "./OrbState.ts";
 import type { Rect } from "./Rect.ts";
@@ -10,6 +11,7 @@ import type { Speaker } from "./Speaker.ts";
 import type { Surface } from "./Surface.ts";
 import type { SurfaceId } from "./SurfaceId.ts";
 import type { SurfaceUpdate } from "./SurfaceUpdate.ts";
+import type { UserShape } from "./UserShape.ts";
 import type { View } from "./View.ts";
 
-export type UiEvent = { "type": "Orb", state: OrbState, level_percent: number, } | { "type": "Acknowledge" } | { "type": "Caption", who: Speaker, text: string, is_final: boolean, } | { "type": "Thread", steps: Array<string>, current: number | null, detours: Array<string>, } | { "type": "OpStart", layer: LayerId, op: DrawOp, budget_ms: number, } | { "type": "Freeze", layer: LayerId, } | { "type": "Resume", layer: LayerId, budget_ms: number, } | { "type": "LayerPush", layer: LayerId, title: string, question: string | null, } | { "type": "LayerPop", layer: LayerId, } | { "type": "Camera", layer: LayerId, frame: Rect, focus: ElementId | null, } | { "type": "SurfaceShow", surface: Surface, } | { "type": "SurfaceUpdate", id: SurfaceId, update: SurfaceUpdate, } | { "type": "SurfaceDismiss", id: SurfaceId, } | { "type": "Chip", kind: ChipKind, text: string, source: SourceRef | null, } | { "type": "Problem", spoken: string, detail: string, } | { "type": "Suggestion", text: string | null, } | { "type": "SessionStart", session: string | null, } | { "type": "ViewShow", view: View, today: string, } | { "type": "ViewDismiss" } | { "type": "OpenSettings" } | { "type": "SessionEnd" };
+export type UiEvent = { "type": "Orb", state: OrbState, level_percent: number, } | { "type": "Acknowledge" } | { "type": "Caption", who: Speaker, text: string, is_final: boolean, } | { "type": "Thread", steps: Array<string>, current: number | null, detours: Array<string>, } | { "type": "OpStart", layer: LayerId, op: DrawOp, budget_ms: number, } | { "type": "Freeze", layer: LayerId, } | { "type": "Resume", layer: LayerId, budget_ms: number, } | { "type": "LayerPush", layer: LayerId, title: string, question: string | null, } | { "type": "LayerPop", layer: LayerId, } | { "type": "Camera", layer: LayerId, frame: Rect, focus: ElementId | null, } | { "type": "SurfaceShow", surface: Surface, } | { "type": "SurfaceUpdate", id: SurfaceId, update: SurfaceUpdate, } | { "type": "SurfaceDismiss", id: SurfaceId, } | { "type": "Chip", kind: ChipKind, text: string, source: SourceRef | null, } | { "type": "Problem", spoken: string, detail: string, } | { "type": "Suggestion", text: string | null, } | { "type": "SessionStart", session: string | null, } | { "type": "ViewShow", view: View, today: string, } | { "type": "ViewDismiss" } | { "type": "OpenSettings" } | { "type": "SessionEnd" } | { "type": "DrawMode", drawing: boolean, } | { "type": "UserShape", layer: LayerId, shape: UserShape, } | { "type": "UserShapeRemove", layer: LayerId, id: ElementId, } | { "type": "LabelHint", hint: LabelHint | null, };

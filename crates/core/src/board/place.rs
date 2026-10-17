@@ -1,7 +1,9 @@
 //! Placement helpers for the board: where a new node goes, what a repeated id means, and the
 //! path between two connected nodes.
 
-use crate::board::{Element, ElementKind, ElementState, Geometry, Layer, Placed, free, layout};
+use crate::board::{
+    Element, ElementKind, ElementState, Geometry, Layer, Placed, UserMark, free, layout,
+};
 use crate::geometry::Rect;
 use crate::ids::{ElementId, OpId};
 use crate::narration::ops::{Direction, Placement};
@@ -167,11 +169,22 @@ fn grid_spot(
     }
 }
 
-/// The path of the edge `from>to`, or `to>from` walked backwards.
+/// The path of the edge `from>to`, or `to>from` walked backwards; an arrow you drew between the
+/// two counts too.
 pub(super) fn edge_between(layer: &Layer, from: &ElementId, to: &ElementId) -> Option<EdgePath> {
     layer.elements.iter().find_map(|element| {
-        let (ElementKind::Edge { from: a, to: b, .. }, Geometry::Path(path)) =
-            (&element.kind, &element.geometry)
+        let (
+            ElementKind::Edge { from: a, to: b, .. }
+            | ElementKind::User {
+                mark:
+                    UserMark::Arrow {
+                        from: Some(a),
+                        to: Some(b),
+                    },
+                ..
+            },
+            Geometry::Path(path),
+        ) = (&element.kind, &element.geometry)
         else {
             return None;
         };

@@ -278,6 +278,18 @@ impl Core {
         }
     }
 
+    /// The user started drawing (artboard 13): their next words label shapes, so they can't
+    /// keep a proposal, which waits in the digest instead.
+    pub(super) fn close_proposal_for_drawing(&mut self) {
+        if let Some(proposal) = self.memory.proposal.take() {
+            self.context.notice(format!(
+                "The user started drawing instead of answering, so the proposed memory \"{}\" was \
+                 not kept; it waits in the session digest.",
+                proposal.text
+            ));
+        }
+    }
+
     /// The user's next words after a proposal: "yes, keep it" keeps it and is answered here
     /// (returns true); anything else leaves it in the digest and goes on to the talker. Words
     /// begun before the proposal (the user was talking over it) answer something else, and the

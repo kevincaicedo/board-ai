@@ -1,8 +1,9 @@
 //! A seeded fuzzer over conversation interleavings (LLD §7). Random talker replies (good, bad
 //! and malformed narration, tools, refusals, failures) meet random user behaviour (questions,
-//! backchannels, interruptions, coughs, pointing, mute, push-to-talk, the Esc stop, yes and no)
-//! and a voice that sometimes fails to synthesize a clause, on the simulator's fake clock. Every
-//! step is checked for I1–I7, I9 and I11 and the voice's gain; any panic fails the test.
+//! backchannels, interruptions, coughs, pointing, mute, push-to-talk, the Esc stop, yes and no,
+//! drawing with the pen, box and arrow, labels, undo, done and Esc) and a voice that sometimes
+//! fails to synthesize a clause, on the simulator's fake clock. Every step is checked for I1–I7,
+//! I9, I11, I13, I14 and the voice's gain; any panic fails the test.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
@@ -12,11 +13,15 @@ use std::collections::BTreeMap;
 use boardai_core::conversation::ConversationState;
 use boardai_core::effect::{Effect, LogRecord, Milestone};
 use boardai_core::engine::text::{CHANGE_QUESTION_END, SYNTHESIS_FAILED_DETAIL};
+use boardai_core::geometry::{Point, Rect};
 use boardai_core::harness::HarnessKind;
+use boardai_core::history::{Message, UserPart};
 use boardai_core::ids::{ClauseId, ElementId, LayerId};
 use boardai_core::input::{Input, StopReason, TalkerFailure, TalkerFailureKind};
 use boardai_core::limits::VOICE_ONSET_DUCK_HOLD_MS;
-use boardai_core::protocol::{DrawOp, MicAction, PointerTarget, Speaker, UiCommand, UiEvent};
+use boardai_core::protocol::{
+    DrawAction, DrawOp, DrawnShape, MicAction, PointerTarget, Speaker, UiCommand, UiEvent,
+};
 use boardai_core::sim::talker::ScriptedReply;
 use boardai_core::sim::{Sim, USER_FINAL_DELAY_MS, USER_MS_PER_WORD, USER_ONSET_LEAD_MS};
 use boardai_core::{CoreConfig, MicMode};
@@ -284,6 +289,112 @@ fn act(sim: &mut Sim, rng: &mut Rng) -> u64 {
     }
 }
 
+/// What the user says while drawing (artboard 13): labels, controls, a question and talk.
+const DRAWING_WORDS: &[&str] = &[
+    "this is the cache",
+    "and this one is the API",
+    "Redis",
+    "source of truth",
+    "undo that",
+    "done",
+    "Does this make sense?",
+    "never mind",
+    "the client calls the API and then the API reads from Postgres",
+    "let me draw it",
+];
+
+/// A random finished shape somewhere on the board, sometimes a click the core refuses.
+fn random_shape(rng: &mut Rng) -> DrawnShape {
+    let coordinate = |rng: &mut Rng, span: u64| i32::try_from(rng.below(span)).unwrap_or(0) - 200;
+    match rng.below(4) {
+        0 => DrawnShape::Arrow {
+            start: Point {
+                x: coordinate(rng, 1_400),
+                y: coordinate(rng, 1_000),
+            },
+            end: Point {
+                x: coordinate(rng, 1_400),
+                y: coordinate(rng, 1_000),
+            },
+        },
+        1 => {
+            let (x, y) = (coordinate(rng, 1_400), coordinate(rng, 1_000));
+            DrawnShape::Pen {
+                points: (0..20)
+                    .map(|step| Point {
+                        x: x + step * 7,
+                        y: y + (step % 5) * 9,
+                    })
+                    .collect(),
+            }
+        }
+        _ => DrawnShape::Box {
+            rect: Rect {
+                x: coordinate(rng, 1_400),
+                y: coordinate(rng, 1_000),
+                w: u32::try_from(rng.below(200)).unwrap_or(0) + 2,
+                h: u32::try_from(rng.below(120)).unwrap_or(0) + 2,
+            },
+        },
+    }
+}
+
+/// One drawing action at the current time; returns how long to leave the floor alone.
+fn draw_act(sim: &mut Sim, rng: &mut Rng) -> u64 {
+    let now = sim.now().as_ms();
+    let command = |action: DrawAction| Input::Command(UiCommand::Draw { action });
+    if !sim.core().is_drawing() {
+        if rng.below(2) == 0 {
+            sim.at(now, command(DrawAction::Start));
+            return 500;
+        }
+        return saying(sim, now, "let me draw what I mean");
+    }
+    match rng.below(10) {
+        0..=3 => {
+            for step in 0..1 + rng.below(3) {
+                let drawn = random_shape(rng);
+                let layer = LayerId::MAIN;
+                sim.at(
+                    now + step * 200,
+                    command(DrawAction::Shape { layer, drawn }),
+                );
+            }
+            700
+        }
+        4 | 5 => saying(sim, now, rng.pick(DRAWING_WORDS)),
+        6 => {
+            sim.at(now, command(DrawAction::Undo));
+            100
+        }
+        7 => {
+            sim.at(now, command(DrawAction::Done));
+            500
+        }
+        8 => {
+            sim.at(now, command(DrawAction::Cancel));
+            100
+        }
+        _ => {
+            sim.mic(now, MicAction::Mute);
+            sim.mic(now + 300 + rng.below(1_500), MicAction::Unmute);
+            2_000
+        }
+    }
+}
+
+/// A talker request carrying the user's finished drawing.
+fn asks_about_a_drawing(effect: &Effect) -> bool {
+    let Effect::Talk { request } = effect else {
+        return false;
+    };
+    request.messages.iter().any(|message| {
+        matches!(message, Message::User { parts } if parts.iter().any(|part| {
+            matches!(part, UserPart::Text { text } if text.contains("[The user drew"))
+        }))
+    })
+}
+
 /// How often the interesting paths ran, so the fuzzer can't pass by exercising nothing.
 #[derive(Default)]
 struct Coverage {
@@ -372,6 +483,19 @@ const PATHS: &[(&str, Reached)] = &[
             Effect::Ui(UiEvent::OpStart { op: DrawOp::Message { extend, .. }, .. }) if !extend.is_empty()
         )
     }),
+    ("drawing", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::DrawMode { drawing: true }))
+    }),
+    ("your shape", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::UserShape { .. }))
+    }),
+    ("undone", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::UserShapeRemove { .. }))
+    }),
+    ("label hint", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::LabelHint { hint: Some(_) }))
+    }),
+    ("drawing turn", asks_about_a_drawing),
 ];
 
 /// Clauses whose synthesis fails, about one in [`FAILED_CLAUSE_ONE_IN`], from their own generator
@@ -427,6 +551,7 @@ fn add_memory_calls(reply: ScriptedReply, memory: &mut Rng) -> ScriptedReply {
 fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut memory = Rng(seed.wrapping_mul(0xbf58_476d_1ce4_e5b9) | 1);
+    let mut drawing = Rng(seed.wrapping_mul(0x94d0_49bb_1331_11eb) | 1);
     let mut sim = Sim::new(CoreConfig {
         mic,
         suggestion: Some("Pick up where we left off?".to_owned()),
@@ -454,6 +579,8 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
         } else if memory.below(6) == 0 {
             let now = sim.now().as_ms();
             saying(&mut sim, now, memory.pick(CONTROLS))
+        } else if drawing.below(24) == 0 || (sim.core().is_drawing() && drawing.below(3) > 0) {
+            draw_act(&mut sim, &mut drawing)
         } else {
             act(&mut sim, &mut rng)
         };
@@ -515,6 +642,11 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "view closed",
         "detour closed",
         "session end",
+        "drawing",
+        "your shape",
+        "undone",
+        "label hint",
+        "drawing turn",
     ]);
 }
 
@@ -534,5 +666,7 @@ fn random_interleavings_keep_every_invariant_push_to_talk() {
         "op",
         "dropped",
         "skipped clause",
+        "drawing",
+        "your shape",
     ]);
 }

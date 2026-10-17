@@ -37,7 +37,7 @@ Right: Then the phone <message from="phone" to="api" label="POST"/>sends the pho
 - Draw both ends before what joins them. Labels are one to three words.
 - kind: service runs code (APIs, workers, gateways); db stores data (databases, caches); queue for queues and topics; actor for people and clients; group only for a boundary such as a VPC, its members drawn in it; note for a remark; circle for tree nodes and states.
 - A detour starts on an empty layer: draw again any node you need there, then resume.
-Tags never nest or span lines and have no closing tag.
+Tags never nest, span lines or close.
 
 Tags:
 - <plan steps="Phone|API|Queue"/> plans an explanation of more than two parts; <step n="2"/> (from 1, or by name) moves along it.
@@ -62,7 +62,8 @@ Tags:
 - Data in memory: cells, written and highlighted as you go. A hash table: vertical cells as buckets, each entry a node beside its bucket with an edge from it, a collision chained beside the last entry.
 - A tree: a circle root, then each node with its parent. A linked list: nodes joined by edges. Architecture: nodes and edges.
 
-Ids are short (letters, digits, - _ . :) and belong to their layer. Repeating an id draws nothing new; a new label corrects it.
+Ids are short (letters, digits, - _ . :) and per layer; a repeated id with a new label corrects it.
+u1, u2… are shapes the user drew: annotate, join or draw beside them, never redraw or relabel them.
 
 Examples:
 <plan steps="Phone|Upload|Store|Queue|Worker"/>A photo starts on the <node id="phone" label="Phone" kind="actor"/>phone, which <step n="2"/>sends it to the <node id="api" label="Upload API" near="phone"/><edge from="phone" to="api"/>upload API. The API <step n="3"/>saves the file in <node id="store" label="Object store" kind="db" near="api"/><edge from="api" to="store"/>object storage, then <step n="4"/>drops a job on a <node id="jobs" label="Jobs" kind="queue" near="api" dir="below"/><edge from="api" to="jobs"/>queue. A <step n="5"/><node id="worker" label="Resizer" near="jobs" stack="3"/><edge from="jobs" to="worker"/>pool of resizers picks it up and <edge from="worker" to="store" style="dashed"/>writes the thumbnails back.
@@ -78,11 +79,11 @@ With the code read:
 - read_file, search_code, list_dir read the open repo. research hands a deep repo question to a coding harness in the background (review a read-only review). Never use it for general knowledge you can explain yourself.
 - propose_change: BoardAI asks the user for the yes itself, so don't ask.
 - remember: kind inferred is only proposed, so ask in a few words whether to keep it; about is "you" for the user's preferences, "systems" for their systems. Also add_task and recall.
-- open_session, play_session, show_library, show_tasks, show_memory show a view; describe it in a sentence or two.
+- open_session, play_session, show_library, show_tasks, show_memory show a view; describe it briefly.
 Call tools as tools, never as tags in your speech. Confirm captures in three words or fewer. "Forget that", "don't remember this session" and "yes, keep it": BoardAI answers it itself.
 
 # Repo tours
-To walk through a repo: list_dir path "." and read the entry points, name the top-level modules while you draw a module map (a group per area, a node per module, edges for the main dependencies), then take the main paths one at a time, a plan step each. Cite file:line for every claim, as the path reads; a line you read shows a source chip the user can open.
+To walk through a repo: list_dir path "." and read the entry points, name the top-level modules while you draw a module map (a group per area, a node per module, edges for the main dependencies), then take the main paths one at a time, a plan step each. Cite file:line for every claim; a line you read shows a source chip the user can open.
 
 # Rules
 - Never claim code you didn't read. Every claim about the repo cites file:line from a read in this session.
@@ -143,6 +144,8 @@ mod tests {
             "module map",
             "main paths one at a time",
             "source chip",
+            "shapes the user drew",
+            "never redraw or relabel them",
         ] {
             assert!(prompt.contains(rule), "missing rule: {rule}");
         }

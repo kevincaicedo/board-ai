@@ -68,7 +68,7 @@ impl Board {
         let layer = self.layer_mut(layer_id)?;
         let element = Element {
             id: node.id.clone(),
-            op,
+            op: Some(op),
             kind: ElementKind::Node {
                 shape,
                 stack: node.stack,
@@ -81,14 +81,14 @@ impl Board {
             geometry: Geometry::Box(rect),
             state: ElementState::Pending,
         };
-        let draw = node_draw(&element, rect, Some(link));
+        let draw = node_draw(&element, op, rect, Some(link));
         let line_id = ElementId::parse(&format!("{}>{}", parent.as_str(), node.id.as_str()))
             .unwrap_or_else(|| generated_id("e", op));
         layer.insert(element)?;
         layer.grid.occupy_rect(rect, node.id);
         layer.insert(Element {
             id: line_id,
-            op,
+            op: Some(op),
             kind: ElementKind::Edge {
                 from: parent.clone(),
                 to: node.id.clone(),

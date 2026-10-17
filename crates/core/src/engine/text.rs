@@ -37,6 +37,10 @@ pub const NOT_KEPT_LINE: &str = "That wasn't kept.";
 pub const NOT_FORGOTTEN_LINE: &str = "That wasn't forgotten.";
 pub const NOT_FORGOTTEN_SESSION_LINE: &str = "This session wasn't fully forgotten.";
 
+/// Said when you start drawing (artboard 13); then BoardAI waits until you finish.
+pub const DRAW_GO_AHEAD_LINE: &str =
+    "Go ahead. Say what each part is as you draw, and \u{201c}done\u{201d} when you're ready.";
+
 /// Spoken when a turn runs out of tool rounds.
 pub const TOOL_ROUNDS_LINE: &str = "I got stuck looking things up. Let's try a narrower question.";
 

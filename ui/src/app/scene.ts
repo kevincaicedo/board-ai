@@ -4,6 +4,7 @@
 
 import { BoardModel, type LeadDecision } from "../canvas/board.ts";
 import { leadDecision, Presence } from "../canvas/presence.ts";
+import { DrawModel } from "../draw/model.ts";
 import { OrbDynamics } from "../orb/dynamics.ts";
 import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
@@ -22,6 +23,8 @@ export class Scene implements BatchSink {
   readonly store: SessionStore;
   /** The view summoned by voice (library, Now list, memory, a past board, a replay). */
   readonly views = new ViewStore();
+  /** Drawing together (13 · You draw): the mode, your shapes and the label hint. */
+  readonly draw = new DrawModel();
   /** Bumped on reset, so views know to drop what they built. */
   generation = 0;
   readonly #lead: LeadDecision;
@@ -46,6 +49,7 @@ export class Scene implements BatchSink {
     this.orb.reset();
     this.store.reset();
     this.views.reset();
+    this.draw.reset();
     this.generation += 1;
   }
 
@@ -69,9 +73,14 @@ export class Scene implements BatchSink {
         this.board.apply(event, at, this.#lead);
         break;
       case "Resume":
-      case "Camera":
         this.board.apply(event, at, this.#lead);
         break;
+      case "Camera": {
+        // Shapes you drew before the layer had a frame ease into it rather than jump.
+        const drawn = (this.draw.layers.get(event.layer)?.size ?? 0) > 0;
+        this.board.apply(event, at, this.#lead, drawn);
+        break;
+      }
       case "LayerPush":
       case "LayerPop":
         this.board.apply(event, at, this.#lead);
@@ -88,6 +97,8 @@ export class Scene implements BatchSink {
         this.board.end(at);
         this.presence.rest(at);
         this.views.dismiss(at);
+        // A drawing ends with its session; your shapes fade with the board.
+        this.draw.end();
         break;
       // A new session's stage is reset by the transport before this event arrives (a replay
       // starts with it at time zero, on an empty stage already).
@@ -100,6 +111,18 @@ export class Scene implements BatchSink {
       case "Chip":
       case "Problem":
       case "OpenSettings":
+        break;
+      case "DrawMode":
+        // BoardAI watches from the dock while you draw, as it does after drawing itself.
+        if (event.drawing) {
+          this.presence.drawingStarted(at);
+        }
+        this.draw.apply(event, at);
+        break;
+      case "UserShape":
+      case "UserShapeRemove":
+      case "LabelHint":
+        this.draw.apply(event, at);
         break;
     }
     this.store.apply(event, at);

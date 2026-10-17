@@ -69,6 +69,14 @@
   stroke: var(--sketch-blush);
   fill: var(--sketch-blush);
 }
+/* Your ink (13 · You draw) */
+.tone-you {
+  stroke: var(--ink-you);
+  fill: var(--ink-you);
+}
+.you-note {
+  opacity: var(--hand-note-opacity);
+}
 
 path.stroke {
   fill: none;

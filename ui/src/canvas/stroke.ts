@@ -18,7 +18,9 @@ export type Tone =
   | "lilac"
   | "sky"
   | "mint"
-  | "blush";
+  | "blush"
+  /** The user's own ink (13 · You draw). */
+  | "you";
 
 export interface Stroke {
   readonly type: "stroke";

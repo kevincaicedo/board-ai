@@ -31,7 +31,8 @@ export type ChapterKind =
   | "Compare"
   | "Recap"
   | "Capture"
-  | "Resume";
+  | "Resume"
+  | "Drawing";
 
 export interface Chapter {
   readonly at: number;
@@ -154,6 +155,11 @@ export function chaptersOf(batches: readonly UiBatch[]): Chapter[] {
             );
           }
           break;
+        case "DrawMode":
+          if (event.drawing) {
+            add(batch.at, "Drawing");
+          }
+          break;
         case "Acknowledge":
         case "Thread":
         case "Freeze":
@@ -167,6 +173,9 @@ export function chaptersOf(batches: readonly UiBatch[]): Chapter[] {
         case "ViewDismiss":
         case "OpenSettings":
         case "SessionEnd":
+        case "UserShape":
+        case "UserShapeRemove":
+        case "LabelHint":
           break;
       }
     }
