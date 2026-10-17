@@ -165,7 +165,7 @@ export const MIC_DENIED =
 
 /**
  * Where to turn the microphone on when macOS said no. Started from a terminal or an editor,
- * BoardAI's microphone is that app's, so the switch to turn on is that app's (D-186).
+ * BoardAI's microphone is that app's, so the switch to turn on is that app's (D-149).
  */
 export function micDenied(attributedTo: string | null): string {
   if (attributedTo === null) {

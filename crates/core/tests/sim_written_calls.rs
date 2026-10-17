@@ -1,4 +1,4 @@
-//! Simulator scenarios for tool calls the talker wrote as tags (D-180): in the owner's third
+//! Simulator scenarios for tool calls the talker wrote as tags (D-143): in the owner's third
 //! session gemma4 wrote `<remember …/>` and `<show_memory/>` into its speech, the parser dropped
 //! them, and no note was kept while BoardAI said it was.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]

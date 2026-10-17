@@ -1,4 +1,4 @@
-// The stage after the session ends (D-182): the board fades out, cards and the view leave, the
+// The stage after the session ends (D-145): the board fades out, cards and the view leave, the
 // thread and the suggestion go, and the orb grows back to the center (frame 1) until the next
 // session's start resets the stage.
 

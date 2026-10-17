@@ -1,4 +1,4 @@
-//! Rows and columns of cells (D-150): arrays, memory pages, hash buckets, a linked list's boxes.
+//! Rows and columns of cells (D-120): arrays, memory pages, hash buckets, a linked list's boxes.
 //! One `cells` op draws them all; each cell is its own element (`arr.3`, from 0), so the talker
 //! can point at it, mark it, highlight it, write into it and strike it, and an edge can start at
 //! it. A row's label is written left of it and its index labels under each cell; a column's label

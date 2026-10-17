@@ -71,7 +71,7 @@ export class ReplayTransport implements Transport {
 
   /**
    * The replay played to its end: a session's replay then returns to where it was opened
-   * (D-183). A seek, or playing again, clears it.
+   * (D-146). A seek, or playing again, clears it.
    */
   get finished(): boolean {
     return this.#finished;

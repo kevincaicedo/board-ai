@@ -1,7 +1,7 @@
 // The surface column in the right half of the stage (frames 4–6): the open detour's card and at
 // most two surfaces, stacked from the top, or one centered. Cards rise out of a blur when they
 // arrive, glide on a spring when the column makes room, and blur out when they leave. A detour
-// card is sized from its drawing each frame (D-188): it grows taller, and wider to the left of
+// card is sized from its drawing each frame (D-151): it grows taller, and wider to the left of
 // the column, when the drawing would no longer read at frame 4's size.
 
 import { useMemo, useRef } from "preact/hooks";

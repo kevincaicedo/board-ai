@@ -1,4 +1,4 @@
-//! Source chips (PRODUCT §7.3, D-152). When the talker says `path:line` for a line read this
+//! Source chips (PRODUCT §7.3, D-123). When the talker says `path:line` for a line read this
 //! session, a chip carrying that location appears as the voice reaches it; clicking it opens the
 //! code card on that line. Both ends hold to law 6: a citation of anything not read shows no
 //! chip (and the talker is told, when it names a repo path), and a click opens only lines read

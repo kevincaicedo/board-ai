@@ -255,7 +255,7 @@ export class SessionStore {
   }
 
   /**
-   * The session ended (D-182): every card leaves as a dismissed one does, the thread goes, the
+   * The session ended (D-145): every card leaves as a dismissed one does, the thread goes, the
    * suggestion is cleared and the lines close so they fade.
    */
   #end(at: number): void {

@@ -7,7 +7,7 @@
 //! view never hides what is being explained. "Open settings" opens the settings screen, which
 //! the UI and the app own.
 //!
-//! A replay opened over the library returns to it when it closes (D-183): by Esc, by "close
+//! A replay opened over the library returns to it when it closes (D-146): by Esc, by "close
 //! that", or when it has played to its end (the UI then sends `CloseView`). Opened from the live
 //! stage, it returns to the live stage.
 
@@ -22,7 +22,7 @@ use crate::protocol::{DrawOp, UiEvent};
 use crate::views::{NoteRow, PastLayer, SessionCard, TaskRow, View, ViewKind};
 
 /// The library while it is on screen, and the library a replay was opened over: closing that
-/// replay shows it again (D-183). A view as read, with the day it was read.
+/// replay shows it again (D-146). A view as read, with the day it was read.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct LibraryReturn {
     on_screen: Option<Box<(View, String)>>,

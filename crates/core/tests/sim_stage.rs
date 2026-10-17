@@ -1,5 +1,5 @@
-//! Simulator scenarios for the stage itself: ending the session by voice (D-181), going back to
-//! the main board from a detour (D-184), and the recap leaving when the topic moves on (D-185).
+//! Simulator scenarios for the stage itself: ending the session by voice (D-144), going back to
+//! the main board from a detour (D-147), and the recap leaving when the topic moves on (D-148).
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
@@ -326,7 +326,7 @@ fn libraries_shown(sim: &Sim) -> usize {
     })
 }
 
-/// D-183: a replay played from the library goes back to it when it closes (the UI closes it once
+/// D-146: a replay played from the library goes back to it when it closes (the UI closes it once
 /// it has played to its end), and the library then closes as usual.
 #[test]
 fn a_replay_opened_over_the_library_returns_to_it() {

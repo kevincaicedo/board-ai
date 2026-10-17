@@ -78,7 +78,7 @@ test("download events are checked and malformed ones dropped", async () => {
   assert.equal(transport.malformedEvents, 2);
 });
 
-// D-186: a shell from before `mic_attributed_to` sends none; a blank one names nothing.
+// D-149: a shell from before `mic_attributed_to` sends none; a blank one names nothing.
 test("the app macOS asks about is read at the boundary", async () => {
   const { mic_attributed_to: _left, ...older } = firstLaunch();
   assert.equal(parseSetupStatus(older)?.mic_attributed_to, null);

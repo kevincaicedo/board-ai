@@ -1,4 +1,4 @@
-// How big a detour's card is, from its drawing (D-188). Frame 4's card (the column's width,
+// How big a detour's card is, from its drawing (D-151). Frame 4's card (the column's width,
 // --detour-card-height tall) holds a small detour at its natural size, but a detour that grew
 // shrank to fit: the owner's two larger detours drew at 0.42 and 0.25 of their size. So while
 // the drawing reads at --detour-scale-min or more the card keeps frame 4's size (a small one is

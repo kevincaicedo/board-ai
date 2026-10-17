@@ -1,4 +1,4 @@
-//! Simulator scenarios for the MVP diagram types (PRODUCT §7.1, D-150): a sequence diagram whose
+//! Simulator scenarios for the MVP diagram types (PRODUCT §7.1, D-120): a sequence diagram whose
 //! lifelines grow as messages arrive, an array filled and marked cell by cell, a binary tree
 //! growing, and a hash table with a collision chain. Every run also holds I1 (nothing drawn
 //! before its word), I6 (nothing drawn moves; a lifeline only grows from where it ended) and I11
@@ -506,7 +506,7 @@ fn a_detour_draws_its_own_sequence() {
 }
 
 /// Pointing at a cell names the cell, with its value, to the talker: a cell is an element of its
-/// own (D-150), so "why is this one stale?" lands on `ht.2`, not on the whole column.
+/// own (D-120), so "why is this one stale?" lands on `ht.2`, not on the whole column.
 #[test]
 fn pointing_at_a_cell_names_that_cell() {
     let mut sim = Sim::new(config());

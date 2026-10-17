@@ -133,11 +133,11 @@ pub struct Core {
     /// The view on screen, if any (LLD §3.7).
     view: Option<ViewKind>,
     /// The library on screen, and the one a replay opened over: closing that replay shows it
-    /// again (D-183).
+    /// again (D-146).
     library_return: views::LibraryReturn,
-    /// Whether "end the session" was said, and whether the session has ended (D-181).
+    /// Whether "end the session" was said, and whether the session has ended (D-144).
     ending: stage::SessionEnding,
-    /// Views read for tool calls the talker wrote as tags (D-180).
+    /// Views read for tool calls the talker wrote as tags (D-143).
     written_reads: written::WrittenReads,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]

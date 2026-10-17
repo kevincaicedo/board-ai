@@ -109,7 +109,7 @@ pub async fn setup_microphone(
 }
 
 /// "Open Microphone settings": System Settings at Privacy & Security › Microphone, where the
-/// app macOS asks about (BoardAI, or the one it was started from) is turned on (D-186).
+/// app macOS asks about (BoardAI, or the one it was started from) is turned on (D-149).
 #[tauri::command]
 pub async fn setup_open_microphone_settings() -> Result<(), String> {
     blocking(permission::open_microphone_settings).await

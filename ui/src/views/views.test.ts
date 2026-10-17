@@ -250,7 +250,7 @@ test("views move the orb: the library docks it, panels set it beside them", () =
   assert.equal(beside.kind, "aside");
   if (beside.kind === "aside") {
     // The canvas's 9 · Brain: a 440 px panel 32 px from the right; the orb in the middle of the
-    // 968 px left of it (D-187).
+    // 968 px left of it (D-150).
     assert.equal(beside.free, 968);
     assert.ok(Math.abs(beside.x - 484) < 1);
   }

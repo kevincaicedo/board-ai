@@ -119,7 +119,7 @@ test("detour cards stay bounded even if pops never come", () => {
   assert.equal(open.length, DETOUR_CARDS_MAX);
 });
 
-// D-188: a detour card grown for a tall drawing is centered like any lone card, but its top never
+// D-151: a detour card grown for a tall drawing is centered like any lone card, but its top never
 // rises above the column's top, so its head stays on the stage.
 test("a lone card taller than the column's middle allows starts at the column's top", () => {
   const tall = {

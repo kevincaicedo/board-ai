@@ -1,7 +1,7 @@
 // Where things sit while a view is open (the canvas's 8 · Library, 9 · Brain and memory frames):
 // the panels' widths, the free space left of them, and where the orb and the captions go. The
 // library and the boards dock the orb at bottom center; the panels move the conversing orb (and
-// its captions) to the middle of the space beside them (D-187: the canvas's 1440 px offsets,
+// its captions) to the middle of the space beside them (D-150: the canvas's 1440 px offsets,
 // kept as ratios, drifted right on a wider window). Pure functions, blended by each view's
 // motion.
 

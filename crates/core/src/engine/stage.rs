@@ -1,5 +1,5 @@
-//! The stage itself: ending the session by voice (D-181), going back to the main board from a
-//! detour (D-184), and the recap leaving when the topic moves on (D-185, PRODUCT §7.2).
+//! The stage itself: ending the session by voice (D-144), going back to the main board from a
+//! detour (D-147), and the recap leaving when the topic moves on (D-148, PRODUCT §7.2).
 //!
 //! - **"End the session"** is answered by the core in two words, without the talker. Once that
 //!   line has played, the core sends `SessionEnd`; the orchestrator, which owns the session's

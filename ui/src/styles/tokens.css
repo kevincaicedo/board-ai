@@ -126,7 +126,7 @@
   --duration-suggestion-out: 450ms;
   --duration-code-mark: 500ms;
   --duration-view-stagger: 100ms;
-  /* A replay that played to its end holds its last frame this long, then returns (D-183). */
+  /* A replay that played to its end holds its last frame this long, then returns (D-146). */
   --duration-replay-end-hold: 1600ms;
 
   /* Type (bundled locally: the CSP allows no remote fonts) */
@@ -214,7 +214,7 @@
   --camera-scale-max: 1;
   /* A detour card keeps frame 4's size while its drawing reads at this scale or more; past it the
      card grows, taller first, then wider to the left, up to the board's area. A small detour is
-     enlarged up to --detour-camera-scale-max, never on a focus (D-188). */
+     enlarged up to --detour-camera-scale-max, never on a focus (D-151). */
   --detour-scale-min: 0.75;
   --detour-camera-scale-max: 1.25;
   --caption-rise: 10px;
@@ -287,7 +287,7 @@
   --type-link-chip: 11px;
   --type-recap: 18px;
   --type-recap-line: 28px;
-  /* Beside the panels the orb and captions are centered in the free space (D-187). */
+  /* Beside the panels the orb and captions are centered in the free space (D-150). */
   --view-orb-tasks: 200px;
   --view-orb-memory: 180px;
   --recall-card-width: 520px;

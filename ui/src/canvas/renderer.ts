@@ -112,7 +112,7 @@ interface LayerView {
   /** Scale, x and y last written, so an unchanged camera writes nothing. */
   readonly lastTransform: Float64Array;
   lastBlur: number;
-  /** A detour layer's viewBox last written: its card's size, one unit per CSS pixel (D-188). */
+  /** A detour layer's viewBox last written: its card's size, one unit per CSS pixel (D-151). */
   lastViewBox: string;
 }
 
@@ -199,7 +199,7 @@ export class BoardView {
 
   /**
    * `stage` is where the main layer fits its camera frame; each detour layer fits its own in its
-   * card (`cards`, sized from its drawing, D-188).
+   * card (`cards`, sized from its drawing, D-151).
    */
   render(
     at: number,
@@ -576,7 +576,7 @@ export class BoardView {
 
   /**
    * The board steps back while a detour is open: blurred, faded, nudged left (frame 4). When the
-   * session ends it fades out for good, blurring as a card leaves (D-182).
+   * session ends it fades out for good, blurring as a card leaves (D-145).
    */
   #renderPush(at: number): void {
     const tokens = this.#options.tokens;

@@ -1,4 +1,4 @@
-//! Source chips (PRODUCT §7.3, D-152): a `path:line` the talker says shows a chip carrying the
+//! Source chips (PRODUCT §7.3, D-123): a `path:line` the talker says shows a chip carrying the
 //! location when that line was read this session, and clicking it opens the code card on that
 //! line. Nothing unread ever gets a chip or a card (law 6).
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]

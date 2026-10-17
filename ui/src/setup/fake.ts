@@ -233,7 +233,7 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
         blockers: [{ kind: "MicrophoneDenied" }],
       };
       break;
-    // `just dev` in an editor's terminal: macOS asks about the editor (D-186).
+    // `just dev` in an editor's terminal: macOS asks about the editor (D-149).
     case "mic-elsewhere":
       transport.current = {
         ...keySaved,

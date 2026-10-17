@@ -76,7 +76,7 @@ function visibleAt(items: readonly Placed[], at: number): Placed[] {
 
 /**
  * Tops for a set of items: one is centered on the column's middle, but never above the column's
- * top (a detour card grown for its drawing, D-188); more stack from the top.
+ * top (a detour card grown for its drawing, D-151); more stack from the top.
  */
 function stackTops(
   visible: readonly Placed[],

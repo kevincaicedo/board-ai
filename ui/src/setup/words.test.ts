@@ -143,7 +143,7 @@ test("over a running session the button goes back to talking", () => {
   assert.equal(startLabel(true), "Back to talking");
 });
 
-// D-186: started from another app, the denied card names the switch macOS actually asks about.
+// D-149: started from another app, the denied card names the switch macOS actually asks about.
 test("a denied microphone names the app macOS asks about", () => {
   assert.equal(micDenied(null), MIC_DENIED);
   assert.equal(

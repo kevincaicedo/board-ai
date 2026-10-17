@@ -1,4 +1,4 @@
-// The diagram types' strokes (D-150): each draws in a hand's order, keeps to the core's geometry,
+// The diagram types' strokes (D-120): each draws in a hand's order, keeps to the core's geometry,
 // and a row of cells names each cell for pointing and strikes.
 
 import assert from "node:assert/strict";

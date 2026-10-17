@@ -1,4 +1,4 @@
-// A detour card sized from its drawing (D-188), checked on the owner's three detours of
+// A detour card sized from its drawing (D-151), checked on the owner's three detours of
 // 2026-10-16: frame 4's card held the first one, and fit the other two at 0.42 and 0.25.
 
 import assert from "node:assert/strict";

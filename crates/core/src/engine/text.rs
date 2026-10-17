@@ -25,7 +25,7 @@ pub const KEPT_LINE: &str = "Kept.";
 /// "Don't remember this session" (I10).
 pub const OFF_THE_RECORD_LINE: &str = "Won't remember this.";
 
-/// "End the session" (D-181): the session ends once this has played, and its digest is written.
+/// "End the session" (D-144): the session ends once this has played, and its digest is written.
 pub const SESSION_SAVED_LINE: &str = "Session saved.";
 
 /// The same after "don't remember this session": nothing of it is kept, so nothing is saved.

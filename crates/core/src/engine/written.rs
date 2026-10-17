@@ -1,4 +1,4 @@
-//! Tool calls the talker wrote as tags (D-180).
+//! Tool calls the talker wrote as tags (D-143).
 //!
 //! A local model sometimes writes a tool call into its speech as a tag (`<remember kind="note"
 //! text="…"/>`, `<show_memory/>`) instead of calling the tool. The narration parser drops an

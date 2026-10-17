@@ -248,7 +248,7 @@ fn node_tones_compare_titles_cells_and_code_marks() {
     );
 }
 
-/// Sequence diagrams, cells, trees and highlights (D-150).
+/// Sequence diagrams, cells, trees and highlights (D-120).
 #[test]
 fn diagram_tags_parse_with_their_defaults() {
     let id = |text: &str| crate::ids::ElementId::parse(text).expect("valid");
@@ -299,7 +299,7 @@ fn diagram_tags_parse_with_their_defaults() {
     );
 }
 
-/// Index labels, a count past the cap, tree children and highlights (D-150).
+/// Index labels, a count past the cap, tree children and highlights (D-120).
 #[test]
 fn cells_indexes_tree_children_and_highlights_parse() {
     let index = |value: &str| match to_op(&tag(

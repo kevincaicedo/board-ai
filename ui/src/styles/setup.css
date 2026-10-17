@@ -352,7 +352,7 @@
 
 /* Card 3: the microphone */
 
-/* Denied: where to turn it on, then the button that opens that pane (D-186). */
+/* Denied: where to turn it on, then the button that opens that pane (D-149). */
 .setup-mic-denied {
   display: flex;
   flex-direction: column;

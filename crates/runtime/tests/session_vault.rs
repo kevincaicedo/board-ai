@@ -545,7 +545,7 @@ async fn notes_are_kept_in_the_session_after_an_idle_rest() {
 
 /// The owner's report as it happened (session log of 2026-10-16): the first session's note was
 /// a tool call and was kept; in the next session gemma4 wrote every call as a tag, so the note
-/// was dropped while BoardAI said it was made. A note written as a tag is kept (D-180).
+/// was dropped while BoardAI said it was made. A note written as a tag is kept (D-143).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_note_written_as_a_tag_in_the_next_session_is_kept() {
     let folder = TempFolder::new("session-vault-written-note");

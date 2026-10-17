@@ -1,4 +1,4 @@
-//! Cues about the stage itself rather than what is on it (D-181, D-184): ending the session, and
+//! Cues about the stage itself rather than what is on it (D-144, D-147): ending the session, and
 //! going back to the main board from a detour. Like the memory controls (`cues`), each is matched
 //! against the whole utterance, so a request with anything else in it stays the talker's.
 //!
@@ -7,7 +7,7 @@
 
 use super::cues::{CONTROL_FILLERS, made_of};
 
-/// Ending the session by voice (D-181): the core answers, the session ends, and the next words
+/// Ending the session by voice (D-144): the core answers, the session ends, and the next words
 /// open a new one. Only explicit forms: a bare "new session" can be a question about one, and
 /// "stop here" alone can mean "stop talking".
 pub const END_SESSION_PHRASES: &[&str] = &[
@@ -43,7 +43,7 @@ pub const END_SESSION_PHRASES: &[&str] = &[
     "let's call it a day",
 ];
 
-/// Going back to the main board (D-184): every open detour closes, whatever the talker does.
+/// Going back to the main board (D-147): every open detour closes, whatever the talker does.
 pub const BACK_TO_MAIN_PHRASES: &[&str] = &[
     "back to the main board",
     "go back to the main board",
@@ -68,7 +68,7 @@ pub const BACK_TO_MAIN_PHRASES: &[&str] = &[
     "done with the detour",
 ];
 
-/// Asking to go on once a detour's answer has ended (D-184): the main explanation continues.
+/// Asking to go on once a detour's answer has ended (D-147): the main explanation continues.
 pub const CONTINUE_PHRASES: &[&str] = &[
     "go on",
     "continue",

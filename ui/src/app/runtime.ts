@@ -64,7 +64,7 @@ export class Runtime {
   #card: Viewport = { width: 0, height: 0 };
   /** Where the main layer fits its camera frame; recomputed on resize, never per frame. */
   readonly #stageArea: FitArea = emptyArea();
-  /** Frame 4's detour card for this stage, and the largest a detour card may grow (D-188). */
+  /** Frame 4's detour card for this stage, and the largest a detour card may grow (D-151). */
   readonly #cardBase: Size = { width: 0, height: 0 };
   readonly #cardMax: Size = { width: 0, height: 0 };
   /** Each open detour layer's card this frame: its size and where its drawing fits. */

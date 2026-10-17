@@ -211,7 +211,7 @@ impl Checker {
         }
     }
 
-    /// A session ends only once BoardAI is quiet (D-181): no talker stream in flight, nothing
+    /// A session ends only once BoardAI is quiet (D-144): no talker stream in flight, nothing
     /// playing or waiting to play, and nobody holding the floor. Anything still going would be
     /// cut off when the orchestrator ends the session.
     fn check_session_end(&mut self, now: SessionTime, core: &Core, speech: &FakeSpeech) {

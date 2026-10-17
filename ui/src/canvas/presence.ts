@@ -79,7 +79,7 @@ export class Presence {
   condenseAt: number | null = null;
   /**
    * When the session ended: a docked orb grows back to the center (frame 1), as it condensed
-   * from there; it stays there until the next session's start resets the stage (D-182).
+   * from there; it stays there until the next session's start resets the stage (D-145).
    */
   restAt: number | null = null;
   readonly freezes: number[] = [];

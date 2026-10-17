@@ -1,4 +1,4 @@
-//! Sequence diagrams (D-150). A layer's participants stand in one row, left to right in the order
+//! Sequence diagrams (D-120). A layer's participants stand in one row, left to right in the order
 //! they were drawn, each a head box with a dashed lifeline down from it. Messages go down in
 //! order, one row each (a message to itself takes a loop's height more). Lifelines grow as the
 //! messages need them: a message carries the stretch each lifeline needs to reach below it, so

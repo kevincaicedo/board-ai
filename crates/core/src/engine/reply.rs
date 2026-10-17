@@ -141,7 +141,7 @@ impl Core {
     /// notices that changed go first, as a system message (history is append-only).
     pub(super) fn request_talk(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         // No reply yet: a new turn (the user's next question, or a harness report), so the
-        // topic has moved on (D-185). A tool round continues the same reply.
+        // topic has moved on (D-148). A tool round continues the same reply.
         if self.reply.is_none() {
             self.recap_leaves(effects);
         }

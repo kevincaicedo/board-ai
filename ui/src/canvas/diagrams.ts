@@ -1,4 +1,4 @@
-// The diagram types' strokes (PRODUCT §7.1, D-150), in the order a hand draws them:
+// The diagram types' strokes (PRODUCT §7.1, D-120), in the order a hand draws them:
 // - a participant: its head box, its label, then its dashed lifeline;
 // - a message: the lifeline stretches it needs, the arrow, its head, then its label;
 // - a row of cells: its name, the outline, the dividers, each value, then the index labels;

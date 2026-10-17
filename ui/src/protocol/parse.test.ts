@@ -68,7 +68,7 @@ const EVERY_VIEW: View[] = [
   { kind: "Replay", session: { ...CARD, cover: [] } },
 ];
 
-/** The diagram ops (D-150), as the Rust side serializes them. */
+/** The diagram ops (D-120), as the Rust side serializes them. */
 const DIAGRAM_OPS: DrawOp[] = [
   {
     kind: "Node",

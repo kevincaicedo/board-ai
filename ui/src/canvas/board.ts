@@ -147,7 +147,7 @@ export class BoardModel {
   readonly counters: BoardCounters = { droppedOps: 0, orphanEvents: 0 };
   /**
    * When the session ended (`SessionEnd`): the board fades out and the nib rests, until the
-   * next session's start resets the board (D-182).
+   * next session's start resets the board (D-145).
    */
   endedAt: number | null = null;
   /** Bumped on every structural change (a run added or replaced, a layer pushed or popped). */

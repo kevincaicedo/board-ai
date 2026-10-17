@@ -210,7 +210,7 @@ fn position(events: &[UiEvent], matches: impl Fn(&UiEvent) -> bool) -> Option<us
     events.iter().position(matches)
 }
 
-/// D-181, D-182: "we can stop here" ends the session once "Session saved." has played; the
+/// D-144, D-145: "we can stop here" ends the session once "Session saved." has played; the
 /// stage clears, the library rests on it once the digest is written, and the next words open a
 /// new session. `SessionEnd` never reaches the session's log.
 #[tokio::test(start_paused = true)]

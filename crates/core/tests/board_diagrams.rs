@@ -1,4 +1,4 @@
-//! Board layout for the diagram types (LLD §2.5, D-150, invariant I6): sequence diagrams, rows of
+//! Board layout for the diagram types (LLD §2.5, D-120, invariant I6): sequence diagrams, rows of
 //! cells, trees and off-grid placement never move what is already drawn, a lifeline only grows,
 //! and a message dropped before it was drawn changes nothing. Plus their Excalidraw export.
 #![allow(clippy::expect_used, reason = "a broken fixture should fail loudly")]

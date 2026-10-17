@@ -21,7 +21,7 @@ export interface SetupTransport {
   requestMicrophone(): Promise<SetupStatus>;
   /**
    * Opens System Settings at Privacy & Security › Microphone, where the app macOS asks about is
-   * turned on (D-186); rejects in plain words when it couldn't.
+   * turned on (D-149); rejects in plain words when it couldn't.
    */
   openMicrophoneSettings(): Promise<void>;
   /** Sets the setup-complete flag and starts the session; rejects while anything blocks. */
@@ -74,7 +74,7 @@ export function parseSetupStatus(value: unknown): SetupStatus | null {
   if (!isRecord(talker.ollama) || !isRecord(value.input) || !isRecord(value.harnesses)) {
     return null;
   }
-  // A shell from before the field (D-186) sends none: macOS then asks about BoardAI itself.
+  // A shell from before the field (D-149) sends none: macOS then asks about BoardAI itself.
   const attributed = value.mic_attributed_to;
   const mic_attributed_to =
     typeof attributed === "string" && attributed.trim() !== "" ? attributed : null;

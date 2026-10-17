@@ -140,7 +140,7 @@ impl Core {
         }
     }
 
-    /// A `remember` the talker wrote as a tag instead of calling it (D-180): the same policy,
+    /// A `remember` the talker wrote as a tag instead of calling it (D-143): the same policy,
     /// chip and capture, but an inferred memory opens no gate. Nobody asked the user about it,
     /// so it waits in the session digest.
     pub(super) fn remember_written(

@@ -1,4 +1,4 @@
-// A fixture that draws each diagram type the core lays out (PRODUCT §7.1, D-150): a sequence
+// A fixture that draws each diagram type the core lays out (PRODUCT §7.1, D-120): a sequence
 // diagram whose lifelines grow with its messages, an array filled, highlighted and corrected, a
 // binary search tree growing, and a hash table with a collision chain; then a source chip that
 // opens its line. The ops are the core's own output for these narrations (the scenes of

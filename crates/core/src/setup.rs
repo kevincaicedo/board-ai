@@ -219,7 +219,7 @@ pub struct SetupStatus {
     pub blockers: Vec<SetupBlocker>,
     /// The app macOS asks about the microphone instead of BoardAI, because BoardAI was started
     /// from it (a terminal or an editor, "Visual Studio Code"); `None` when macOS asks about
-    /// BoardAI itself, or it can't be told (D-186).
+    /// BoardAI itself, or it can't be told (D-149).
     pub mic_attributed_to: Option<String>,
 }
 

@@ -10,7 +10,7 @@
 //! upload pipeline) other than the request-path script the live runs measure with: small models
 //! copy examples nearly word for word, which would flatter the measurement. The diagram examples
 //! (a sequence, a row of cells, a hash index, a tree) stay in the same photo domain, away from
-//! the handshake, hash map and search tree the diagram runs ask for (D-153).
+//! the handshake, hash map and search tree the diagram runs ask for (D-124).
 
 /// BoardAI's voice, the narration grammar, the tools and the rules.
 #[must_use]

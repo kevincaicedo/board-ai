@@ -86,7 +86,7 @@ function CloseButton({ onClose }: { onClose: () => void }) {
 
 /**
  * A replay that played to its end holds its last frame, then returns where it was opened
- * (D-183): a card's replay to the library or the recall view, the core's replay view to the
+ * (D-146): a card's replay to the library or the recall view, the core's replay view to the
  * library it was opened over, or to the live stage. A seek or a replay from the start cancels it.
  */
 function useReturnWhenFinished(loaded: Loaded, onClose: () => void): void {

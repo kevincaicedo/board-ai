@@ -5,7 +5,7 @@
 //! macOS grants the microphone to the app responsible for a process, not to the process: run
 //! from a terminal or an editor (`just dev` in Visual Studio Code's terminal), BoardAI's
 //! microphone is that app's. [`attributed_to`] names it by walking the parent processes up to
-//! the outermost one inside an `.app` bundle (D-186), so the screen can say which switch to
+//! the outermost one inside an `.app` bundle (D-149), so the screen can say which switch to
 //! turn on, and [`open_microphone_settings`] opens that pane.
 
 use std::io::Read;

@@ -1,4 +1,4 @@
-//! Trees, top-down (D-150). A child goes one level under its parent, joined to it by a line
+//! Trees, top-down (D-120). A child goes one level under its parent, joined to it by a line
 //! from the parent's bottom centre to its own top centre, drawn with it. A binary tree's left
 //! and right children spread by half as much at each level (160, 80, 40 units, then no
 //! narrower), so a tree of four levels stays clear of itself without moving anything already

@@ -7,9 +7,9 @@
 //!
 //! It also runs the session's life (LLD §3.6): the store opens a session when the loop starts,
 //! and the core starts with its context. After `SESSION_IDLE_TIMEOUT_MS` without input, or when
-//! the core ends the session because the user said so (`UiEvent::SessionEnd`, D-181), the
+//! the core ends the session because the user said so (`UiEvent::SessionEnd`, D-144), the
 //! session ends (its digest is written in the background) and the loop rests: the stage clears,
-//! and once the digest is written the library shows the session just ended (D-182). The next
+//! and once the digest is written the library shows the session just ended (D-145). The next
 //! words open a new session with a fresh core, and session time starts again from zero. Closing
 //! ends the session within a bounded time, so quitting never hangs.
 
@@ -349,7 +349,7 @@ impl Orchestrator {
             }
             Effect::CancelHarness { task } => self.work.cancel_harness(task),
             // The user ended the session: it rests once this step is applied, and the UI hears
-            // of it then. The session's log never holds it (D-182).
+            // of it then. The session's log never holds it (D-145).
             Effect::Ui(UiEvent::SessionEnd) => self.end_requested = true,
             Effect::Ui(event) => {
                 self.store.ui_event(now, &event);
@@ -516,7 +516,7 @@ impl Orchestrator {
     }
 
     /// The ended session's digest is written: the resting stage shows the library, the session
-    /// just ended first (D-182). A store that doesn't answer within `SESSION_TOOL_TIMEOUT_MS`,
+    /// just ended first (D-145). A store that doesn't answer within `SESSION_TOOL_TIMEOUT_MS`,
     /// or fails, leaves the stage clear.
     async fn show_resting_library(&mut self) {
         let Phase::Resting { finishing, .. } = &mut self.phase else {
