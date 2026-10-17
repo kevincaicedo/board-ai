@@ -7,4 +7,4 @@ import type { VoiceEngine } from "./VoiceEngine.ts";
 /**
  * One change from the screen, saved to `settings.toml` at once.
  */
-export type SetupEdit = { "kind": "Talker", provider: TalkerProvider, model: string | null, } | { "kind": "Voice", engine: VoiceEngine, } | { "kind": "Mic", mode: MicChoice, } | { "kind": "Input", device: InputDevice, };
+export type SetupEdit = { "kind": "Talker", provider: TalkerProvider, model: string | null, } | { "kind": "Voice", engine: VoiceEngine, } | { "kind": "Mic", mode: MicChoice, } | { "kind": "Input", device: InputDevice, } | { "kind": "Scribe", model: string, } | { "kind": "RemoveCodeFolder", index: number, };

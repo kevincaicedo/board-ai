@@ -3,8 +3,11 @@
 #![forbid(unsafe_code)]
 
 mod audio;
+#[cfg(test)]
+mod capability;
 mod commands;
 mod dev;
+mod helper;
 mod permission;
 mod secrets;
 mod session;
@@ -35,6 +38,12 @@ fn main() -> ExitCode {
             setup::commands::setup_microphone,
             setup::commands::setup_finish,
             setup::commands::setup_open_microphone_settings,
+            setup::commands::setup_remove_key,
+            setup::commands::setup_check_keys,
+            setup::commands::setup_harness_versions,
+            setup::commands::setup_add_code_folder,
+            setup::commands::setup_open_vault,
+            setup::commands::setup_rebuild_index,
             #[cfg(debug_assertions)]
             dev::dev_say,
         ])

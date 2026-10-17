@@ -16,8 +16,8 @@ import {
   micDenied,
   micStep,
   percent,
+  START_TALKING,
   startHint,
-  startLabel,
   thinkingStep,
   voiceStep,
 } from "./words.ts";
@@ -138,9 +138,8 @@ test("the cards' words match the states frame (11b)", () => {
   assert.equal(FOOTER_FIRST_RUN, "Reopen any time with ⌘, or by saying “open settings”.");
 });
 
-test("over a running session the button goes back to talking", () => {
-  assert.equal(startLabel(false), "Start talking");
-  assert.equal(startLabel(true), "Back to talking");
+test("the first run's button starts talking", () => {
+  assert.equal(START_TALKING, "Start talking");
 });
 
 // D-149: started from another app, the denied card names the switch macOS actually asks about.

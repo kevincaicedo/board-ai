@@ -33,9 +33,15 @@ pub const ELEVENLABS_BASE_URL: &str = "https://api.elevenlabs.io";
 /// Which voice ships as the default is the owner's call (D-011); this keeps the engine usable.
 pub const ELEVENLABS_DEFAULT_VOICE_ID: &str = "21m00Tcm4TlvDq8ikWAM";
 
+/// [`ELEVENLABS_DEFAULT_VOICE_ID`]'s name, as the settings page shows it (D-137).
+pub const ELEVENLABS_DEFAULT_VOICE_NAME: &str = "Rachel";
+
 /// The model when settings name none: Flash v2.5, ElevenLabs' lowest-latency model ("~75ms",
 /// excluding network) at half the per-character price of Multilingual v2.
 pub const ELEVENLABS_DEFAULT_MODEL: &str = "eleven_flash_v2_5";
+
+/// [`ELEVENLABS_DEFAULT_MODEL`]'s name, as the settings page shows it.
+pub const ELEVENLABS_DEFAULT_MODEL_NAME: &str = "Flash";
 
 /// 16-bit little-endian mono PCM at 24 kHz, the voice ring's rate, so nothing is converted.
 const OUTPUT_FORMAT: &str = "pcm_24000";

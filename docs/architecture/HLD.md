@@ -64,6 +64,7 @@ The [diagram](hld.excalidraw) shows these boxes and how they connect.
 **UI:**
 
 - The orb, the canvas stroke renderer, surfaces (code card, compare, doc), captions and the thread bar, the library and the brain views.
+- The first-run screen, and the settings page (⌘, or "open settings"): the talker and its model picked from the providers' lists, the voice, the microphone and its permission, the keys (saved, replaced or removed in the Keychain, never shown), the coding harnesses and code folders, and what memory keeps.
 - A replay mode that plays a recorded session with no backend. UI work is checked against the design canvas this way.
 
 ## 5. Key flows

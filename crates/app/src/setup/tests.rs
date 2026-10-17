@@ -7,15 +7,21 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use boardai_core::setup::{
-    FileState, HarnessesFound, InputDevice, KeyName, KeyState, MicChoice, MicPermission,
-    OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider, VoiceEngine,
+    FileState, HarnessFound, HarnessName, InputDevice, KeyName, KeyState, KeyStatus, MicChoice,
+    MicPermission, OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider,
+    ThinkingEffort, VoiceEngine,
 };
 use boardai_runtime::llm::catalog::ModelCatalog;
 use boardai_runtime::models::ModelStore;
-use boardai_runtime::settings::{MemorySecretStore, Settings};
+use boardai_runtime::settings::{MemorySecretStore, SecretName, SecretStore, Settings};
 
-use super::status::{Probes, gather};
-use super::{Downloads, Known, SetupPaths, SetupState, mark_complete, save_edit, save_key};
+use super::harnesses::Installed;
+use super::keys::KeyLedger;
+use super::status::{Inputs, Probes, Seen, gather};
+use super::{
+    Downloads, Known, SetupPaths, SetupState, add_code_folder, mark_complete, remove_key,
+    save_edit, save_key,
+};
 
 fn known<'a>(ollama: &'a OllamaStatus, catalog: &'a ModelCatalog) -> Known<'a> {
     Known {
@@ -63,19 +69,48 @@ fn probes() -> Probes {
     Probes {
         ollama: OllamaStatus::Unreachable,
         microphone: MicPermission::Granted,
-        harnesses: HarnessesFound {
-            claude_code: true,
-            pi: false,
+        harnesses: Installed {
+            claude_code: HarnessFound::Found { version: None },
+            pi: HarnessFound::Missing,
         },
-        input_devices: Vec::new(),
+        inputs: Inputs::default(),
         started: false,
         mic_attributed_to: None,
     }
 }
 
 fn status(paths: &SetupPaths, secrets: &MemorySecretStore) -> SetupStatus {
+    status_with(paths, secrets, &KeyLedger::default(), probes())
+}
+
+fn status_with(
+    paths: &SetupPaths,
+    secrets: &MemorySecretStore,
+    ledger: &KeyLedger,
+    probes: Probes,
+) -> SetupStatus {
     let models = ModelStore::new(paths.models.clone()).expect("model store");
-    gather(paths, secrets, &models, &Downloads::default(), probes())
+    let seen = Seen {
+        downloads: &Downloads::default(),
+        keys: ledger,
+    };
+    gather(paths, secrets, &models, seen, probes)
+}
+
+fn running() -> Probes {
+    Probes {
+        started: true,
+        ..probes()
+    }
+}
+
+fn saved(status: &SetupStatus) -> Vec<KeyName> {
+    status
+        .keys
+        .iter()
+        .filter(|key| key.state == KeyState::Saved)
+        .map(|key| key.name)
+        .collect()
 }
 
 /// Every file under `root`, recursively (the scratch tree is small).
@@ -166,12 +201,7 @@ fn choices_round_trip_through_settings_and_finishing_sets_the_flag() {
     assert!(!saved.complete);
 
     mark_complete(&paths, &lock).expect("flag set");
-    let models = ModelStore::new(paths.models.clone()).expect("model store");
-    let running = Probes {
-        started: true,
-        ..probes()
-    };
-    let after = gather(&paths, &secrets, &models, &Downloads::default(), running);
+    let after = status_with(&paths, &secrets, &KeyLedger::default(), running());
     assert!(after.complete);
     assert_eq!(
         after.talker.key,
@@ -194,8 +224,21 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     let catalog = ModelCatalog::default();
     let unreachable = OllamaStatus::Unreachable;
 
-    save_key(&secrets, KeyName::Anthropic, format!("{PLANTED_KEY}\n")).expect("key saved");
-    save_key(&secrets, KeyName::ElevenLabs, PLANTED_ELEVENLABS.to_owned()).expect("key saved");
+    let ledger = KeyLedger::default();
+    save_key(
+        &secrets,
+        &ledger,
+        KeyName::Anthropic,
+        format!("{PLANTED_KEY}\n"),
+    )
+    .expect("saved");
+    save_key(
+        &secrets,
+        &ledger,
+        KeyName::ElevenLabs,
+        PLANTED_ELEVENLABS.to_owned(),
+    )
+    .expect("saved");
     let claude = SetupEdit::Talker {
         provider: TalkerProvider::Claude,
         model: None,
@@ -208,29 +251,44 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     }
     mark_complete(&paths, &lock).expect("flag set");
 
-    let models = ModelStore::new(paths.models.clone()).expect("model store");
-    let running = Probes {
-        started: true,
-        ..probes()
-    };
-    let unread = gather(&paths, &secrets, &models, &Downloads::default(), running);
+    let unread = status_with(&paths, &secrets, &KeyLedger::default(), running());
     assert_eq!(
         unread.talker.key,
         KeyState::NotChecked,
         "a running session skips the Keychain"
     );
-    assert!(unread.keys.is_empty());
+    assert!(
+        unread
+            .keys
+            .iter()
+            .all(|key| key.state == KeyState::NotChecked)
+    );
+    let remembered = status_with(&paths, &secrets, &ledger, running());
+    assert_eq!(
+        remembered.talker.key,
+        KeyState::Saved,
+        "what this run saved is known without a read"
+    );
+    assert_eq!(
+        saved(&remembered),
+        [KeyName::Anthropic, KeyName::ElevenLabs]
+    );
     let seen = status(&paths, &secrets);
     assert_eq!(seen.talker.key, KeyState::Saved);
-    assert_eq!(seen.keys, vec![KeyName::Anthropic, KeyName::ElevenLabs]);
+    assert_eq!(saved(&seen), [KeyName::Anthropic, KeyName::ElevenLabs]);
     assert_eq!(seen.voice, VoiceEngine::ElevenLabs);
     let shown = format!("{seen:?}");
     for planted in [PLANTED_KEY, PLANTED_ELEVENLABS] {
         assert!(!shown.contains(planted), "the UI never sees a key");
     }
 
-    let files = files_under(&scratch.0);
-    assert!(files.iter().any(|file| file == &paths.settings));
+    assert_no_key_on_disk(&scratch.0, &paths.settings);
+}
+
+/// No file under `root` (settings included) holds a planted key.
+fn assert_no_key_on_disk(root: &Path, settings: &Path) {
+    let files = files_under(root);
+    assert!(files.iter().any(|file| file == settings));
     for file in files {
         let bytes = std::fs::read(&file).expect("readable file");
         let text = String::from_utf8_lossy(&bytes);
@@ -251,8 +309,14 @@ fn a_bad_key_or_an_unusable_file_changes_nothing() {
     let secrets = MemorySecretStore::new();
     let lock = Mutex::new(());
     let oversized = "k".repeat(boardai_runtime::limits::SECRET_VALUE_MAX_BYTES + 1);
-    assert!(save_key(&secrets, KeyName::Anthropic, oversized).is_err());
-    assert_eq!(status(&paths, &secrets).keys, Vec::new());
+    let ledger = KeyLedger::default();
+    assert!(save_key(&secrets, &ledger, KeyName::Anthropic, oversized).is_err());
+    assert_eq!(saved(&status(&paths, &secrets)), []);
+    assert_eq!(
+        ledger.seen(KeyName::Anthropic),
+        KeyState::NotChecked,
+        "a refused key records nothing"
+    );
 
     std::fs::create_dir_all(paths.settings.parent().expect("folder")).expect("config folder");
     let hand_written = "mic = \"sometimes\"\n# my notes\n";
@@ -291,4 +355,216 @@ fn saving_while_the_session_runs_asks_for_one_restart() {
     state.mark_changed();
     assert!(state.take_changed());
     assert!(!state.take_changed(), "one restart per round of changes");
+}
+
+/// A Keychain that refuses everything (locked, or a denied prompt).
+struct Locked;
+
+impl SecretStore for Locked {
+    fn get(
+        &self,
+        name: &SecretName,
+    ) -> Result<boardai_runtime::settings::Secret, boardai_runtime::settings::SecretError> {
+        Err(boardai_runtime::settings::SecretError::Unavailable {
+            name: name.clone(),
+            detail: "locked".to_owned(),
+        })
+    }
+
+    fn set(
+        &self,
+        name: &SecretName,
+        _secret: &boardai_runtime::settings::Secret,
+    ) -> Result<(), boardai_runtime::settings::SecretError> {
+        Err(boardai_runtime::settings::SecretError::Unwritable {
+            name: name.clone(),
+            detail: "locked".to_owned(),
+        })
+    }
+
+    fn remove(&self, name: &SecretName) -> Result<(), boardai_runtime::settings::SecretError> {
+        Err(boardai_runtime::settings::SecretError::Unwritable {
+            name: name.clone(),
+            detail: "locked".to_owned(),
+        })
+    }
+}
+
+#[test]
+fn the_settings_page_sees_the_talker_scribe_folders_and_vault_as_configured() {
+    let scratch = Scratch::new("settings-page");
+    let paths = scratch.paths();
+    std::fs::create_dir_all(paths.settings.parent().expect("folder")).expect("config folder");
+    std::fs::write(
+        &paths.settings,
+        "setup_complete = true\ncode_roots = [\"~/code\", \"/opt/src\"]\n\
+         [talker]\nkind = \"openai_compatible\"\nmodel = \"qwen/qwen3.8-27b\"\neffort = \"none\"\n\
+         base_url = \"https://openrouter.ai/api/v1\"\nsecret = \"openrouter\"\nroute = [\"cerebras\"]\n\
+         [scribe]\nkind = \"openai_compatible\"\nmodel = \"qwen/qwen3.8-27b\"\neffort = \"medium\"\n\
+         base_url = \"https://openrouter.ai/api/v1\"\nsecret = \"openrouter\"\n\
+         [harness]\nkind = \"pi\"\n",
+    )
+    .expect("written");
+    let secrets = MemorySecretStore::new();
+    let shown = status_with(&paths, &secrets, &KeyLedger::default(), running());
+    assert_eq!(shown.talker.provider, TalkerProvider::OpenRouter);
+    assert_eq!(shown.talker.thinking, ThinkingEffort::Off);
+    assert_eq!(shown.talker.route, ["cerebras"]);
+    assert!(shown.talker.preset);
+    assert_eq!(shown.scribe_model, "qwen/qwen3.8-27b");
+    assert_eq!(shown.code_folders, ["~/code", "/opt/src"]);
+    assert_eq!(shown.vault, "~/BoardAI");
+    assert_eq!(
+        (
+            shown.elevenlabs.model.as_str(),
+            shown.elevenlabs.voice.as_str()
+        ),
+        ("Flash", "Rachel"),
+        "the voice stays Rachel until the owner chooses (D-137)"
+    );
+    assert_eq!(
+        shown.harnesses.default, None,
+        "settings pick pi, which isn't installed"
+    );
+    assert_eq!(shown.talker.key, KeyState::NotChecked);
+    assert!(
+        !shown
+            .blockers
+            .iter()
+            .any(|blocker| matches!(blocker, SetupBlocker::TalkerKey { .. })),
+        "an unchecked key never blocks going back"
+    );
+    let claude = status(&scratch.paths(), &secrets);
+    assert_eq!(
+        claude.harnesses.claude_code,
+        HarnessFound::Found { version: None }
+    );
+    let defaults = Scratch::new("settings-page-defaults");
+    let fresh = status(&defaults.paths(), &secrets);
+    assert_eq!(
+        fresh.talker.thinking,
+        ThinkingEffort::Low,
+        "Claude never turns it off"
+    );
+    assert!(!fresh.talker.preset);
+    assert_eq!(fresh.harnesses.default, Some(HarnessName::ClaudeCode));
+}
+
+#[test]
+fn removing_a_key_forgets_it_and_takes_elevenlabs_off_the_voice() {
+    let scratch = Scratch::new("remove-key");
+    let paths = scratch.paths();
+    let secrets = MemorySecretStore::new();
+    let lock = Mutex::new(());
+    let ledger = KeyLedger::default();
+    let catalog = ModelCatalog::default();
+    let unreachable = OllamaStatus::Unreachable;
+    save_key(
+        &secrets,
+        &ledger,
+        KeyName::ElevenLabs,
+        PLANTED_ELEVENLABS.to_owned(),
+    )
+    .expect("ok");
+    let elevenlabs = SetupEdit::Voice {
+        engine: VoiceEngine::ElevenLabs,
+    };
+    save_edit(
+        &paths,
+        &lock,
+        &elevenlabs,
+        &secrets,
+        known(&unreachable, &catalog),
+    )
+    .expect("ok");
+    remove_key(&paths, &lock, &secrets, &ledger, KeyName::ElevenLabs).expect("removed");
+    let after = status_with(&paths, &secrets, &ledger, running());
+    assert_eq!(
+        after.voice,
+        VoiceEngine::Kokoro,
+        "the next session still speaks"
+    );
+    assert!(after.keys.contains(&KeyStatus {
+        name: KeyName::ElevenLabs,
+        state: KeyState::Missing,
+    }));
+    // Removing a key that isn't there is done already; the talker's key goes the same way.
+    remove_key(&paths, &lock, &secrets, &ledger, KeyName::Anthropic).expect("nothing to remove");
+    let claude = status_with(&paths, &secrets, &ledger, running());
+    assert_eq!(claude.talker.key, KeyState::Missing);
+    assert_eq!(
+        claude.blockers.first(),
+        Some(&SetupBlocker::TalkerKey {
+            provider: TalkerProvider::Claude
+        }),
+        "going back to talking waits for a key"
+    );
+}
+
+#[test]
+fn a_locked_keychain_refuses_a_key_in_plain_words_and_changes_nothing() {
+    let scratch = Scratch::new("locked");
+    let paths = scratch.paths();
+    let lock = Mutex::new(());
+    let ledger = KeyLedger::default();
+    let refused = save_key(
+        &Locked,
+        &ledger,
+        KeyName::OpenRouter,
+        "sk-or-v1-abc".to_owned(),
+    );
+    assert!(refused.is_err_and(|words| words.contains("Unlock") && !words.contains("sk-or")));
+    let refused = remove_key(&paths, &lock, &Locked, &ledger, KeyName::OpenRouter);
+    assert!(refused.is_err_and(|words| words.contains("Unlock")));
+    assert_eq!(ledger.seen(KeyName::OpenRouter), KeyState::NotChecked);
+    assert!(!paths.settings.exists(), "nothing was written");
+}
+
+#[test]
+fn a_chosen_code_folder_is_added_once_as_written() {
+    let scratch = Scratch::new("folders");
+    let paths = scratch.paths();
+    let lock = Mutex::new(());
+    let folder = scratch.0.join("home/code/boardai");
+    std::fs::create_dir_all(&folder).expect("a folder");
+    add_code_folder(&paths, &lock, &folder).expect("added");
+    let shown = status(&paths, &MemorySecretStore::new());
+    assert_eq!(shown.code_folders, ["~/code/boardai"]);
+    assert!(
+        add_code_folder(&paths, &lock, &folder).is_err(),
+        "already listed"
+    );
+    let remove = SetupEdit::RemoveCodeFolder { index: 0 };
+    let catalog = ModelCatalog::default();
+    let secrets = MemorySecretStore::new();
+    save_edit(
+        &paths,
+        &lock,
+        &remove,
+        &secrets,
+        known(&OllamaStatus::Unreachable, &catalog),
+    )
+    .expect("removed");
+    assert!(status(&paths, &secrets).code_folders.is_empty());
+}
+
+#[test]
+fn a_list_that_does_not_arrive_or_an_unfinished_rebuild_is_said_in_plain_words() {
+    use boardai_core::setup::ModelQuery;
+    use boardai_runtime::llm::ProviderError;
+    use boardai_runtime::llm::catalog::CatalogError;
+
+    use super::commands::{index_rebuild_answer, model_list_problem};
+
+    let network = CatalogError::Provider(ProviderError::Network {
+        detail: "timed out".to_owned(),
+    });
+    assert!(model_list_problem(&ModelQuery::OpenRouter, &network).contains("didn't arrive"));
+    assert!(model_list_problem(&ModelQuery::Ollama, &network).contains("Ollama isn't answering"));
+    assert!(
+        index_rebuild_answer(None).is_err_and(|words| words.contains("Still rebuilding")),
+        "a rebuild past its wait is not reported as done"
+    );
+    let failed = index_rebuild_answer(Some(Err(boardai_runtime::store::StoreError::Stopped)));
+    assert!(failed.is_err_and(|words| words.contains("old one is kept")));
 }

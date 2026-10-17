@@ -19,7 +19,8 @@ use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
 pub(super) const ANTHROPIC_SECRET: &str = "anthropic";
 pub(super) const ELEVENLABS_SECRET: &str = "elevenlabs";
 const DEFAULT_STT_MODEL: &str = "base.en";
-const DEFAULT_VOICE: &str = "default";
+/// `[voice] id` when settings name none: each engine's own default voice.
+pub const DEFAULT_VOICE: &str = "default";
 
 /// The file as written: `None` is a field the file leaves out (its default). Editing keeps
 /// this shape, so a saved file holds only what was chosen (`super::edit`).

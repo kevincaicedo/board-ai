@@ -26,10 +26,16 @@ pub enum SettingsEdit {
         talker: LlmChoice,
         scribe: LlmChoice,
     },
+    /// Replaces `[scribe]` alone (the settings page's "Memory digests use … · change").
+    Scribe(LlmChoice),
     /// Replaces `[tts]` with this engine and its defaults.
     Tts(TtsKind),
     Mic(MicMode),
     Input(InputChoice),
+    /// Appends a code folder, as it is written (`~/Projects` or absolute; `code_roots`).
+    AddCodeRoot(String),
+    /// Removes the code folder at this index of `code_roots`; past the end, nothing.
+    RemoveCodeRoot(usize),
     /// The first-run screen was finished.
     SetupComplete,
 }
@@ -80,6 +86,7 @@ fn change(raw: &mut RawSettings, edit: &SettingsEdit) {
             raw.talker = Some(llm(talker));
             raw.scribe = Some(llm(scribe));
         }
+        SettingsEdit::Scribe(scribe) => raw.scribe = Some(llm(scribe)),
         SettingsEdit::Tts(kind) => {
             raw.tts = Some(RawProvider {
                 kind: Some(
@@ -113,6 +120,18 @@ fn change(raw: &mut RawSettings, edit: &SettingsEdit) {
                 input: Some(input.as_setting().to_owned()),
                 output,
             });
+        }
+        SettingsEdit::AddCodeRoot(root) => {
+            raw.code_roots
+                .get_or_insert_with(Vec::new)
+                .push(root.clone());
+        }
+        SettingsEdit::RemoveCodeRoot(index) => {
+            if let Some(roots) = raw.code_roots.as_mut()
+                && *index < roots.len()
+            {
+                roots.remove(*index);
+            }
         }
         SettingsEdit::SetupComplete => raw.setup_complete = Some(true),
     }

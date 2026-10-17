@@ -45,6 +45,20 @@ impl SecretStore for KeychainSecrets {
             .set_password(secret.expose())
             .map_err(|error| unwritable(&error))
     }
+
+    /// Deletes the generic password (the settings page's "Remove"); none stored is done already.
+    fn remove(&self, name: &SecretName) -> Result<(), SecretError> {
+        let unwritable = |error: &keyring_core::Error| SecretError::Unwritable {
+            name: name.clone(),
+            detail: detail(error),
+        };
+        let entry = Cred::build(MacKeychainDomain::User, KEYCHAIN_SERVICE, name.as_str())
+            .map_err(|error| unwritable(&error))?;
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+            Err(error) => Err(unwritable(&error)),
+        }
+    }
 }
 
 /// A Keychain error for a log line or a secret error: redacted and bounded.

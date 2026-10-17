@@ -77,6 +77,11 @@ struct WireEndpoint {
     quantization: Option<String>,
     #[serde(default)]
     supported_parameters: Option<Vec<String>>,
+    /// Medians over the last 30 minutes, `{"p50": …, "p75": …, …}`; `null` in the public list.
+    #[serde(default)]
+    latency_last_30m: Option<Value>,
+    #[serde(default)]
+    throughput_last_30m: Option<Value>,
 }
 
 /// The tool-capable models of a `/models` answer, in its order, at most
@@ -117,6 +122,7 @@ fn model(wire: &WireModel, parameters: &[String]) -> Option<ModelInfo> {
         price: wire.pricing.as_ref().and_then(price),
         reasoning: reasoning(wire.reasoning.as_ref(), parameters),
         preset: false,
+        route: Vec::new(),
     })
 }
 
@@ -174,7 +180,26 @@ fn provider(wire: &WireEndpoint) -> Option<ModelProvider> {
             .filter(|quantization| *quantization != "unknown")
             .and_then(kept),
         tools: parameters.iter().any(|parameter| parameter == "tools"),
+        latency_ms_p50: median(wire.latency_last_30m.as_ref()),
+        throughput_tokens_per_second_p50: median(wire.throughput_last_30m.as_ref()),
     })
+}
+
+/// The `p50` of a percentile object, rounded to a whole number. Anything else (`null`, a
+/// missing or negative median, one past `u32`) is unknown: a speed is shown only when OpenRouter
+/// gives one, never guessed.
+fn median(value: Option<&Value>) -> Option<u32> {
+    let median = value?.get("p50")?.as_f64()?.round();
+    if !(0.0..=f64::from(u32::MAX)).contains(&median) {
+        return None;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a whole number in u32's range, checked just above"
+    )]
+    let whole = median as u32;
+    Some(whole)
 }
 
 /// Text from a list, kept only when it is short and printable.
@@ -229,7 +254,7 @@ mod tests {
     use boardai_core::setup::ModelReasoning;
     use serde_json::json;
 
-    use super::{models, per_token, providers};
+    use super::{median, models, per_token, providers};
     use crate::limits::{MODEL_LIST_MODELS_MAX, MODEL_TEXT_MAX_BYTES};
 
     #[test]
@@ -308,6 +333,37 @@ mod tests {
         let (listed, left_out) = models(body.to_string().as_bytes()).expect("a list");
         assert_eq!(listed.len(), MODEL_LIST_MODELS_MAX);
         assert_eq!(left_out, 3);
+    }
+
+    #[test]
+    fn speeds_are_read_only_where_openrouter_gives_them() {
+        assert_eq!(median(Some(&json!({"p50": 287.4, "p90": 900}))), Some(287));
+        assert_eq!(median(Some(&json!({"p50": 795}))), Some(795));
+        for unknown in [
+            json!(null),
+            json!({}),
+            json!({"p90": 12}),
+            json!({"p50": -3}),
+            json!({"p50": "fast"}),
+            json!({"p50": 1e12}),
+            json!(42),
+        ] {
+            assert_eq!(median(Some(&unknown)), None, "{unknown}");
+        }
+        assert_eq!(median(None), None);
+        let body = json!({"data": {"endpoints": [
+            {"provider_name": "Cerebras", "tag": "cerebras/fp16",
+             "supported_parameters": ["tools"],
+             "latency_last_30m": {"p50": 290.0, "p75": 410.0},
+             "throughput_last_30m": {"p50": 795.2}},
+            {"provider_name": "Near AI", "tag": "near-ai/fp8",
+             "latency_last_30m": null, "throughput_last_30m": null},
+        ]}});
+        let (listed, _) = providers(body.to_string().as_bytes()).expect("a list");
+        assert_eq!(listed[0].latency_ms_p50, Some(290));
+        assert_eq!(listed[0].throughput_tokens_per_second_p50, Some(795));
+        assert_eq!(listed[1].latency_ms_p50, None);
+        assert_eq!(listed[1].throughput_tokens_per_second_p50, None);
     }
 
     #[test]

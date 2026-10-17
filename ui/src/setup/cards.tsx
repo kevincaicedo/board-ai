@@ -14,6 +14,7 @@ import {
   keyHint,
   keyLabel,
   keyNote,
+  keySaved,
   MODES,
   micDenied,
   micStep,
@@ -153,7 +154,7 @@ function VoiceKey({ state, status, controller }: CardProps) {
       <KeyField
         id="setup-voice-key"
         label={keyLabel("ElevenLabs")}
-        hint={keyHint("ElevenLabs", status.keys.includes("ElevenLabs"))}
+        hint={keyHint("ElevenLabs", keySaved(status, "ElevenLabs"))}
         focus={true}
         disabled={state.busy.has("voice")}
         onSave={(value) => void controller.saveKey("ElevenLabs", value)}
@@ -203,7 +204,7 @@ export function VoiceCard({ state, status, controller }: CardProps) {
   const voice = groupProgress(status.voice_files, state.transfers);
   const hearing = groupProgress(status.hearing_files, state.transfers);
   const downloadProblem = hearing.problem ?? (kokoro ? voice.problem : null);
-  const elevenLabsSaved = status.keys.includes("ElevenLabs");
+  const elevenLabsSaved = keySaved(status, "ElevenLabs");
   return (
     <section class="setup-card" aria-labelledby="setup-voice" aria-busy={busy}>
       <CardHead id="setup-voice" step={voiceStep(downloadProblem !== null)} title="Local models" />

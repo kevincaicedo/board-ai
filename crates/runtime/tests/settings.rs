@@ -501,3 +501,54 @@ fn an_edit_writes_a_preset_with_its_route() {
     assert!(written.contains("route = [\"cerebras\"]"), "{written}");
     assert_eq!(Settings::load(&path, home).expect("reloads"), edited);
 }
+
+#[test]
+fn the_scribe_and_the_code_folders_change_alone() {
+    let folder = TempFolder::new("settings-scribe-roots");
+    let home = Path::new(HOME);
+    let path = folder.path.join("settings.toml");
+    std::fs::write(
+        &path,
+        "code_roots = [\"~/code\", \"/opt/src\"]\n[talker]\nkind = \"openai_compatible\"\nmodel = \"gemma4:latest\"\neffort = \"none\"\n",
+    )
+    .expect("hand-written");
+    let edits = [
+        SettingsEdit::Scribe(ollama("qwen3.5:2b")),
+        SettingsEdit::AddCodeRoot("~/Documents/Projects".to_owned()),
+        SettingsEdit::RemoveCodeRoot(0),
+    ];
+    let edited = Settings::edit(&path, home, &edits).expect("edited");
+    assert_eq!(edited.talker.model, "gemma4:latest", "the talker stays");
+    assert_eq!(edited.scribe.model, "qwen3.5:2b");
+    assert_eq!(
+        edited.code_roots,
+        vec![
+            PathBuf::from("/opt/src"),
+            PathBuf::from("/Users/someone/Documents/Projects")
+        ]
+    );
+    let text = std::fs::read_to_string(&path).expect("written");
+    assert!(text.contains("code_roots = [\"/opt/src\", \"~/Documents/Projects\"]"));
+    // Past the end removes nothing; a file without folders gets its first one.
+    let unchanged = Settings::edit(&path, home, &[SettingsEdit::RemoveCodeRoot(9)]).expect("ok");
+    assert_eq!(unchanged.code_roots.len(), 2);
+    let empty = folder.path.join("empty.toml");
+    let added = Settings::edit(
+        &empty,
+        home,
+        &[SettingsEdit::AddCodeRoot("/srv".to_owned())],
+    )
+    .expect("created");
+    assert_eq!(added.code_roots, vec![PathBuf::from("/srv")]);
+    let relative = Settings::edit(&empty, home, &[SettingsEdit::AddCodeRoot("src".to_owned())]);
+    assert!(
+        matches!(relative, Err(SettingsError::Invalid { field, .. }) if field == "code_roots"),
+        "a folder that isn't absolute or under ~/ is refused and the file kept"
+    );
+    assert_eq!(
+        Settings::load(&empty, home)
+            .expect("still valid")
+            .code_roots,
+        vec![PathBuf::from("/srv")]
+    );
+}

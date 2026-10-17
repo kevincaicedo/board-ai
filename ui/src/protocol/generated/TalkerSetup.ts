@@ -2,6 +2,7 @@
 import type { KeyState } from "./KeyState.ts";
 import type { OllamaStatus } from "./OllamaStatus.ts";
 import type { TalkerProvider } from "./TalkerProvider.ts";
+import type { ThinkingEffort } from "./ThinkingEffort.ts";
 
 /**
  * Card 1: the configured talker.
@@ -10,4 +11,18 @@ export type TalkerSetup = { provider: TalkerProvider, model: string,
 /**
  * The talker's key, when its provider needs one.
  */
-key: KeyState, ollama: OllamaStatus, };
+key: KeyState, ollama: OllamaStatus, 
+/**
+ * How much it thinks before it answers, as configured.
+ */
+thinking: ThinkingEffort, 
+/**
+ * OpenRouter only: the providers tried, in order, and no others (route slugs, `cerebras`;
+ * D-152). Empty: OpenRouter picks.
+ */
+route: Array<string>, 
+/**
+ * A BoardAI preset (OpenRouter's two, D-152, or Ollama's default model): its voice and its
+ * drawing were checked. Other models may draw less well.
+ */
+preset: boolean, };

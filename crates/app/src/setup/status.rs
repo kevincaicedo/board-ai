@@ -1,22 +1,33 @@
-//! Building the first-run screen's [`SetupStatus`] from what is on this Mac: `settings.toml`,
-//! which keys the Keychain holds (names only), the model files, and the probes the command
-//! took (Ollama, microphone permission, harnesses). Reading the Keychain can block, so this
-//! runs on the blocking pool.
+//! Building the first-run screen's and the settings page's [`SetupStatus`] from what is on this
+//! Mac: `settings.toml`, which keys the Keychain holds (names only), the model files, and the
+//! probes the command took (Ollama, microphone permission and inputs, harnesses). Reading the
+//! Keychain can block, so this runs on the blocking pool.
 
 use std::path::{Path, PathBuf};
 
 use boardai_core::setup::{
-    FileState, HarnessesFound, InputDevice, KeyName, KeyState, MicChoice, MicPermission,
-    ModelFileStatus, OllamaStatus, SetupStatus, TalkerProvider, TalkerSetup, VoiceEngine, blockers,
+    ElevenLabsVoice, FileState, InputDevice, KeyState, MicChoice, MicPermission, ModelFileStatus,
+    OllamaStatus, SetupStatus, TalkerProvider, TalkerSetup, ThinkingEffort, VoiceEngine, blockers,
 };
 use boardai_runtime::audio::InputChoice;
+use boardai_runtime::audio::devices::DeviceSnapshot;
+use boardai_runtime::llm::Effort;
+use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
 use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
+use boardai_runtime::llm::openrouter;
 use boardai_runtime::models::{ModelId, ModelStatus, ModelStore};
-use boardai_runtime::settings::{LlmKind, LlmSettings, MicMode, SecretStore, Settings, TtsKind};
-use boardai_runtime::speech_out::kokoro_files;
+use boardai_runtime::settings::{
+    DEFAULT_VOICE, LlmKind, LlmSettings, MicMode, SecretStore, Settings, TtsKind,
+};
+use boardai_runtime::speech_out::{
+    ELEVENLABS_DEFAULT_MODEL, ELEVENLABS_DEFAULT_MODEL_NAME, ELEVENLABS_DEFAULT_VOICE_NAME,
+    kokoro_files,
+};
 
 use super::downloads::Downloads;
-use super::input::secret_name;
+use super::folders::as_written;
+use super::harnesses::{self, Installed};
+use super::keys::{self, KeyLedger};
 
 /// Where setup reads and writes.
 #[derive(Clone, Debug)]
@@ -31,12 +42,52 @@ pub struct SetupPaths {
 pub struct Probes {
     pub ollama: OllamaStatus,
     pub microphone: MicPermission,
-    pub harnesses: HarnessesFound,
-    pub input_devices: Vec<String>,
+    pub harnesses: Installed,
+    pub inputs: Inputs,
     /// The session already runs (setup finished, or a dev script skipped it).
     pub started: bool,
     /// The app macOS asks about the microphone instead of BoardAI (`permission::attributed_to`).
     pub mic_attributed_to: Option<String>,
+}
+
+/// The microphones macOS has now, by name.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Inputs {
+    pub names: Vec<String>,
+    /// The system's default input.
+    pub default: Option<String>,
+    /// The Mac's own microphone.
+    pub built_in: Option<String>,
+}
+
+impl Inputs {
+    pub fn from_snapshot(snapshot: &DeviceSnapshot) -> Self {
+        let inputs: Vec<_> = snapshot
+            .devices
+            .iter()
+            .filter(|device| device.has_input)
+            .collect();
+        Self {
+            names: inputs.iter().map(|device| device.name.clone()).collect(),
+            default: snapshot.default_input.and_then(|id| {
+                inputs
+                    .iter()
+                    .find(|device| device.id == id)
+                    .map(|device| device.name.clone())
+            }),
+            built_in: inputs
+                .iter()
+                .find(|device| device.built_in)
+                .map(|device| device.name.clone()),
+        }
+    }
+}
+
+/// Where setup reads and writes, and what the run has learned (keys, harness versions).
+#[derive(Clone, Copy)]
+pub struct Seen<'a> {
+    pub downloads: &'a Downloads,
+    pub keys: &'a KeyLedger,
 }
 
 /// The settings as the app would start with them, or why it can't.
@@ -51,43 +102,41 @@ pub fn gather(
     paths: &SetupPaths,
     secrets: &dyn SecretStore,
     models: &ModelStore,
-    downloads: &Downloads,
+    seen: Seen<'_>,
     probes: Probes,
 ) -> SetupStatus {
     let (settings, settings_problem) = load(paths);
-    // Once the session runs the screen isn't shown; the Keychain is left alone.
+    // Once the session runs, the Keychain is read only when the owner asks (D-102).
     let read_keys = !probes.started;
-    let keys = [KeyName::Anthropic, KeyName::OpenRouter, KeyName::ElevenLabs]
-        .into_iter()
-        .filter(|key| {
-            read_keys
-                && secret_name(*key).is_some_and(|name| secrets.contains(&name).unwrap_or(false))
-        })
-        .collect();
+    let keys = keys::states(secrets, seen.keys, read_keys);
     let hearing: Vec<ModelId> = ModelId::whisper(&settings.stt.model)
         .into_iter()
         .chain([ModelId::SileroVad])
         .collect();
     let files = |ids: &[ModelId]| -> Vec<ModelFileStatus> {
         ids.iter()
-            .map(|id| file_status(models, downloads, *id))
+            .map(|id| file_status(models, seen.downloads, *id))
             .collect()
     };
+    let talker_key = settings
+        .talker
+        .secret
+        .as_ref()
+        .map_or(KeyState::NotNeeded, |name| {
+            keys::named(secrets, &keys, name, read_keys)
+        });
     let mut status = SetupStatus {
         complete: settings.setup_complete || probes.started,
         settings_problem,
-        talker: TalkerSetup {
-            provider: provider(&settings.talker),
-            model: settings.talker.model.clone(),
-            key: key_state(&settings.talker, secrets, read_keys),
-            ollama: probes.ollama,
-        },
+        talker: talker(&settings.talker, talker_key, probes.ollama),
+        scribe_model: settings.scribe.model.clone(),
         keys,
         voice: match settings.tts.kind {
             TtsKind::Kokoro => VoiceEngine::Kokoro,
             TtsKind::ElevenLabs => VoiceEngine::ElevenLabs,
             TtsKind::System => VoiceEngine::System,
         },
+        elevenlabs: elevenlabs(&settings),
         voice_files: files(&kokoro_files(&settings.tts)),
         hearing_model: settings.stt.model.clone(),
         hearing_files: files(&hearing),
@@ -101,13 +150,71 @@ pub fn gather(
             InputChoice::BuiltIn => InputDevice::BuiltIn,
             InputChoice::Named(name) => InputDevice::Named { name: name.clone() },
         },
-        input_devices: probes.input_devices,
-        harnesses: probes.harnesses,
+        input_devices: probes.inputs.names,
+        default_input: probes.inputs.default,
+        built_in_input: probes.inputs.built_in,
+        harnesses: harnesses::found(probes.harnesses, settings.harness.kind),
+        code_folders: settings
+            .code_roots
+            .iter()
+            .map(|root| as_written(root, &paths.home))
+            .collect(),
+        vault: as_written(&settings.vault, &paths.home),
         blockers: Vec::new(),
         mic_attributed_to: probes.mic_attributed_to,
     };
     status.blockers = blockers(&status);
     status
+}
+
+fn talker(llm: &LlmSettings, key: KeyState, ollama: OllamaStatus) -> TalkerSetup {
+    let provider = provider(llm);
+    let preset = match provider {
+        TalkerProvider::OpenRouter => openrouter::preset(&llm.model).is_some(),
+        TalkerProvider::Ollama => llm.model == OLLAMA_DEFAULT_MODEL,
+        TalkerProvider::Claude | TalkerProvider::Other => false,
+    };
+    TalkerSetup {
+        provider,
+        model: llm.model.clone(),
+        key,
+        ollama,
+        thinking: thinking(llm),
+        route: llm
+            .route
+            .iter()
+            .map(|slug| slug.as_str().to_owned())
+            .collect(),
+        preset,
+    }
+}
+
+/// The effort as the model gets it: Claude can't turn thinking off, so its `none` is `low`.
+fn thinking(llm: &LlmSettings) -> ThinkingEffort {
+    match (llm.effort, llm.kind) {
+        (Effort::None, LlmKind::OpenAiCompatible) => ThinkingEffort::Off,
+        (Effort::None | Effort::Low, LlmKind::Anthropic)
+        | (Effort::Low, LlmKind::OpenAiCompatible) => ThinkingEffort::Low,
+        (Effort::Medium, _) => ThinkingEffort::Medium,
+        (Effort::High, _) => ThinkingEffort::High,
+        (Effort::ExtraHigh, _) => ThinkingEffort::ExtraHigh,
+        (Effort::Max, _) => ThinkingEffort::Max,
+    }
+}
+
+/// ElevenLabs by display name: its default model and voice by name (D-137), else as written.
+fn elevenlabs(settings: &Settings) -> ElevenLabsVoice {
+    let chosen = settings.tts.kind == TtsKind::ElevenLabs;
+    let model = match settings.tts.model.as_deref() {
+        Some(model) if chosen && model != ELEVENLABS_DEFAULT_MODEL => model.to_owned(),
+        Some(_) | None => ELEVENLABS_DEFAULT_MODEL_NAME.to_owned(),
+    };
+    let voice = if chosen && settings.voice.id != DEFAULT_VOICE {
+        settings.voice.id.clone()
+    } else {
+        ELEVENLABS_DEFAULT_VOICE_NAME.to_owned()
+    };
+    ElevenLabsVoice { model, voice }
 }
 
 /// Which pill the configured talker is. A base URL the screen doesn't offer is `Other`.
@@ -117,23 +224,6 @@ pub fn provider(talker: &LlmSettings) -> TalkerProvider {
         (LlmKind::OpenAiCompatible, None | Some(OLLAMA_BASE_URL)) => TalkerProvider::Ollama,
         (LlmKind::OpenAiCompatible, Some(OPENROUTER_BASE_URL)) => TalkerProvider::OpenRouter,
         (LlmKind::Anthropic | LlmKind::OpenAiCompatible, Some(_)) => TalkerProvider::Other,
-    }
-}
-
-fn key_state(talker: &LlmSettings, secrets: &dyn SecretStore, read: bool) -> KeyState {
-    let Some(name) = &talker.secret else {
-        return KeyState::NotNeeded;
-    };
-    if !read {
-        return KeyState::NotChecked;
-    }
-    match secrets.contains(name) {
-        Ok(true) => KeyState::Saved,
-        Ok(false) => KeyState::Missing,
-        Err(error) => {
-            tracing::warn!(%error, "the Keychain could not be read for setup");
-            KeyState::Unreadable
-        }
     }
 }
 

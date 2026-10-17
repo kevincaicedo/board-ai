@@ -34,7 +34,14 @@ export type TauriCommand =
   | "setup_download"
   | "setup_microphone"
   | "setup_open_microphone_settings"
-  | "setup_finish";
+  | "setup_finish"
+  | "setup_models"
+  | "setup_remove_key"
+  | "setup_check_keys"
+  | "setup_harness_versions"
+  | "setup_add_code_folder"
+  | "setup_open_vault"
+  | "setup_rebuild_index";
 
 /** The two Tauri calls the transports need, injectable so tests don't need a webview. */
 export interface TauriBridge {

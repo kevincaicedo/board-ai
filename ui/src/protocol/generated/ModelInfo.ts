@@ -22,4 +22,8 @@ price: ModelPrice | null, reasoning: ModelReasoning,
  * A BoardAI preset: measured with its voice and drawing, with a provider route and
  * thinking set for speed (D-152). Other models may draw less well or answer more slowly.
  */
-preset: boolean, };
+preset: boolean, 
+/**
+ * A preset's route (slugs, `cerebras`): the only providers tried. Empty: OpenRouter picks.
+ */
+route: Array<string>, };

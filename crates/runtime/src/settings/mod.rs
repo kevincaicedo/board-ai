@@ -18,6 +18,7 @@ use crate::llm::Effort;
 use crate::llm::openrouter::ProviderSlug;
 
 pub use edit::{LlmChoice, SettingsEdit};
+pub use raw::DEFAULT_VOICE;
 pub use secrets::{MemorySecretStore, Secret, SecretError, SecretName, SecretStore};
 
 #[derive(Clone, Debug, PartialEq)]

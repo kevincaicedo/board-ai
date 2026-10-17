@@ -1,28 +1,37 @@
-//! The first-run screen's side of the shell (LLD §3.8, artboard 11 · First run): on a first
-//! launch the session waits, the screen reads a [`SetupStatus`], saves choices to
-//! `settings.toml`, keys to the Keychain, downloads the local models, asks for the
-//! microphone, and "Start talking" starts the session.
+//! The first-run screen's and the settings page's side of the shell (LLD §3.8, artboards 11 ·
+//! First run and 12 · Settings): on a first launch the session waits, the screen reads a
+//! [`SetupStatus`], saves choices to `settings.toml`, keys to the Keychain, downloads the local
+//! models, asks for the microphone, and "Start talking" starts the session. Over a running
+//! session the settings page does the same, and also removes keys, adds code folders through
+//! the system's chooser, opens the vault and rebuilds the index.
 //!
 //! Keys go from the command straight into the `SecretStore`; they are never written to a file,
 //! logged, or sent back to the UI, which only learns which names have a key (law 10).
 
 pub mod commands;
 mod downloads;
+mod folders;
+mod harnesses;
 mod input;
+mod keys;
 mod status;
 #[cfg(test)]
 mod tests;
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use boardai_core::setup::{KeyName, OllamaStatus, SetupEdit, TalkerProvider};
+use boardai_core::setup::{KeyName, KeyState, OllamaStatus, SetupEdit, TalkerProvider};
 use boardai_runtime::llm::catalog::{ModelCatalog, OpenRouterModelId};
-use boardai_runtime::settings::{SecretStore, Settings, SettingsEdit};
+use boardai_runtime::settings::{SecretStore, Settings, SettingsEdit, TtsKind};
 use tauri::{AppHandle, Manager};
 
 pub use downloads::Downloads;
 pub use status::SetupPaths;
+
+use harnesses::HarnessVersions;
+use keys::KeyLedger;
 
 /// What the setup commands share.
 #[derive(Default)]
@@ -36,6 +45,10 @@ pub struct SetupState {
     ollama: Mutex<Option<OllamaStatus>>,
     /// The model picker's lists, fetched on demand and kept a while (D-153).
     catalog: Arc<ModelCatalog>,
+    /// Which keys the Keychain held when this run last looked (names only, D-102).
+    keys: Arc<KeyLedger>,
+    /// What each harness's `--version` answered this run.
+    harness_versions: Arc<HarnessVersions>,
     /// The session was started (at launch, or by finishing setup); it starts once.
     started: AtomicBool,
     /// A choice or a key was saved while the session runs (the screen opened as settings):
@@ -127,11 +140,15 @@ pub fn save_edit(
         SetupEdit::Talker {
             provider: TalkerProvider::OpenRouter,
             model: Some(model),
-        } => OpenRouterModelId::parse(model).and_then(|id| catalog.listed(&id)),
+        }
+        | SetupEdit::Scribe { model } => {
+            OpenRouterModelId::parse(model).and_then(|id| catalog.listed(&id))
+        }
         SetupEdit::Talker { .. }
         | SetupEdit::Voice { .. }
         | SetupEdit::Mic { .. }
-        | SetupEdit::Input { .. } => None,
+        | SetupEdit::Input { .. }
+        | SetupEdit::RemoveCodeFolder { .. } => None,
     };
     let known = input::EditContext {
         current: &current,
@@ -147,13 +164,60 @@ pub fn save_edit(
 
 /// Saves a pasted key to the store under its name. The value is parsed here and goes nowhere
 /// else. Blocks (the Keychain).
-pub fn save_key(secrets: &dyn SecretStore, key: KeyName, value: String) -> Result<(), String> {
+pub fn save_key(
+    secrets: &dyn SecretStore,
+    ledger: &KeyLedger,
+    key: KeyName,
+    value: String,
+) -> Result<(), String> {
     let secret = input::parse_key(value).map_err(|refused| refused.words().to_owned())?;
     let name = input::secret_name(key).ok_or("that key has no name")?;
     secrets.set(&name, &secret).map_err(|error| {
         tracing::warn!(%error, "a key could not be saved");
         "The Keychain didn't save the key. Unlock it and try again.".to_owned()
-    })
+    })?;
+    ledger.record(key, KeyState::Saved);
+    Ok(())
+}
+
+/// Removes a key from the store. When it is ElevenLabs' and ElevenLabs is the voice, the voice
+/// goes back to Kokoro, so the next session still speaks. Blocks (the Keychain, file I/O).
+pub fn remove_key(
+    paths: &SetupPaths,
+    lock: &Mutex<()>,
+    secrets: &dyn SecretStore,
+    ledger: &KeyLedger,
+    key: KeyName,
+) -> Result<(), String> {
+    let name = input::secret_name(key).ok_or("that key has no name")?;
+    secrets.remove(&name).map_err(|error| {
+        tracing::warn!(%error, "a key could not be removed");
+        "The Keychain didn't remove the key. Unlock it and try again.".to_owned()
+    })?;
+    ledger.record(key, KeyState::Missing);
+    let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    let voice_needs_it = key == KeyName::ElevenLabs
+        && Settings::load(&paths.settings, &paths.home)
+            .is_ok_and(|settings| settings.tts.kind == TtsKind::ElevenLabs);
+    if voice_needs_it {
+        Settings::edit(
+            &paths.settings,
+            &paths.home,
+            &[SettingsEdit::Tts(TtsKind::Kokoro)],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Adds a folder picked in the system's chooser to `code_roots`. Blocks (file I/O).
+pub fn add_code_folder(paths: &SetupPaths, lock: &Mutex<()>, folder: &Path) -> Result<(), String> {
+    let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    let current =
+        Settings::load(&paths.settings, &paths.home).map_err(|error| error.to_string())?;
+    let change = folders::add_folder(&current, folder, &paths.home)?;
+    Settings::edit(&paths.settings, &paths.home, &[change]).map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Sets the setup-complete flag. Blocks (file I/O).

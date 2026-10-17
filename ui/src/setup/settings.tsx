@@ -1,7 +1,8 @@
 // Settings over the live stage (LLD §3.8): ⌘, or a spoken "open settings" (`OpenSettings` from
-// the core) shows the first-run screen as settings. Closing it (Esc, ⌘, or "Start talking")
-// finishes setup again: the app closes the screen, and restarts the session when something
-// was saved. The stage keeps running underneath until then.
+// the core) shows the settings page (artboard 12, SettingsPage.tsx) through the first run's
+// entry point, which picks the page from the status. Closing it (Esc, ⌘, or "Back to talking")
+// finishes setup again: the app closes the page, and restarts the session when something was
+// saved. The stage keeps running underneath until then.
 
 import { effect } from "@preact/signals";
 import { render } from "preact";

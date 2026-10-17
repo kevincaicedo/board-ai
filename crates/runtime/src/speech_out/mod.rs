@@ -27,7 +27,8 @@ use crate::cancel::CancelToken;
 
 pub use actor::{SpeechOut, SpeechOutChannels, SpeechOutCommand, SpeechOutConfig};
 pub use elevenlabs::{
-    ELEVENLABS_BASE_URL, ELEVENLABS_DEFAULT_MODEL, ELEVENLABS_DEFAULT_VOICE_ID, ElevenLabsOptions,
+    ELEVENLABS_BASE_URL, ELEVENLABS_DEFAULT_MODEL, ELEVENLABS_DEFAULT_MODEL_NAME,
+    ELEVENLABS_DEFAULT_VOICE_ID, ELEVENLABS_DEFAULT_VOICE_NAME, ElevenLabsOptions,
     ElevenLabsRealtime, ElevenLabsVoice,
 };
 pub use engine::{ChosenVoice, KOKORO_QUANTIZED_MODEL, choose_voice, engine_for, kokoro_files};

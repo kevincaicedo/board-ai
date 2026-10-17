@@ -1,18 +1,20 @@
 // The first-run screen (artboard 11 · First run, LLD §3.8): the one screen that needs typing.
 // It shows until "Start talking" starts the session; then the stage takes the window. Over a
-// running session it is the settings screen (settings.tsx).
+// running session the same entry point shows the settings page instead (artboard 12,
+// SettingsPage.tsx): the app's status says which, through `complete`.
 
 import { effect } from "@preact/signals";
 import { render } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { opensSettings } from "../app/keys.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import { MicrophoneCard, Problem, ThinkingCard, VoiceCard } from "./cards.tsx";
+import { ModelCatalog } from "./catalog.ts";
 import { SetupController } from "./controller.ts";
 import { mountSetupOrb } from "./orb.ts";
+import { SettingsPage } from "./SettingsPage.tsx";
 import { canStart } from "./state.ts";
 import type { SetupTransport } from "./transport.ts";
-import { FOOTER_FIRST_RUN, FOOTER_SETTINGS, harnessChip, startHint, startLabel } from "./words.ts";
+import { FOOTER_FIRST_RUN, harnessChip, START_TALKING, startHint } from "./words.ts";
 
 function Harnesses({ status }: { status: SetupStatus }) {
   const chips = [
@@ -23,7 +25,10 @@ function Harnesses({ status }: { status: SetupStatus }) {
     <div class="first-run-harness">
       <span>Coding harness</span>
       {chips.map((chip) => (
-        <span key={chip.name} class={chip.found ? "setup-chip setup-chip-found" : "setup-chip"}>
+        <span
+          key={chip.name}
+          class={chip.found.state === "Found" ? "setup-chip setup-chip-found" : "setup-chip"}
+        >
           {harnessChip(chip.name, chip.found)}
         </span>
       ))}
@@ -48,15 +53,6 @@ export function FirstRun({
 }) {
   const state = controller.state.value;
   const orbHost = useRef<HTMLDivElement>(null);
-  const screen = useRef<HTMLElement>(null);
-  // Opened over a running session (⌘, or "open settings"): the same screen, as settings.
-  const settings = state.status?.complete === true;
-
-  useEffect(() => {
-    if (settings) {
-      screen.current?.focus();
-    }
-  }, [settings]);
 
   useLayoutEffect(() => {
     const host = orbHost.current;
@@ -64,7 +60,6 @@ export function FirstRun({
   }, [orbSize, still]);
 
   useEffect(() => {
-    void controller.load();
     // Coming back from System Settings (the microphone) or from starting Ollama.
     const again = (): void => void controller.refresh();
     window.addEventListener("focus", again);
@@ -74,32 +69,11 @@ export function FirstRun({
   const status = state.status;
   const hint = status === null || state.busy.size > 0 ? null : startHint(status);
   return (
-    <main
-      class="first-run"
-      aria-label={settings ? "Settings" : "Set up BoardAI"}
-      ref={screen}
-      tabIndex={-1}
-      onKeyDown={(event) => {
-        if (!settings) {
-          return;
-        }
-        // The stage's keys (Space, M, Esc) wait while settings are open.
-        event.stopPropagation();
-        const shortcut = opensSettings({
-          code: event.code,
-          meta: event.metaKey,
-          repeat: event.repeat,
-        });
-        if (event.code === "Escape" || shortcut) {
-          event.preventDefault();
-          void controller.leave();
-        }
-      }}
-    >
+    <main class="first-run" aria-label="Set up BoardAI">
       <div class="first-run-column">
         <div class="first-run-orb" ref={orbHost} />
         <header class="first-run-head">
-          <h1 class="first-run-title">{settings ? "Settings" : "Before we talk"}</h1>
+          <h1 class="first-run-title">Before we talk</h1>
           <p class="first-run-lede">
             This is the only screen you type on. Keys go to your macOS Keychain; everything else
             stays in ~/BoardAI.
@@ -116,7 +90,7 @@ export function FirstRun({
             </div>
             <div class="first-run-foot">
               <Harnesses status={status} />
-              <span class="first-run-later">{settings ? FOOTER_SETTINGS : FOOTER_FIRST_RUN}</span>
+              <span class="first-run-later">{FOOTER_FIRST_RUN}</span>
             </div>
             <div class="first-run-start">
               <button
@@ -126,7 +100,7 @@ export function FirstRun({
                 aria-describedby={hint === null ? undefined : "first-run-hint"}
                 onClick={() => void controller.start()}
               >
-                {startLabel(settings)}
+                {START_TALKING}
               </button>
               {hint === null ? null : (
                 <p id="first-run-hint" class="setup-note">
@@ -143,8 +117,35 @@ export function FirstRun({
 }
 
 /**
- * Shows the first-run screen in `container`; `onDone` runs once the session has started (the
- * caller renders the stage there).
+ * The first run, or the settings page over a running session (the status says which). Nothing
+ * shows until the status is known, so settings never flash the first run's layout.
+ */
+function SetupScreen({
+  controller,
+  catalog,
+  view,
+}: {
+  controller: SetupController;
+  catalog: ModelCatalog;
+  view: FirstRunView;
+}) {
+  const state = controller.state.value;
+  useEffect(() => {
+    void controller.load();
+  }, [controller]);
+  if (state.status?.complete === true) {
+    return <SettingsPage controller={controller} catalog={catalog} still={view.still} />;
+  }
+  if (state.status === null && state.loadProblem === null) {
+    return null;
+  }
+  return <FirstRun controller={controller} orbSize={view.orbSize} still={view.still} />;
+}
+
+/**
+ * Shows the first-run screen in `container` (or the settings page, over a running session);
+ * `onDone` runs once the session has started or settings close (the caller renders the stage
+ * there, or removes the page).
  */
 export function showFirstRun(
   container: HTMLElement,
@@ -154,6 +155,7 @@ export function showFirstRun(
   onDone: () => void,
 ): void {
   const controller = new SetupController(transport, status);
+  const catalog = new ModelCatalog(transport);
   let done = false;
   const stop = effect(() => {
     if (controller.state.value.finished && !done) {
@@ -164,5 +166,5 @@ export function showFirstRun(
       });
     }
   });
-  render(<FirstRun controller={controller} orbSize={view.orbSize} still={view.still} />, container);
+  render(<SetupScreen controller={controller} catalog={catalog} view={view} />, container);
 }

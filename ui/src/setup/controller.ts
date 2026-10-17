@@ -20,6 +20,7 @@ import {
   reduce,
   type SetupAction,
   type SetupState,
+  savesInFlight,
 } from "./state.ts";
 import { reason, type SetupTransport } from "./transport.ts";
 
@@ -92,6 +93,23 @@ export class SetupController {
     return this.#save("thinking", { kind: "Talker", provider: "Ollama", model });
   }
 
+  /** A row of the settings page's model table: the talker's model on its provider. */
+  pickModel(provider: "OpenRouter" | "Ollama", model: string): Promise<void> {
+    const talker = this.state.value.status?.talker;
+    if (talker?.provider === provider && talker.model === model) {
+      return Promise.resolve();
+    }
+    return this.#save("thinking", { kind: "Talker", provider, model });
+  }
+
+  /** "Memory digests use … · change": the scribe's model on the talker's provider. */
+  pickScribe(model: string): Promise<void> {
+    if (this.state.value.status?.scribe_model === model) {
+      return Promise.resolve();
+    }
+    return this.#save("thinking", { kind: "Scribe", model });
+  }
+
   /**
    * Saves a pasted key. The caller has already cleared its field; the value lives only in this
    * call. An ElevenLabs key also makes ElevenLabs the voice.
@@ -105,6 +123,66 @@ export class SetupController {
       }
       return this.#transport.save({ kind: "Voice", engine: "ElevenLabs" });
     });
+  }
+
+  /**
+   * The settings page's keys section: saves a pasted key under its name and nothing else (the
+   * voice stays as chosen). The caller has already cleared its field.
+   */
+  replaceKey(name: KeyName, value: string): Promise<void> {
+    return this.#request("keys", () => this.#transport.saveKey(name, value));
+  }
+
+  removeKey(name: KeyName): Promise<void> {
+    return this.#request("keys", () => this.#transport.removeKey(name));
+  }
+
+  /** "Check": reads the Keychain now, on the owner's request (D-102). */
+  checkKeys(): Promise<void> {
+    return this.#request("keys", () => this.#transport.checkKeys());
+  }
+
+  /** The coding section's versions, asked once when it shows; quiet when they don't come. */
+  async harnessVersions(): Promise<void> {
+    const ticket = ++this.#issued;
+    try {
+      const status = await this.#transport.harnessVersions();
+      if (ticket > this.#applied) {
+        this.#applied = ticket;
+        this.#dispatch({ type: "loaded", status });
+      }
+    } catch {
+      // The rows say "found" without a version; nothing is wrong with the harness.
+    }
+  }
+
+  addCodeFolder(): Promise<void> {
+    return this.#request("coding", () => this.#transport.addCodeFolder());
+  }
+
+  removeCodeFolder(index: number): Promise<void> {
+    return this.#save("coding", { kind: "RemoveCodeFolder", index });
+  }
+
+  async openVault(): Promise<void> {
+    try {
+      await this.#transport.openVault();
+    } catch (error) {
+      this.#dispatch({ type: "refused", card: "memory", reason: reason(error) });
+    }
+  }
+
+  async rebuildIndex(): Promise<void> {
+    if (this.state.value.busy.has("memory")) {
+      return;
+    }
+    this.#dispatch({ type: "busy", card: "memory" });
+    try {
+      const rebuilt = await this.#transport.rebuildIndex();
+      this.#dispatch({ type: "rebuilt", rebuilt });
+    } catch (error) {
+      this.#dispatch({ type: "refused", card: "memory", reason: reason(error) });
+    }
   }
 
   useVoice(engine: VoiceEngine): Promise<void> {
@@ -158,7 +236,7 @@ export class SetupController {
    */
   async leave(): Promise<void> {
     const state = this.state.value;
-    if (state.status === null || state.finished || state.busy.size > 0) {
+    if (state.status === null || state.finished || savesInFlight(state)) {
       return;
     }
     await this.#finish();

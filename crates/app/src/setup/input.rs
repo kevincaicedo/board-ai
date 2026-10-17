@@ -3,14 +3,14 @@
 //! settings change. Refusals are plain words for the card they belong to; none quotes a key.
 
 use boardai_core::setup::{
-    InputDevice, KeyName, MicChoice, ModelInfo, OllamaStatus, SetupEdit, TalkerProvider,
-    VoiceEngine,
+    InputDevice, KeyName, MicChoice, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit,
+    TalkerProvider, VoiceEngine,
 };
 use boardai_runtime::audio::InputChoice;
 use boardai_runtime::limits::{
     OLLAMA_MODEL_NAME_MAX_BYTES, OPENROUTER_TALKER_MAX_TOKENS, SECRET_VALUE_MAX_BYTES,
 };
-use boardai_runtime::llm::catalog::{OpenRouterModelId, talker_effort};
+use boardai_runtime::llm::catalog::{OpenRouterModelId, scribe_effort, talker_effort};
 use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
 use boardai_runtime::llm::openai::OPENROUTER_BASE_URL;
 use boardai_runtime::llm::openrouter::{self, Preset, SCRIBE_PRESET, TALKER_PRESET};
@@ -110,6 +110,12 @@ pub fn settings_edit(edit: &SetupEdit, known: EditContext<'_>) -> Result<Setting
             MicChoice::Open => MicMode::Open,
             MicChoice::PushToTalk => MicMode::PushToTalk,
         })),
+        SetupEdit::Scribe { model } => scribe(model, current, open_router_model),
+        SetupEdit::RemoveCodeFolder { index } => usize::try_from(*index)
+            .ok()
+            .filter(|index| *index < current.code_roots.len())
+            .map(SettingsEdit::RemoveCodeRoot)
+            .ok_or_else(|| "That folder is no longer in the list.".to_owned()),
         SetupEdit::Input { device } => match device {
             InputDevice::SystemDefault => Ok(SettingsEdit::Input(InputChoice::SystemDefault)),
             InputDevice::BuiltIn => Ok(SettingsEdit::Input(InputChoice::BuiltIn)),
@@ -179,6 +185,55 @@ fn talker(
         }
     };
     Ok(SettingsEdit::Llm { talker, scribe })
+}
+
+/// The scribe alone, on the talker's provider: an OpenRouter preset keeps its scribe settings,
+/// another listed model thinks at the scribe's effort (`catalog::scribe_effort`) with no route;
+/// an Ollama model runs without thinking, like the talker.
+fn scribe(
+    model: &str,
+    current: &Settings,
+    listed: Option<&ModelInfo>,
+) -> Result<SettingsEdit, String> {
+    let choice = match super::status::provider(&current.talker) {
+        TalkerProvider::OpenRouter => {
+            let id = OpenRouterModelId::parse(model)
+                .ok_or_else(|| "That is not an OpenRouter model id.".to_owned())?;
+            match openrouter::preset(id.as_str()) {
+                Some(preset) => open_router_preset(preset, LlmRole::Scribe),
+                None => {
+                    let reasoning = listed
+                        .filter(|listed| listed.id == id.as_str())
+                        .map_or(&ModelReasoning::Unknown, |listed| &listed.reasoning);
+                    LlmChoice {
+                        kind: LlmKind::OpenAiCompatible,
+                        model: Some(id.as_str().to_owned()),
+                        effort: Some(scribe_effort(reasoning)),
+                        max_tokens: None,
+                        base_url: Some(OPENROUTER_BASE_URL.to_owned()),
+                        secret: secret_name(KeyName::OpenRouter),
+                        route: Vec::new(),
+                    }
+                }
+            }
+        }
+        TalkerProvider::Ollama => LlmChoice {
+            kind: LlmKind::OpenAiCompatible,
+            model: Some(ollama_model_name(model)?),
+            effort: Some(Effort::None),
+            max_tokens: None,
+            base_url: None,
+            secret: None,
+            route: Vec::new(),
+        },
+        TalkerProvider::Claude => {
+            return Err("With Claude, memory digests use Claude Haiku.".to_owned());
+        }
+        TalkerProvider::Other => {
+            return Err("settings.toml names this provider; change the scribe there.".to_owned());
+        }
+    };
+    Ok(SettingsEdit::Scribe(choice))
 }
 
 /// A preset as it was measured for `role`: its thinking, output budget and route (D-152).
@@ -407,6 +462,7 @@ mod tests {
             price: None,
             reasoning,
             preset: false,
+            route: Vec::new(),
         };
         let optional = listing("x/optional", ModelReasoning::Optional);
         let (talker, _) = picked(&open_router(Some("x/optional")), Some(&optional));
@@ -462,5 +518,84 @@ mod tests {
             super::secret_name(KeyName::OpenRouter).map(|name| name.to_string()),
             Some("openrouter".to_owned())
         );
+    }
+
+    #[test]
+    fn the_scribe_changes_on_the_talkers_provider_only() {
+        let unreachable = OllamaStatus::Unreachable;
+        let qwen = SetupEdit::Scribe {
+            model: QWEN_3_8_27B.model.to_owned(),
+        };
+        let claude = defaults();
+        assert!(
+            settings_edit(&qwen, known(&claude, &unreachable, false, &[])).is_err(),
+            "Claude's digests stay on Claude Haiku"
+        );
+        let mut open_router = defaults();
+        open_router.talker.kind = LlmKind::OpenAiCompatible;
+        open_router.talker.base_url = Some(OPENROUTER_BASE_URL.to_owned());
+        let Ok(SettingsEdit::Scribe(preset)) =
+            settings_edit(&qwen, known(&open_router, &unreachable, false, &[]))
+        else {
+            panic!("a scribe on OpenRouter");
+        };
+        assert_eq!(preset.route, QWEN_3_8_27B.route());
+        assert_eq!(preset.effort, Some(Effort::Medium));
+        let other = SetupEdit::Scribe {
+            model: "x/never-thinks".to_owned(),
+        };
+        let listed = ModelInfo {
+            id: "x/never-thinks".to_owned(),
+            name: "x".to_owned(),
+            context_tokens: None,
+            price: None,
+            reasoning: ModelReasoning::Never,
+            preset: false,
+            route: Vec::new(),
+        };
+        let mut context = known(&open_router, &unreachable, false, &[]);
+        context.open_router_model = Some(&listed);
+        let Ok(SettingsEdit::Scribe(plain)) = settings_edit(&other, context) else {
+            panic!("a listed model");
+        };
+        assert_eq!(plain.effort, Some(Effort::None));
+        assert!(plain.route.is_empty());
+        assert_eq!(plain.max_tokens, None, "the scribe's own budget");
+        for bad in ["gemma4:latest", "../x"] {
+            let edit = SetupEdit::Scribe {
+                model: bad.to_owned(),
+            };
+            assert!(settings_edit(&edit, known(&open_router, &unreachable, false, &[])).is_err());
+        }
+        let mut local = defaults();
+        local.talker.kind = LlmKind::OpenAiCompatible;
+        local.talker.base_url = Some(boardai_runtime::llm::openai::OLLAMA_BASE_URL.to_owned());
+        let small = SetupEdit::Scribe {
+            model: "qwen3.5:2b".to_owned(),
+        };
+        let Ok(SettingsEdit::Scribe(ollama)) =
+            settings_edit(&small, known(&local, &unreachable, false, &[]))
+        else {
+            panic!("an Ollama scribe");
+        };
+        assert_eq!(ollama.model.as_deref(), Some("qwen3.5:2b"));
+        assert_eq!(ollama.effort, Some(Effort::None));
+    }
+
+    #[test]
+    fn a_code_folder_is_removed_by_its_place_in_the_list() {
+        let unreachable = OllamaStatus::Unreachable;
+        let mut current = defaults();
+        current.code_roots = vec![
+            std::path::PathBuf::from("/a"),
+            std::path::PathBuf::from("/b"),
+        ];
+        let second = SetupEdit::RemoveCodeFolder { index: 1 };
+        assert_eq!(
+            settings_edit(&second, known(&current, &unreachable, false, &[])),
+            Ok(SettingsEdit::RemoveCodeRoot(1))
+        );
+        let gone = SetupEdit::RemoveCodeFolder { index: 2 };
+        assert!(settings_edit(&gone, known(&current, &unreachable, false, &[])).is_err());
     }
 }

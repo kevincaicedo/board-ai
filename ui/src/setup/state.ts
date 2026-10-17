@@ -1,16 +1,19 @@
-// The first-run screen's state (LLD §3.8): the app's last status, requests in flight per card,
-// refusals in plain words, and the downloads this screen started. A pure reducer, so every
-// transition is tested with node --test; the controller feeds it.
+// The first-run screen's and the settings page's state (LLD §3.8): the app's last status,
+// requests in flight per card (a settings section is a card too), refusals in plain words, and
+// the downloads this screen started. A pure reducer, so every transition is tested with
+// node --test; the controller feeds it.
 //
 // Whether the session may start is the app's decision (core::setup::blockers, sent in the
 // status as `blockers`); the screen adds only that nothing is in flight.
 
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
+import type { IndexRebuilt } from "../protocol/generated/IndexRebuilt.ts";
 import type { ModelFileStatus } from "../protocol/generated/ModelFileStatus.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import { downloadProblem } from "./words.ts";
 
-export type Card = "thinking" | "voice" | "microphone" | "start";
+/** The first run's three cards and its start button, plus the settings page's other sections. */
+export type Card = "thinking" | "voice" | "microphone" | "start" | "keys" | "coding" | "memory";
 
 /** A download this screen started, as its channel reports it. */
 export interface Transfer {
@@ -33,6 +36,8 @@ export interface SetupState {
   readonly transfers: ReadonlyMap<string, Transfer>;
   /** "Add a key" for ElevenLabs is open. */
   readonly addingVoiceKey: boolean;
+  /** What the last "Rebuild the index" did, this time the page is open. */
+  readonly rebuilt: IndexRebuilt | null;
   /** The session started: the stage takes over. */
   readonly finished: boolean;
 }
@@ -53,6 +58,7 @@ export type SetupAction =
   /** "Try again" on the voice card: failed downloads may start again. */
   | { readonly type: "retry" }
   | { readonly type: "voiceKey"; readonly open: boolean }
+  | { readonly type: "rebuilt"; readonly rebuilt: IndexRebuilt }
   | { readonly type: "finished" };
 
 const NO_PROBLEMS: Readonly<Record<Card, string | null>> = {
@@ -60,6 +66,9 @@ const NO_PROBLEMS: Readonly<Record<Card, string | null>> = {
   voice: null,
   microphone: null,
   start: null,
+  keys: null,
+  coding: null,
+  memory: null,
 };
 
 export function initialState(status: SetupStatus | null): SetupState {
@@ -70,6 +79,7 @@ export function initialState(status: SetupStatus | null): SetupState {
     problems: NO_PROBLEMS,
     transfers: new Map(),
     addingVoiceKey: false,
+    rebuilt: null,
     finished: false,
   };
 }
@@ -184,9 +194,24 @@ export function reduce(state: SetupState, action: SetupAction): SetupState {
     }
     case "voiceKey":
       return { ...state, addingVoiceKey: action.open };
+    case "rebuilt":
+      return {
+        ...state,
+        rebuilt: action.rebuilt,
+        busy: without(state.busy, "memory"),
+        problems: { ...state.problems, memory: null },
+      };
     case "finished":
       return { ...state, finished: true, busy: without(state.busy, "start") };
   }
+}
+
+/**
+ * A change is on its way to the app: leaving waits for it, so the restart sees it. Opening the
+ * vault and rebuilding the index change no setting, so they never hold the page open.
+ */
+export function savesInFlight(state: SetupState): boolean {
+  return [...state.busy].some((card) => card !== "memory");
 }
 
 /** "Start talking" is enabled: the app names no blocker and nothing is in flight. */

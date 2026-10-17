@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import { type Schedule, SETUP_POLL_MS, SetupController } from "./controller.ts";
-import { FakeSetupTransport, firstLaunch } from "./fake.ts";
+import { FakeSetupTransport, firstLaunch, keyStates } from "./fake.ts";
 
 const KEY = "sk-ant-api03-PLANTEDuiKEYplantedUIkey-0123456789";
 
@@ -17,7 +17,7 @@ function ready(status: SetupStatus): SetupStatus {
   return {
     ...status,
     talker: { ...status.talker, key: "Saved" },
-    keys: ["Anthropic"],
+    keys: keyStates(["Anthropic"]),
     hearing_files: status.hearing_files.map((file) => ({
       ...file,
       state: "Ready",
@@ -71,7 +71,7 @@ test("a key goes out once, and nothing in the screen's state holds it", async ()
   transport.onKey = () => ({
     ...firstLaunch(),
     talker: { ...firstLaunch().talker, key: "Saved" },
-    keys: ["Anthropic"],
+    keys: keyStates(["Anthropic"]),
   });
   const saving = controller.saveKey("Anthropic", KEY);
   assert.equal(controller.value.busy.has("thinking"), true);

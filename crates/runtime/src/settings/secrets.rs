@@ -67,7 +67,7 @@ pub enum SecretError {
     Missing { name: SecretName },
     /// The store could not be read (a locked Keychain, a denied prompt).
     Unavailable { name: SecretName, detail: String },
-    /// The store refused to save the secret; whatever it held before is unchanged.
+    /// The store refused to save or remove the secret; whatever it held before is unchanged.
     Unwritable { name: SecretName, detail: String },
 }
 
@@ -81,7 +81,7 @@ impl fmt::Display for SecretError {
             Self::Unwritable { name, detail } => {
                 write!(
                     formatter,
-                    "the secret `{name}` could not be saved: {detail}"
+                    "the secret `{name}` could not be changed: {detail}"
                 )
             }
         }
@@ -97,6 +97,10 @@ pub trait SecretStore: Send + Sync {
 
     /// Stores `secret` under `name`, replacing any value (the first-run screen).
     fn set(&self, name: &SecretName, secret: &Secret) -> Result<(), SecretError>;
+
+    /// Deletes the value under `name` (the settings page's "Remove"). Nothing stored is not an
+    /// error: the name ends up empty either way.
+    fn remove(&self, name: &SecretName) -> Result<(), SecretError>;
 
     /// Whether a value is stored under `name`, without handing it out.
     fn contains(&self, name: &SecretName) -> Result<bool, SecretError> {
@@ -170,6 +174,15 @@ impl SecretStore for MemorySecretStore {
         secrets.insert(name.clone(), secret.clone());
         Ok(())
     }
+
+    fn remove(&self, name: &SecretName) -> Result<(), SecretError> {
+        let mut secrets = self.secrets.lock().map_err(|_| SecretError::Unwritable {
+            name: name.clone(),
+            detail: "the store is poisoned".to_owned(),
+        })?;
+        secrets.remove(name);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +238,13 @@ mod tests {
         assert_eq!(
             store.clone().get(&name).map(|found| found.expose().len()),
             Ok(12)
+        );
+        assert_eq!(store.remove(&name), Ok(()));
+        assert_eq!(store.contains(&name), Ok(false));
+        assert_eq!(
+            store.remove(&name),
+            Ok(()),
+            "removing nothing is not an error"
         );
     }
 }

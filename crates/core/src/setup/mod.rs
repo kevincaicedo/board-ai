@@ -1,5 +1,5 @@
-//! The first-run screen's wire types (LLD §3.8, canvas artboard 11 · First run) and the rule for
-//! when a session may start.
+//! The first-run screen's and the settings page's wire types (LLD §3.8, canvas artboards 11 · First
+//! run and 12 · Settings) and the rule for when a session may start.
 //!
 //! The app gathers a [`SetupStatus`] (settings, which secrets exist, model files, Ollama, the
 //! harnesses, microphone permission) and the UI shows it; the UI answers with [`SetupEdit`]s, a
@@ -85,6 +85,47 @@ pub struct TalkerSetup {
     /// The talker's key, when its provider needs one.
     pub key: KeyState,
     pub ollama: OllamaStatus,
+    /// How much it thinks before it answers, as configured.
+    pub thinking: ThinkingEffort,
+    /// OpenRouter only: the providers tried, in order, and no others (route slugs, `cerebras`;
+    /// D-152). Empty: OpenRouter picks.
+    pub route: Vec<String>,
+    /// A BoardAI preset (OpenRouter's two, D-152, or Ollama's default model): its voice and its
+    /// drawing were checked. Other models may draw less well.
+    pub preset: bool,
+}
+
+/// The talker's thinking as configured (`effort`). Claude can't turn it off, so its `none` is
+/// `Low` here, as it is on the wire (LLD §3.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum ThinkingEffort {
+    /// Off for speech.
+    Off,
+    Low,
+    Medium,
+    High,
+    ExtraHigh,
+    Max,
+}
+
+/// One key's state, by name only: a value never leaves the Keychain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct KeyStatus {
+    pub name: KeyName,
+    /// `Saved`, `Missing` or `Unreadable` as the Keychain answered this run; `NotChecked` while a
+    /// session runs and nothing was read or saved for it since the app started (D-102).
+    pub state: KeyState,
+}
+
+/// ElevenLabs as it would speak, by display name: "Flash" and "Rachel" until the owner chooses
+/// another voice (D-137); otherwise the id `settings.toml` names.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ElevenLabsVoice {
+    pub model: String,
+    pub voice: String,
 }
 
 /// Who speaks (card 2). The system voice needs nothing and covers speech while Kokoro
@@ -157,11 +198,31 @@ pub enum InputDevice {
 }
 
 /// The coding harnesses found on this Mac (LLD §3.5). Paths stay in the app.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct HarnessesFound {
-    pub claude_code: bool,
-    pub pi: bool,
+    pub claude_code: HarnessFound,
+    pub pi: HarnessFound,
+    /// The one a task runs on: `[harness] kind` (`auto` is Claude Code first), when installed.
+    pub default: Option<HarnessName>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "state")]
+#[ts(export)]
+pub enum HarnessFound {
+    Missing,
+    /// Installed; `version` is what `--version` printed, when it answered in time.
+    Found {
+        version: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum HarnessName {
+    ClaudeCode,
+    Pi,
 }
 
 /// Why the session can't start yet, in the order the screen asks for things.
@@ -190,8 +251,8 @@ pub enum SetupBlocker {
     MicrophoneDenied,
 }
 
-/// Everything the first-run screen shows. Built by the app; `blockers` comes from
-/// [`blockers`] over the rest.
+/// Everything the first-run screen and the settings page show. Built by the app; `blockers`
+/// comes from [`blockers`] over the rest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SetupStatus {
@@ -201,9 +262,12 @@ pub struct SetupStatus {
     /// Why `settings.toml` can't be used; it names a field and never quotes a value.
     pub settings_problem: Option<String>,
     pub talker: TalkerSetup,
-    /// Keys with a value in the Keychain, by name only.
-    pub keys: Vec<KeyName>,
+    /// The scribe's model (memory digests); it runs on the talker's provider.
+    pub scribe_model: String,
+    /// Every key the screen saves, in [`KeyName`] order, with its state.
+    pub keys: Vec<KeyStatus>,
     pub voice: VoiceEngine,
+    pub elevenlabs: ElevenLabsVoice,
     /// Kokoro's files (model, voice, lexicon), whichever engine is chosen.
     pub voice_files: Vec<ModelFileStatus>,
     /// `stt.model`, for example `base.en`.
@@ -215,7 +279,15 @@ pub struct SetupStatus {
     pub input: InputDevice,
     /// Input devices macOS lists by name; empty until the audio layer can list them.
     pub input_devices: Vec<String>,
+    /// The input macOS uses by default now, by name ("System default · now Shure MV7+").
+    pub default_input: Option<String>,
+    /// The Mac's own microphone by name, which [`InputDevice::BuiltIn`] picks.
+    pub built_in_input: Option<String>,
     pub harnesses: HarnessesFound,
+    /// Where "open the boardai repo" looks (`code_roots`), as written: `~/…` or absolute.
+    pub code_folders: Vec<String>,
+    /// The vault (`~/BoardAI`), as written.
+    pub vault: String,
     pub blockers: Vec<SetupBlocker>,
     /// The app macOS asks about the microphone instead of BoardAI, because BoardAI was started
     /// from it (a terminal or an editor, "Visual Studio Code"); `None` when macOS asks about
@@ -244,6 +316,32 @@ pub enum SetupEdit {
     Input {
         device: InputDevice,
     },
+    /// The scribe's model, on the talker's provider: an OpenRouter model id from the list, or an
+    /// Ollama model. Claude's scribe stays Claude Haiku (D-017).
+    Scribe {
+        model: String,
+    },
+    /// Removes the code folder at `index` in [`SetupStatus::code_folders`]. Folders are added
+    /// only through the system's folder chooser (`setup_add_code_folder`), so no path ever
+    /// comes from the UI.
+    RemoveCodeFolder {
+        index: u32,
+    },
+}
+
+/// What "Rebuild the index" did: the index emptied and filled again from one scan of the vault.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct IndexRebuilt {
+    #[ts(type = "number")]
+    pub files_seen: u64,
+    #[ts(type = "number")]
+    pub reindexed: u64,
+    /// Units left out because a file couldn't be read; the next scan tries them again.
+    #[ts(type = "number")]
+    pub skipped: u64,
+    /// The scan stopped at its bound; files past it are not indexed.
+    pub truncated: bool,
 }
 
 /// Why a download stopped, for the voice card to say in plain words.
@@ -331,6 +429,8 @@ pub struct ModelInfo {
     /// A BoardAI preset: measured with its voice and drawing, with a provider route and
     /// thinking set for speed (D-152). Other models may draw less well or answer more slowly.
     pub preset: bool,
+    /// A preset's route (slugs, `cerebras`): the only providers tried. Empty: OpenRouter picks.
+    pub route: Vec<String>,
 }
 
 /// Prices in millionths of a US dollar per million tokens (`240000` is $0.24 per million).
@@ -373,6 +473,11 @@ pub struct ModelProvider {
     pub quantization: Option<String>,
     /// The provider takes tool calls for this model.
     pub tools: bool,
+    /// Time to the first token, median over OpenRouter's last 30 minutes, when its list gives
+    /// it. Its public list (no key) gives none (D-153, recorded 2026-10).
+    pub latency_ms_p50: Option<u32>,
+    /// Output speed, median over OpenRouter's last 30 minutes, when its list gives it.
+    pub throughput_tokens_per_second_p50: Option<u32>,
 }
 
 /// What stands between the screen and a session (D-101): a usable talker, the hearing files,
@@ -427,200 +532,4 @@ pub fn blockers(status: &SetupStatus) -> Vec<SetupBlocker> {
 const HEARING_FILES: usize = 2;
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        FileState, HarnessesFound, InputDevice, KeyName, KeyState, MicChoice, MicPermission,
-        ModelFileStatus, ModelInfo, ModelListing, ModelPrice, ModelQuery, ModelReasoning,
-        OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider, TalkerSetup,
-        VoiceEngine, blockers,
-    };
-
-    fn file(id: &str, state: FileState) -> ModelFileStatus {
-        ModelFileStatus {
-            id: id.to_owned(),
-            state,
-            have_bytes: 0,
-            size_bytes: 10,
-        }
-    }
-
-    fn ready() -> SetupStatus {
-        SetupStatus {
-            complete: false,
-            settings_problem: None,
-            talker: TalkerSetup {
-                provider: TalkerProvider::Claude,
-                model: "claude-opus-5-5".to_owned(),
-                key: KeyState::Saved,
-                ollama: OllamaStatus::Unreachable,
-            },
-            keys: Vec::new(),
-            voice: VoiceEngine::Kokoro,
-            voice_files: vec![file("kokoro", FileState::Missing)],
-            hearing_model: "base.en".to_owned(),
-            hearing_files: vec![
-                file("whisper-base.en", FileState::Ready),
-                file("silero-vad", FileState::Ready),
-            ],
-            microphone: MicPermission::Granted,
-            mic_mode: MicChoice::Open,
-            input: InputDevice::SystemDefault,
-            input_devices: Vec::new(),
-            harnesses: HarnessesFound {
-                claude_code: true,
-                pi: false,
-            },
-            blockers: Vec::new(),
-            mic_attributed_to: None,
-        }
-    }
-
-    #[test]
-    fn a_saved_key_ready_hearing_and_the_mic_start_even_while_the_voice_downloads() {
-        assert_eq!(blockers(&ready()), Vec::new());
-    }
-
-    #[test]
-    fn every_missing_piece_is_named_in_order() {
-        let mut status = ready();
-        status.settings_problem = Some("settings.toml `mic`: must be …".to_owned());
-        status.talker.key = KeyState::Missing;
-        status.hearing_files[0].state = FileState::Downloading;
-        status.microphone = MicPermission::Denied;
-        assert_eq!(
-            blockers(&status),
-            vec![
-                SetupBlocker::SettingsProblem,
-                SetupBlocker::TalkerKey {
-                    provider: TalkerProvider::Claude
-                },
-                SetupBlocker::HearingNotReady,
-                SetupBlocker::MicrophoneDenied,
-            ]
-        );
-        status.microphone = MicPermission::Undetermined;
-        assert!(blockers(&status).contains(&SetupBlocker::MicrophoneNotAllowed));
-    }
-
-    #[test]
-    fn push_to_talk_needs_the_hearing_files_too() {
-        let mut status = ready();
-        status.mic_mode = MicChoice::PushToTalk;
-        status.hearing_files[1].state = FileState::Partial;
-        assert_eq!(blockers(&status), vec![SetupBlocker::HearingNotReady]);
-    }
-
-    #[test]
-    fn ollama_needs_to_answer_with_the_configured_model() {
-        let mut status = ready();
-        status.talker = TalkerSetup {
-            provider: TalkerProvider::Ollama,
-            model: "gemma4:latest".to_owned(),
-            key: KeyState::NotNeeded,
-            ollama: OllamaStatus::Unreachable,
-        };
-        assert_eq!(blockers(&status), vec![SetupBlocker::OllamaUnreachable]);
-        status.talker.ollama = OllamaStatus::Reachable {
-            models: vec!["qwen3.5:2b".to_owned()],
-        };
-        assert_eq!(
-            blockers(&status),
-            vec![SetupBlocker::OllamaModelMissing {
-                model: "gemma4:latest".to_owned()
-            }]
-        );
-        status.talker.ollama = OllamaStatus::Reachable {
-            models: vec!["qwen3.5:2b".to_owned(), "gemma4:latest".to_owned()],
-        };
-        assert_eq!(blockers(&status), Vec::new());
-    }
-
-    #[test]
-    fn an_unknown_whisper_model_is_named() {
-        let mut status = ready();
-        status.hearing_model = "large".to_owned();
-        status.hearing_files.truncate(1);
-        assert_eq!(
-            blockers(&status),
-            vec![SetupBlocker::UnknownHearingModel {
-                model: "large".to_owned()
-            }]
-        );
-    }
-
-    #[test]
-    fn edits_from_the_ui_are_parsed_and_unknown_ones_refused() {
-        let edit: Result<SetupEdit, _> = serde_json::from_str(
-            r#"{"kind":"Talker","provider":"Ollama","model":"gemma4:latest"}"#,
-        );
-        assert!(matches!(
-            edit,
-            Ok(SetupEdit::Talker {
-                provider: TalkerProvider::Ollama,
-                ..
-            })
-        ));
-        for bad in [
-            r#"{"kind":"Talker","provider":"Gemini","model":null}"#,
-            r#"{"kind":"Delete"}"#,
-            r#"{"kind":"Mic","mode":"Always"}"#,
-            r#"{"kind":"Input","device":{"kind":"Named"}}"#,
-        ] {
-            assert!(serde_json::from_str::<SetupEdit>(bad).is_err(), "{bad}");
-        }
-        assert!(serde_json::from_str::<KeyName>(r#""GitHub""#).is_err());
-    }
-
-    #[test]
-    fn model_queries_from_the_ui_are_parsed_and_unknown_ones_refused() {
-        let providers: Result<ModelQuery, _> =
-            serde_json::from_str(r#"{"kind":"Providers","model":"qwen/qwen3.8-27b"}"#);
-        assert!(matches!(providers, Ok(ModelQuery::Providers { .. })));
-        assert_eq!(
-            serde_json::from_str::<ModelQuery>(r#"{"kind":"OpenRouter"}"#).ok(),
-            Some(ModelQuery::OpenRouter)
-        );
-        for bad in [
-            r#"{"kind":"Anthropic"}"#,
-            r#"{"kind":"Providers"}"#,
-            r#"{"kind":"Providers","model":7}"#,
-        ] {
-            assert!(serde_json::from_str::<ModelQuery>(bad).is_err(), "{bad}");
-        }
-        let listing = ModelListing::OpenRouter {
-            models: vec![ModelInfo {
-                id: "openai/gpt-oss-120b".to_owned(),
-                name: "OpenAI: gpt-oss-120b".to_owned(),
-                context_tokens: Some(131_072),
-                price: Some(ModelPrice {
-                    input_micro_usd_per_million_tokens: 150_000,
-                    output_micro_usd_per_million_tokens: 600_000,
-                }),
-                reasoning: ModelReasoning::Always {
-                    least_effort: "low".to_owned(),
-                },
-                preset: true,
-            }],
-            left_out: 0,
-        };
-        let wire = serde_json::to_value(&listing).unwrap_or_default();
-        assert_eq!(wire["kind"], "OpenRouter");
-        assert_eq!(wire["models"][0]["reasoning"]["kind"], "Always");
-        assert_eq!(
-            wire["models"][0]["price"]["input_micro_usd_per_million_tokens"],
-            150_000
-        );
-    }
-
-    #[test]
-    fn an_unreadable_keychain_blocks_like_a_missing_key() {
-        let mut status = ready();
-        status.talker.key = KeyState::Unreadable;
-        assert_eq!(
-            blockers(&status),
-            vec![SetupBlocker::TalkerKey {
-                provider: TalkerProvider::Claude
-            }]
-        );
-    }
-}
+mod tests;

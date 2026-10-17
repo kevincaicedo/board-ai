@@ -20,4 +20,13 @@ quantization: string | null,
 /**
  * The provider takes tool calls for this model.
  */
-tools: boolean, };
+tools: boolean, 
+/**
+ * Time to the first token, median over OpenRouter's last 30 minutes, when its list gives
+ * it. Its public list (no key) gives none (D-153, recorded 2026-10).
+ */
+latency_ms_p50: number | null, 
+/**
+ * Output speed, median over OpenRouter's last 30 minutes, when its list gives it.
+ */
+throughput_tokens_per_second_p50: number | null, };

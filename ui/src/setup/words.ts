@@ -3,6 +3,7 @@
 // lay it out.
 
 import type { DownloadProblem } from "../protocol/generated/DownloadProblem.ts";
+import type { HarnessFound } from "../protocol/generated/HarnessFound.ts";
 import type { InputDevice } from "../protocol/generated/InputDevice.ts";
 import type { KeyName } from "../protocol/generated/KeyName.ts";
 import type { MicChoice } from "../protocol/generated/MicChoice.ts";
@@ -89,6 +90,11 @@ export function keyHint(key: KeyName, saved: boolean): string {
 
 export const KEY_NOTE = "Saved to Keychain. Never written to a file or a log.";
 
+/** Whether the status says a key with this name is in the Keychain. */
+export function keySaved(status: SetupStatus, key: KeyName): boolean {
+  return status.keys.some((entry) => entry.name === key && entry.state === "Saved");
+}
+
 /** Under a key field: where a key goes, or, once one is saved, that it never comes back. */
 export function keyNote(saved: boolean): string {
   return saved ? "The key never comes back to this screen: only that one is saved." : KEY_NOTE;
@@ -113,13 +119,9 @@ export function micStep(permission: MicPermission): string {
 
 /** The line under the cards on the first run (11b). */
 export const FOOTER_FIRST_RUN = "Reopen any time with ⌘, or by saying “open settings”.";
-/** The same line over a running session, where the screen is the settings. */
-export const FOOTER_SETTINGS = "Esc closes settings. A change starts a new session.";
 
-/** The button under the cards: it starts the session, or returns to the running one. */
-export function startLabel(settings: boolean): string {
-  return settings ? "Back to talking" : "Start talking";
-}
+/** The button under the cards. */
+export const START_TALKING = "Start talking";
 
 export const MODES: readonly {
   readonly id: MicChoice;
@@ -141,8 +143,8 @@ export function inputLabel(device: InputDevice): string {
   }
 }
 
-export function harnessChip(name: string, found: boolean): string {
-  return `${name} · ${found ? "found" : "not installed"}`;
+export function harnessChip(name: string, found: HarnessFound): string {
+  return `${name} · ${found.state === "Found" ? "found" : "not installed"}`;
 }
 
 export function downloadProblem(problem: DownloadProblem): string {

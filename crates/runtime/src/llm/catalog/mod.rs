@@ -237,6 +237,7 @@ impl ModelCatalog {
                 price: None,
                 reasoning: ModelReasoning::Unknown,
                 preset: false,
+                route: Vec::new(),
             })
             .collect();
         mark_presets(&mut models, |model| model.id == OLLAMA_DEFAULT_MODEL);
@@ -277,6 +278,21 @@ pub fn talker_effort(reasoning: &ModelReasoning) -> Effort {
     }
 }
 
+/// The effort a scribe on this model gets: digests are not latency-bound, so it thinks at
+/// `medium` (D-017's scribe effort) or the least the model takes above that, and not at all
+/// where the model takes no reasoning setting.
+#[must_use]
+pub fn scribe_effort(reasoning: &ModelReasoning) -> Effort {
+    match reasoning {
+        ModelReasoning::Never => Effort::None,
+        ModelReasoning::Optional | ModelReasoning::Unknown => Effort::Medium,
+        ModelReasoning::Always { .. } => match talker_effort(reasoning) {
+            Effort::None | Effort::Low | Effort::Medium => Effort::Medium,
+            higher @ (Effort::High | Effort::ExtraHigh | Effort::Max) => higher,
+        },
+    }
+}
+
 fn fresh(at: SessionTime, now: SessionTime, ttl_ms: u64) -> bool {
     now.ms_since(at) < ttl_ms
 }
@@ -291,10 +307,15 @@ async fn fetch(url: &str, max_bytes: usize, what: &str) -> Result<Vec<u8>, Provi
     .await
 }
 
-/// Marks the presets and moves them to the front, in [`PRESETS`] order for OpenRouter.
+/// Marks the presets (with an OpenRouter preset's route) and moves them to the front, in
+/// [`PRESETS`] order for OpenRouter.
 fn mark_presets(models: &mut [ModelInfo], is_preset: impl Fn(&ModelInfo) -> bool) {
     for model in models.iter_mut() {
         model.preset = is_preset(model);
+        model.route = preset(&model.id)
+            .filter(|_| model.preset)
+            .map(|preset| preset.route.iter().map(|slug| (*slug).to_owned()).collect())
+            .unwrap_or_default();
     }
     let rank = |model: &ModelInfo| {
         PRESETS
@@ -309,7 +330,7 @@ fn mark_presets(models: &mut [ModelInfo], is_preset: impl Fn(&ModelInfo) -> bool
 mod tests {
     use boardai_core::setup::ModelReasoning;
 
-    use super::{OpenRouterModelId, talker_effort};
+    use super::{OpenRouterModelId, scribe_effort, talker_effort};
     use crate::limits::MODEL_TEXT_MAX_BYTES;
     use crate::llm::Effort;
 
@@ -351,5 +372,17 @@ mod tests {
         assert_eq!(talker_effort(&least("minimal")), Effort::Low);
         assert_eq!(talker_effort(&least("low")), Effort::Low);
         assert_eq!(talker_effort(&least("medium")), Effort::Medium);
+    }
+
+    #[test]
+    fn a_scribe_thinks_at_medium_where_the_model_thinks_at_all() {
+        let least = |effort: &str| ModelReasoning::Always {
+            least_effort: effort.to_owned(),
+        };
+        assert_eq!(scribe_effort(&ModelReasoning::Never), Effort::None);
+        assert_eq!(scribe_effort(&ModelReasoning::Optional), Effort::Medium);
+        assert_eq!(scribe_effort(&ModelReasoning::Unknown), Effort::Medium);
+        assert_eq!(scribe_effort(&least("low")), Effort::Medium);
+        assert_eq!(scribe_effort(&least("high")), Effort::High);
     }
 }

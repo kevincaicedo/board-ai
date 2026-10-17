@@ -3,10 +3,16 @@
 // app does), so a test states the status it expects the app to send.
 
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
+import type { IndexRebuilt } from "../protocol/generated/IndexRebuilt.ts";
 import type { KeyName } from "../protocol/generated/KeyName.ts";
+import type { KeyState } from "../protocol/generated/KeyState.ts";
+import type { KeyStatus } from "../protocol/generated/KeyStatus.ts";
 import type { ModelFileStatus } from "../protocol/generated/ModelFileStatus.ts";
+import type { ModelListing } from "../protocol/generated/ModelListing.ts";
+import type { ModelQuery } from "../protocol/generated/ModelQuery.ts";
 import type { SetupEdit } from "../protocol/generated/SetupEdit.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
+import { recordedListing } from "./fakeModels.ts";
 import type { SetupTransport } from "./transport.ts";
 
 export type FakeCall =
@@ -16,7 +22,14 @@ export type FakeCall =
   | { readonly kind: "download"; readonly model: string }
   | { readonly kind: "requestMicrophone" }
   | { readonly kind: "openMicrophoneSettings" }
-  | { readonly kind: "finish" };
+  | { readonly kind: "finish" }
+  | { readonly kind: "models"; readonly query: ModelQuery }
+  | { readonly kind: "removeKey"; readonly name: KeyName }
+  | { readonly kind: "checkKeys" }
+  | { readonly kind: "harnessVersions" }
+  | { readonly kind: "addCodeFolder" }
+  | { readonly kind: "openVault" }
+  | { readonly kind: "rebuildIndex" };
 
 interface PendingDownload {
   readonly emit: (event: DownloadEvent) => void;
@@ -32,6 +45,12 @@ export class FakeSetupTransport implements SetupTransport {
   onSave: (edit: SetupEdit) => SetupStatus = () => this.current;
   onKey: (name: KeyName) => SetupStatus = () => this.current;
   onMicrophone: () => SetupStatus = () => this.current;
+  onRemoveKey: (name: KeyName) => SetupStatus = (name) => withKey(this.current, name, "Missing");
+  onCheckKeys: () => SetupStatus = () => this.current;
+  onHarnessVersions: () => SetupStatus = () => this.current;
+  onAddCodeFolder: () => SetupStatus = () => this.current;
+  onModels: (query: ModelQuery) => ModelListing = recordedListing;
+  rebuilt: IndexRebuilt = { files_seen: 128, reindexed: 128, skipped: 0, truncated: false };
   /** A reason makes the next call of that kind reject with it. */
   refuse: Partial<Record<FakeCall["kind"], string>> = {};
   /** Events each new download emits at once (the visual check freezes a bar this way). */
@@ -88,6 +107,44 @@ export class FakeSetupTransport implements SetupTransport {
     this.#record({ kind: "finish" });
   }
 
+  async models(query: ModelQuery): Promise<ModelListing> {
+    this.#record({ kind: "models", query });
+    return this.onModels(query);
+  }
+
+  async removeKey(name: KeyName): Promise<SetupStatus> {
+    this.#record({ kind: "removeKey", name });
+    this.current = this.onRemoveKey(name);
+    return this.current;
+  }
+
+  async checkKeys(): Promise<SetupStatus> {
+    this.#record({ kind: "checkKeys" });
+    this.current = this.onCheckKeys();
+    return this.current;
+  }
+
+  async harnessVersions(): Promise<SetupStatus> {
+    this.#record({ kind: "harnessVersions" });
+    this.current = this.onHarnessVersions();
+    return this.current;
+  }
+
+  async addCodeFolder(): Promise<SetupStatus> {
+    this.#record({ kind: "addCodeFolder" });
+    this.current = this.onAddCodeFolder();
+    return this.current;
+  }
+
+  async openVault(): Promise<void> {
+    this.#record({ kind: "openVault" });
+  }
+
+  async rebuildIndex(): Promise<IndexRebuilt> {
+    this.#record({ kind: "rebuildIndex" });
+    return this.rebuilt;
+  }
+
   #record(call: FakeCall): void {
     this.calls.push(call);
     const refusal = this.refuse[call.kind];
@@ -99,6 +156,21 @@ export class FakeSetupTransport implements SetupTransport {
 }
 
 const MIB = 1024 * 1024;
+
+const KEYS: readonly KeyName[] = ["Anthropic", "OpenRouter", "ElevenLabs"];
+
+/** Every key in the app's order, `saved` ones saved and the rest in `rest`. */
+export function keyStates(saved: readonly KeyName[], rest: KeyState = "Missing"): KeyStatus[] {
+  return KEYS.map((name) => ({ name, state: saved.includes(name) ? "Saved" : rest }));
+}
+
+/** The status with one key's state changed, as the app would answer. */
+export function withKey(status: SetupStatus, name: KeyName, state: KeyState): SetupStatus {
+  return {
+    ...status,
+    keys: status.keys.map((key) => (key.name === name ? { name, state } : key)),
+  };
+}
 
 function file(id: string, sizeBytes: number, state: ModelFileStatus["state"]): ModelFileStatus {
   return {
@@ -119,9 +191,14 @@ export function firstLaunch(): SetupStatus {
       model: "claude-opus-5-5",
       key: "Missing",
       ollama: { state: "Unreachable" },
+      thinking: "Low",
+      route: [],
+      preset: false,
     },
-    keys: [],
+    scribe_model: "claude-haiku-5-5",
+    keys: keyStates([]),
     voice: "Kokoro",
+    elevenlabs: { model: "Flash", voice: "Rachel" },
     voice_files: [
       file("kokoro", 310 * MIB, "Missing"),
       file("kokoro-voice-af-heart", MIB / 2, "Missing"),
@@ -136,7 +213,15 @@ export function firstLaunch(): SetupStatus {
     mic_mode: "Open",
     input: { kind: "SystemDefault" },
     input_devices: [],
-    harnesses: { claude_code: true, pi: false },
+    default_input: null,
+    built_in_input: null,
+    harnesses: {
+      claude_code: { state: "Found", version: null },
+      pi: { state: "Missing" },
+      default: "ClaudeCode",
+    },
+    code_folders: [],
+    vault: "~/BoardAI",
     mic_attributed_to: null,
     blockers: [
       { kind: "TalkerKey", provider: "Claude" },
@@ -165,6 +250,9 @@ export const PRESETS = [
   "mic-long-name",
   "ollama",
   "settings",
+  "settings-unchecked",
+  "settings-ollama",
+  "settings-offline",
   "download-error",
 ] as const;
 export type Preset = (typeof PRESETS)[number];
@@ -174,10 +262,43 @@ export function isPreset(name: string): name is Preset {
 }
 
 /**
+ * Artboard 12's settings page over a running session: OpenRouter's gpt-oss-120b routed to
+ * Cerebras, OpenRouter's and ElevenLabs' keys saved, Kokoro ready, the Shure as macOS's default
+ * input, the microphone allowed as Visual Studio Code (`just dev`), Claude Code found (its
+ * version comes when the coding section asks), one code folder.
+ */
+function settingsStatus(base: SetupStatus): SetupStatus {
+  return {
+    ...base,
+    complete: true,
+    talker: {
+      provider: "OpenRouter",
+      model: "openai/gpt-oss-120b",
+      key: "Saved",
+      ollama: { state: "Reachable", models: ["gemma4:latest", "qwen3.5:2b"] },
+      thinking: "Low",
+      route: ["cerebras"],
+      preset: true,
+    },
+    scribe_model: "qwen/qwen3.8-27b",
+    keys: keyStates(["OpenRouter", "ElevenLabs"]),
+    voice_files: base.voice_files.map((entry) => file(entry.id, entry.size_bytes, "Ready")),
+    microphone: "Granted",
+    mic_attributed_to: "Visual Studio Code",
+    input_devices: ["Shure MV7+", "MacBook Pro Microphone", "Studio Display Microphone"],
+    default_input: "Shure MV7+",
+    built_in_input: "MacBook Pro Microphone",
+    code_folders: ["~/Documents/Projects"],
+    blockers: [],
+  };
+}
+
+/**
  * The visual check's states: the canvas artboard (Claude picked, Kokoro at 201 of 312 MB,
  * Whisper ready, the microphone not asked), then everything ready, a saved key, a denied
- * microphone, a local talker, settings over a session, and 11b's stopped Whisper download
- * (61 of 142 MB, no connection) with Start waiting for it and the microphone.
+ * microphone, a local talker, 11b's stopped Whisper download (61 of 142 MB, no connection) with
+ * Start waiting for it and the microphone, and the settings page (artboard 12): as drawn, with
+ * keys not checked this run, on Ollama, and with OpenRouter's list not arriving.
  */
 export function presetTransport(preset: Preset): FakeSetupTransport {
   const base = ready(firstLaunch());
@@ -195,7 +316,7 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
     ...base,
     voice_files: smallReady,
     talker: { ...base.talker, key: "Saved" },
-    keys: ["Anthropic"],
+    keys: keyStates(["Anthropic"]),
     microphone: "Granted",
     blockers: [],
   };
@@ -218,11 +339,47 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
       transport.current = keySaved;
       break;
     case "settings":
+    case "settings-unchecked":
+    case "settings-offline": {
+      transport.initialEvents.clear();
+      const settings = settingsStatus(base);
+      transport.current =
+        preset === "settings-unchecked"
+          ? {
+              ...settings,
+              keys: keyStates([], "NotChecked"),
+              talker: { ...settings.talker, key: "NotChecked" },
+            }
+          : settings;
+      transport.onCheckKeys = () => settings;
+      transport.onHarnessVersions = () => ({
+        ...transport.current,
+        harnesses: { ...base.harnesses, claude_code: { state: "Found", version: "2.1.301" } },
+      });
+      transport.onAddCodeFolder = () => ({
+        ...transport.current,
+        code_folders: [...transport.current.code_folders, "~/code/boardai"],
+      });
+      if (preset === "settings-offline") {
+        transport.refuse.models =
+          "OpenRouter's list didn't arrive. Check the connection and try again.";
+      }
+      break;
+    }
+    case "settings-ollama":
       transport.initialEvents.clear();
       transport.current = {
-        ...keySaved,
-        complete: true,
-        voice_files: base.voice_files.map((entry) => file(entry.id, entry.size_bytes, "Ready")),
+        ...settingsStatus(base),
+        talker: {
+          provider: "Ollama",
+          model: "gemma4:latest",
+          key: "NotNeeded",
+          ollama: { state: "Reachable", models: ["gemma4:latest", "qwen3.5:2b"] },
+          thinking: "Off",
+          route: [],
+          preset: true,
+        },
+        scribe_model: "gemma4:latest",
       };
       break;
     case "mic-denied":
@@ -276,8 +433,12 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
           model: "gemma4:latest",
           key: "NotNeeded",
           ollama: { state: "Reachable", models: ["gemma4:latest", "qwen3.5:2b"] },
+          thinking: "Off",
+          route: [],
+          preset: true,
         },
-        keys: [],
+        scribe_model: "gemma4:latest",
+        keys: keyStates([]),
       };
       break;
   }

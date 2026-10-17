@@ -8,13 +8,14 @@
 //! the outermost one inside an `.app` bundle (D-149), so the screen can say which switch to
 //! turn on, and [`open_microphone_settings`] opens that pane.
 
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use boardai_core::setup::MicPermission;
 use boardai_runtime::audio::{MicrophoneAccess, microphone_access, request_microphone_access};
+
+use crate::helper::{HELPER_PROCESS_TIMEOUT_MS, run_bounded};
 
 /// How long a request waits for the user to answer macOS's prompt. Past it the request
 /// returns whatever macOS reports then (still undetermined, most likely), so the first-run
@@ -24,16 +25,6 @@ pub const MICROPHONE_ANSWER_WAIT_MS: u64 = 120_000;
 /// Parent processes walked to find the app macOS attributes the microphone to. A deeper chain
 /// (never seen: `just dev` in an editor is about ten) names no app.
 pub const ATTRIBUTION_ANCESTORS_MAX: usize = 32;
-
-/// How long one `ps` or `open` may run before it is killed; the walk then names no app, and
-/// opening the settings reports a failure.
-pub const HELPER_PROCESS_TIMEOUT_MS: u64 = 1_000;
-
-/// Output read from one helper process: `ps` prints one short line per process.
-const HELPER_OUTPUT_MAX_BYTES: u64 = 4_096;
-
-/// How often a running helper process is checked for its exit.
-const HELPER_POLL_MS: u64 = 5;
 
 /// The Privacy & Security › Microphone pane of System Settings.
 const MICROPHONE_SETTINGS_URL: &str =
@@ -87,9 +78,9 @@ pub fn attributed_to() -> Option<String> {
 pub fn open_microphone_settings() -> Result<(), String> {
     let mut command = Command::new("/usr/bin/open");
     command.arg(MICROPHONE_SETTINGS_URL);
-    match run_bounded(command) {
-        Some((true, _)) => Ok(()),
-        Some((false, _)) | None => {
+    match run_bounded(command, helper_timeout()) {
+        Some(finished) if finished.success => Ok(()),
+        Some(_) | None => {
             tracing::warn!("System Settings could not be opened at the microphone pane");
             Err("System Settings didn't open. Open it from the Apple menu instead.".to_owned())
         }
@@ -142,44 +133,14 @@ fn attributed_app(pid: u32, mut parent: impl FnMut(u32) -> Option<String>) -> Op
 fn parent_of(pid: u32) -> Option<String> {
     let mut command = Command::new("/bin/ps");
     command.args(["-o", "ppid=,comm=", "-p", &pid.to_string()]);
-    match run_bounded(command)? {
-        (true, output) => Some(output),
-        (false, _) => None,
-    }
+    let finished = run_bounded(command, helper_timeout())?;
+    finished.success.then_some(finished.stdout)
 }
 
-/// Runs a helper process for at most `HELPER_PROCESS_TIMEOUT_MS`, killing it past that: whether
-/// it succeeded, and up to `HELPER_OUTPUT_MAX_BYTES` of its output. `None` when it couldn't run
-/// or was killed.
-fn run_bounded(mut command: Command) -> Option<(bool, String)> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let deadline = Instant::now() + Duration::from_millis(HELPER_PROCESS_TIMEOUT_MS);
-    let exit = loop {
-        match child.try_wait() {
-            Ok(Some(exit)) => break exit,
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(HELPER_POLL_MS));
-            }
-            Ok(None) | Err(_) => {
-                let _killed = child.kill();
-                let _reaped = child.wait();
-                return None;
-            }
-        }
-    };
-    let mut output = String::new();
-    if let Some(stdout) = child.stdout.take() {
-        stdout
-            .take(HELPER_OUTPUT_MAX_BYTES)
-            .read_to_string(&mut output)
-            .ok()?;
-    }
-    Some((exit.success(), output))
+/// Each `ps` or `open` is killed past this; the walk then names no app, and opening the
+/// settings reports a failure.
+const fn helper_timeout() -> Duration {
+    Duration::from_millis(HELPER_PROCESS_TIMEOUT_MS)
 }
 
 #[cfg(test)]

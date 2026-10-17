@@ -398,3 +398,52 @@ body {
     --duration-scene: 0ms;
   }
 }
+
+/* Settings (12 · Settings): a nav of sections beside one scrolling column of white sections, at
+   the artboard's 1440 px. Kept in a block of its own; colors not in the system above are the
+   artboard's "saved / allowed" green and its selected-row lilac. */
+:root {
+  --ok: #34a853;
+  --row-selected: #f6f0fc;
+  --shadow-settings-section: 0 24px 64px rgba(20, 20, 40, 0.05);
+  --shadow-settings-link: 0 6px 18px rgba(20, 20, 40, 0.06);
+  --shadow-settings-small: 0 6px 18px rgba(20, 20, 40, 0.08);
+  --settings-nav-width: 280px;
+  --settings-nav-pad-y: 56px;
+  --settings-nav-pad-x: 28px;
+  --settings-orb: 36px;
+  --settings-main-pad-y: 56px;
+  --settings-main-pad-x: 72px;
+  --settings-column-max: 1016px;
+  --settings-gap: 28px;
+  --settings-section-gap: 16px;
+  --settings-pad: 28px;
+  --settings-panel-width: 280px;
+  --settings-thinking-gap: 20px;
+  --size-settings-link: 40px;
+  --size-settings-pill: 44px;
+  --size-settings-search: 44px;
+  --size-settings-mode: 56px;
+  --size-settings-small: 34px;
+  --size-settings-tiny: 32px;
+  --size-settings-dot: 8px;
+  --size-settings-radio: 14px;
+  --radius-settings-link: 12px;
+  --radius-settings-table: 18px;
+  --radius-settings-panel: 20px;
+  --settings-col-latency: 90px;
+  --settings-col-speed: 90px;
+  --settings-col-price: 120px;
+  --settings-col-context: 70px;
+  --settings-key-name: 200px;
+  --settings-key-actions: 220px;
+  --type-settings-brand: 22px;
+  --type-settings-brand-line: 28px;
+  --type-settings-title: 36px;
+  --type-settings-title-line: 44px;
+  --type-settings-lede: 15px;
+  --type-settings-lede-line: 22px;
+  --type-settings-section: 22px;
+  --type-settings-section-line: 28px;
+  --type-settings-nav: 15px;
+}

@@ -1,5 +1,5 @@
-// The first-run screen over Tauri IPC, through the same injectable bridge as the session
-// transport (transport/tauri.ts stays the only module that imports Tauri).
+// The first-run screen and the settings page over Tauri IPC, through the same injectable bridge
+// as the session transport (transport/tauri.ts stays the only module that imports Tauri).
 //
 //   invoke("setup_status")                          → SetupStatus
 //   invoke("setup_save", { edit })                  → SetupStatus
@@ -8,13 +8,29 @@
 //   invoke("setup_microphone")                      → SetupStatus
 //   invoke("setup_open_microphone_settings")        → opens System Settings at the microphone
 //   invoke("setup_finish")                          → starts the session
+//   invoke("setup_models", { query })               → ModelListing
+//   invoke("setup_remove_key", { name })            → SetupStatus
+//   invoke("setup_check_keys")                      → SetupStatus
+//   invoke("setup_harness_versions")                → SetupStatus
+//   invoke("setup_add_code_folder")                 → SetupStatus (the app shows the chooser)
+//   invoke("setup_open_vault")                      → opens the vault in Finder
+//   invoke("setup_rebuild_index")                   → IndexRebuilt
 
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
+import type { IndexRebuilt } from "../protocol/generated/IndexRebuilt.ts";
 import type { KeyName } from "../protocol/generated/KeyName.ts";
+import type { ModelListing } from "../protocol/generated/ModelListing.ts";
+import type { ModelQuery } from "../protocol/generated/ModelQuery.ts";
 import type { SetupEdit } from "../protocol/generated/SetupEdit.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
-import type { TauriBridge } from "../transport/tauri.ts";
-import { parseSetupStatus, reason, type SetupTransport } from "./transport.ts";
+import type { TauriBridge, TauriCommand } from "../transport/tauri.ts";
+import {
+  parseIndexRebuilt,
+  parseModelListing,
+  parseSetupStatus,
+  reason,
+  type SetupTransport,
+} from "./transport.ts";
 
 const MISMATCH = "BoardAI's window and app don't match. Reinstall BoardAI.";
 
@@ -71,32 +87,59 @@ export class TauriSetupTransport implements SetupTransport {
   }
 
   async openMicrophoneSettings(): Promise<void> {
-    try {
-      await this.#bridge.invoke("setup_open_microphone_settings", {});
-    } catch (error) {
-      throw new Error(reason(error));
-    }
+    await this.#call("setup_open_microphone_settings", {});
   }
 
   async finish(): Promise<void> {
+    await this.#call("setup_finish", {});
+  }
+
+  async models(query: ModelQuery): Promise<ModelListing> {
+    const listing = parseModelListing(await this.#call("setup_models", { query }));
+    if (listing === null) {
+      throw new Error(MISMATCH);
+    }
+    return listing;
+  }
+
+  removeKey(name: KeyName): Promise<SetupStatus> {
+    return this.#status("setup_remove_key", { name });
+  }
+
+  checkKeys(): Promise<SetupStatus> {
+    return this.#status("setup_check_keys", {});
+  }
+
+  harnessVersions(): Promise<SetupStatus> {
+    return this.#status("setup_harness_versions", {});
+  }
+
+  addCodeFolder(): Promise<SetupStatus> {
+    return this.#status("setup_add_code_folder", {});
+  }
+
+  async openVault(): Promise<void> {
+    await this.#call("setup_open_vault", {});
+  }
+
+  async rebuildIndex(): Promise<IndexRebuilt> {
+    const rebuilt = parseIndexRebuilt(await this.#call("setup_rebuild_index", {}));
+    if (rebuilt === null) {
+      throw new Error(MISMATCH);
+    }
+    return rebuilt;
+  }
+
+  async #call(command: TauriCommand, args: Record<string, unknown>): Promise<unknown> {
     try {
-      await this.#bridge.invoke("setup_finish", {});
+      return await this.#bridge.invoke(command, args);
     } catch (error) {
       throw new Error(reason(error));
     }
   }
 
-  async #status(
-    command: "setup_status" | "setup_save" | "setup_key" | "setup_microphone",
-    args: Record<string, unknown>,
-  ): Promise<SetupStatus> {
-    let answer: unknown;
-    try {
-      answer = await this.#bridge.invoke(command, args);
-    } catch (error) {
-      throw new Error(reason(error));
-    }
-    const status = parseSetupStatus(answer);
+  async #status(command: TauriCommand, args: Record<string, unknown>): Promise<SetupStatus> {
+    const status = parseSetupStatus(await this.#call(command, args));
     if (status === null) {
       throw new Error(MISMATCH);
     }

@@ -61,6 +61,13 @@ async fn openrouter_lists_tool_models_with_the_presets_first() {
     assert_eq!(left_out, 0);
     let presets: Vec<bool> = models.iter().map(|model| model.preset).collect();
     assert_eq!(presets, [true, true, false, false, false]);
+    let routes: Vec<&[String]> = models.iter().map(|model| model.route.as_slice()).collect();
+    let cerebras = ["cerebras".to_owned()];
+    assert_eq!(
+        routes,
+        [&cerebras[..], &cerebras[..], &[], &[], &[]],
+        "only a preset has a route (D-152)"
+    );
     let oss = &models[0];
     assert_eq!(oss.name, "OpenAI: gpt-oss-120b");
     assert_eq!(oss.context_tokens, Some(131_072));
@@ -145,6 +152,11 @@ async fn one_models_providers_come_with_their_limits() {
     assert_eq!(cerebras.max_output_tokens, Some(32_768));
     assert_eq!(cerebras.quantization.as_deref(), Some("fp16"));
     assert!(cerebras.tools);
+    // Recorded without a key: OpenRouter's public list gives no speeds, for any provider, so
+    // the settings page leaves its first-token and speed columns out (D-153).
+    assert!(providers.iter().all(|provider| {
+        provider.latency_ms_p50.is_none() && provider.throughput_tokens_per_second_p50.is_none()
+    }));
     let unknown = providers
         .iter()
         .find(|provider| provider.name == "DekaLLM")
