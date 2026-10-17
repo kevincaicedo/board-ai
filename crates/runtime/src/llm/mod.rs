@@ -6,12 +6,14 @@
 //! cached prefix never changes mid-session.
 
 pub mod anthropic;
+pub mod catalog;
 mod error;
 pub(crate) mod http;
 mod ndjson;
 pub mod ollama;
 pub mod ollama_chat;
 pub mod openai;
+pub mod openrouter;
 mod session;
 pub mod sse;
 
@@ -20,6 +22,7 @@ use std::time::Duration;
 use boardai_core::history::{Conversation, RawAssistant};
 use boardai_core::input::StopReason;
 use boardai_core::tools::ToolInvocation;
+use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 use serde::{Deserialize, Serialize};
 
@@ -40,12 +43,25 @@ pub const DEFAULT_SCRIBE_MODEL: &str = "claude-haiku-5-5";
 /// A provider stream. Dropping it cancels the request.
 pub type ChatStream = BoxStream<'static, Result<ChatEvent, ProviderError>>;
 
+/// A provider readying itself for a session's first request. Dropping it cancels it.
+pub type WarmUp = BoxFuture<'static, Result<(), ProviderError>>;
+
 pub trait LlmProvider: Send + Sync {
     fn capabilities(&self) -> LlmCapabilities;
 
     /// Streams one response to the whole append-only conversation. The stream ends after
     /// `Done`, after an error, or (with no further item) when `cancel` fires.
     fn stream(&self, conversation: &Conversation, cancel: CancelToken) -> ChatStream;
+
+    /// Readies the provider for the session's first request where that is slow (D-154): a
+    /// local Ollama loads the model and prefills the frozen system prompt and tools, so the
+    /// first answer doesn't wait ~10 s. `None` when there is nothing worth readying. It never
+    /// touches the conversation: nothing it sends or receives enters history. The session
+    /// bounds it (`TALKER_WARM_UP_TIMEOUT_MS`) and drops it when a real request starts or the
+    /// session ends (closed, rested, or ended by voice).
+    fn warm_up(&self) -> Option<WarmUp> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

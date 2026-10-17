@@ -1,0 +1,14 @@
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"Need","reasoning_details":[{"type":"reasoning.text","text":"Need","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" one short sentence answer.","reasoning_details":[{"type":"reasoning.text","text":" one short sentence answer.","format":"unknown","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","choices":[{"index":0,"delta":{"content":"A load balancer distributes incoming network traffic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","choices":[{"index":0,"delta":{"content":" across multiple servers to improve performance and reliability.","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+data: {"id":"gen-1792195434-Jxrjv4joMgrZNeODRJ1T","object":"chat.completion.chunk","created":1792195434,"model":"openai/gpt-oss-120b","provider":"Cerebras","system_fingerprint":"fp_a9089f3cce52797e7952","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":147,"completion_tokens":33,"total_tokens":180,"cost":0.0000762,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.0000762,"upstream_inference_prompt_cost":0.00005145,"upstream_inference_completions_cost":0.00002475},"completion_tokens_details":{"reasoning_tokens":6,"image_tokens":0,"audio_tokens":0}}}
+
+data: [DONE]
+

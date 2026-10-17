@@ -16,6 +16,7 @@ use super::raw::{
 use super::{LlmKind, MicMode, SecretName, Settings, SettingsError, TtsKind, read_text, write};
 use crate::audio::InputChoice;
 use crate::llm::Effort;
+use crate::llm::openrouter::ProviderSlug;
 
 /// One change to the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,9 +42,13 @@ pub struct LlmChoice {
     pub model: Option<String>,
     /// `None` keeps the role's default effort.
     pub effort: Option<Effort>,
+    /// `None` keeps the role's default output budget.
+    pub max_tokens: Option<u32>,
     /// `None` is the provider's own endpoint (Ollama's for `OpenAiCompatible`).
     pub base_url: Option<String>,
     pub secret: Option<SecretName>,
+    /// OpenRouter's provider route; empty writes none.
+    pub route: Vec<ProviderSlug>,
 }
 
 pub(super) fn apply(
@@ -124,7 +129,7 @@ fn llm(choice: &LlmChoice) -> RawLlm {
         ),
         model: choice.model.clone(),
         effort: choice.effort.map(|effort| effort.as_str().to_owned()),
-        max_tokens: None,
+        max_tokens: choice.max_tokens.map(i64::from),
         base_url: choice.base_url.clone(),
         secret: choice.secret.as_ref().map_or_else(
             || match choice.kind {
@@ -134,6 +139,13 @@ fn llm(choice: &LlmChoice) -> RawLlm {
             },
             |name| Some(name.as_str().to_owned()),
         ),
+        route: (!choice.route.is_empty()).then(|| {
+            choice
+                .route
+                .iter()
+                .map(|slug| slug.as_str().to_owned())
+                .collect()
+        }),
     }
 }
 

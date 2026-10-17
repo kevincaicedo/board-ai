@@ -1,0 +1,4 @@
+# The standard question with a barge-in 6 s into the answer, then a resume.
+How does a request get from the browser to our database? Walk me through the CDN, the load balancer, the API pods, Redis and Postgres.
+@6000 Wait, why Redis first?
+Okay, go on.

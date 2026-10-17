@@ -243,6 +243,30 @@ struct Backchannel {
     final_text: String,
     /// Early partials (at these ms after the onset) that read as an interruption cue.
     cue_misfires: Vec<(u64, String)>,
+    /// Every early partial, to try candidate cue words against.
+    early: Vec<(u64, String)>,
+}
+
+/// Words Whisper's earliest partials make of a cue (`way`, `hold`, `action` at 256 ms), tried
+/// as cues before any joins the lexicon: each must misread no backchannel clip.
+const CANDIDATE_CUES: [&str; 7] = ["way", "hold", "hold up", "hang", "action", "actual", "we"];
+
+/// The candidate cue among the first `BARGE_IN_CUE_WORDS` words of `text`, if any, matched as
+/// the core matches cues (words lowercased, punctuation and contractions dropped).
+fn candidate_cue(text: &str) -> Option<&'static str> {
+    use boardai_core::conversation::cues::words;
+    let words = words(text);
+    let first = &words[..words.len().min(3)];
+    CANDIDATE_CUES.into_iter().find(|cue| {
+        let parts: Vec<&str> = cue.split(' ').collect();
+        (0..first.len()).any(|index| {
+            parts.iter().enumerate().all(|(offset, part)| {
+                first
+                    .get(index + offset)
+                    .is_some_and(|word| word.split('\'').next() == Some(*part))
+            })
+        })
+    })
 }
 
 /// Every backchannel at five voices and three rates: the voiced length the core will see in
@@ -290,6 +314,7 @@ fn spike_backchannel_lengths() {
         .iter()
         .map(|clip| f64::from(clip.voiced_ms.iter().sum::<u32>()))
         .collect();
+    report_candidate_misreads(&clips);
     println!(
         "  per VoiceEnd: p50 {:.0} / p90 {:.0} / p99 {:.0} / max {:.0} ms; per clip summed: max {:.0} ms; {} clips",
         percentile(&lengths, 50),
@@ -297,6 +322,39 @@ fn spike_backchannel_lengths() {
         percentile(&lengths, 99),
         percentile(&lengths, 100),
         percentile(&totals, 100),
+        clips.len()
+    );
+}
+
+/// How many backchannel clips each candidate cue, and the lexicon's cues, would misread.
+fn report_candidate_misreads(clips: &[Backchannel]) {
+    for cue in CANDIDATE_CUES {
+        let misread: Vec<String> = clips
+            .iter()
+            .filter_map(|clip| {
+                let (at, text) = clip
+                    .early
+                    .iter()
+                    .find(|(_, text)| candidate_cue(text) == Some(cue))?;
+                Some(format!(
+                    "{} {}@{at}:{text:?}",
+                    clip.phrase,
+                    voice_name(clip.voice)
+                ))
+            })
+            .collect();
+        println!(
+            "  candidate cue {cue:?}: misreads {} of {} clips {misread:?}",
+            misread.len(),
+            clips.len()
+        );
+    }
+    let misfires = clips
+        .iter()
+        .filter(|clip| !clip.cue_misfires.is_empty())
+        .count();
+    println!(
+        "  the lexicon's cues misread {misfires} of {} clips",
         clips.len()
     );
 }
@@ -324,13 +382,15 @@ fn measure_backchannel(
         VadEvent::Onset { .. } | VadEvent::End { .. } => None,
     });
     let mut cue_misfires = Vec::new();
+    let mut early = Vec::new();
     let mut final_text = String::new();
     if let Some(onset) = onset {
         for after_ms in EARLY_PARTIALS_MS {
             let text = decode(whisper, &samples, onset, after_ms as usize);
             if has_interruption_cue(&text) {
-                cue_misfires.push((after_ms, text));
+                cue_misfires.push((after_ms, text.clone()));
             }
+            early.push((after_ms, text));
         }
         final_text = decode(whisper, &samples, onset, samples.len() / FRAMES_PER_MS);
     }
@@ -341,6 +401,7 @@ fn measure_backchannel(
         voiced_ms,
         final_text,
         cue_misfires,
+        early,
     }
 }
 
@@ -389,6 +450,7 @@ fn spike_cue_words_heard_early() {
         let _ = decode(&mut whisper, &vec![0.0; MIC_RATE_HZ as usize], 8_000, 200);
         println!("\ncue words · Whisper base.en on {device:?}, {load}");
         let mut heard_at = vec![0_usize; CUE_PARTIALS_MS.len()];
+        let mut heard_with_candidates = vec![0_usize; CUE_PARTIALS_MS.len()];
         let mut decode_ms = Vec::new();
         let mut clips = 0;
         for voice in VOICES {
@@ -411,6 +473,8 @@ fn spike_cue_words_heard_early() {
                     decode_ms.push(started.elapsed().as_secs_f64() * 1_000.0);
                     let cue = has_interruption_cue(&partial);
                     heard_at[index] += usize::from(cue);
+                    heard_with_candidates[index] +=
+                        usize::from(cue || candidate_cue(&partial).is_some());
                     line.push(format!(
                         "{after_ms}:{}{partial:?}",
                         if cue { "+" } else { "-" }
@@ -423,14 +487,13 @@ fn spike_cue_words_heard_early() {
                 );
             }
         }
-        let rates: Vec<String> = CUE_PARTIALS_MS
-            .iter()
-            .zip(&heard_at)
-            .map(|(ms, heard)| format!("{ms} ms {heard}/{clips}"))
-            .collect();
         println!(
             "  cue heard by a partial at (after the onset): {}",
-            rates.join(", ")
+            rates(&heard_at, clips)
+        );
+        println!(
+            "  with the candidate cues too: {}",
+            rates(&heard_with_candidates, clips)
         );
         println!(
             "  decode p50 {:.0} / p90 {:.0} / max {:.0} ms over {} decodes",
@@ -443,6 +506,16 @@ fn spike_cue_words_heard_early() {
     if let Some(mut ollama) = ollama {
         let _ = ollama.kill();
     }
+}
+
+/// `heard` per partial time, as "256 ms 29/50".
+fn rates(heard: &[usize], clips: usize) -> String {
+    let rates: Vec<String> = CUE_PARTIALS_MS
+        .iter()
+        .zip(heard)
+        .map(|(ms, heard)| format!("{ms} ms {heard}/{clips}"))
+        .collect();
+    rates.join(", ")
 }
 
 /// Keeps Ollama generating a long answer in a loop until killed, so decodes share the GPU.
@@ -518,4 +591,150 @@ fn spike_mid_sentence_pauses() {
         "  first parts of split sentences: {} finished (the turn would end early), {} unclear, {} unfinished",
         counts[0], counts[1], counts[2]
     );
+}
+
+/// Sentences for the speculative end of turn: the natural ones (commas included), then pauses
+/// shorter than the 256 ms hangover (a hesitation, a comma said slowly), then the 900 ms
+/// pauses above, which already end the detector's segment.
+const SPECULATIVE: [(&str, &str); 10] = [
+    ("natural", SENTENCES[0]),
+    ("natural", SENTENCES[3]),
+    ("natural", SENTENCES[4]),
+    ("natural", SENTENCES[5]),
+    (
+        "natural",
+        "Okay, so the cache sits in front, and the database is behind it.",
+    ),
+    (
+        "150 ms",
+        "So the leader [[slnc 150]] sends a heartbeat to every follower.",
+    ),
+    (
+        "200 ms",
+        "What happens when [[slnc 200]] two pods write at once?",
+    ),
+    ("200 ms", "Can you show me [[slnc 200]] the handler?"),
+    ("250 ms", "I think the problem is [[slnc 250]] the cache."),
+    (
+        "250 ms",
+        "Walk me through [[slnc 250]] how the cache gets invalidated.",
+    ),
+];
+
+/// What one early final would have done as a speculative request.
+#[derive(Default)]
+struct Speculation {
+    /// Early finals decoded (after `EARLY_FINAL_AFTER_QUIET_MS` of quiet inside speech).
+    early: usize,
+    /// Of those, sounding finished: a speculative request would have started.
+    started: usize,
+    /// Of the started, speech resumed before `VoiceEnd`: the request is cancelled.
+    cancelled: usize,
+    /// Of the started, `VoiceEnd` followed: how much sooner the request went, in ms.
+    saved_ms: Vec<f64>,
+}
+
+/// The speculative end of turn (T-016's proposal): start the talker on an early final that
+/// sounds finished, instead of at `VoiceEnd`, and cancel it if speech resumes. Counts the
+/// requests that would start, be cancelled, and the time won when they stand.
+#[test]
+#[ignore = "measurement: needs the Silero and Whisper models; see the module comment"]
+fn spike_speculative_end_of_turn() {
+    let mut whisper = WhisperStt::new(&model(ModelId::WhisperBaseEn)).expect("whisper loads");
+    let _ = decode(&mut whisper, &vec![0.0; MIC_RATE_HZ as usize], 8_000, 200);
+    let mut by_kind: Vec<(&str, Speculation)> = Vec::new();
+    let mut decode_ms = Vec::new();
+    println!("\nspeculative end of turn · early finals and what a request on them would do");
+    for voice in VOICES {
+        for (kind, text) in SPECULATIVE {
+            let samples = spoken(text, voice, None);
+            let index = by_kind
+                .iter()
+                .position(|(name, _)| *name == kind)
+                .unwrap_or_else(|| {
+                    by_kind.push((kind, Speculation::default()));
+                    by_kind.len() - 1
+                });
+            let line = speculate(
+                &mut whisper,
+                &samples,
+                &mut by_kind[index].1,
+                &mut decode_ms,
+            );
+            println!("  {:<22} {kind:<8} {}", voice_name(voice), line.join(" · "));
+        }
+    }
+    for (kind, tally) in &by_kind {
+        println!(
+            "  {kind:<8}: {} early finals, {} sound finished (a request starts), {} of those \
+             cancelled (speech resumed); time won when it stands p50 {:.0} / min {:.0} ms",
+            tally.early,
+            tally.started,
+            tally.cancelled,
+            percentile(&tally.saved_ms, 50),
+            percentile(&tally.saved_ms, 0),
+        );
+    }
+    println!(
+        "  early-final decode p50 {:.0} / p90 {:.0} ms",
+        percentile(&decode_ms, 50),
+        percentile(&decode_ms, 90)
+    );
+}
+
+/// Runs one clip through the detector as speech in does, decoding the early final after
+/// `EARLY_FINAL_AFTER_QUIET_MS` of quiet, and tallies what a request started on it would do.
+fn speculate(
+    whisper: &mut WhisperStt,
+    samples: &[f32],
+    tally: &mut Speculation,
+    decode_ms: &mut Vec<f64>,
+) -> Vec<String> {
+    use boardai_runtime::speech_in::vad::EARLY_FINAL_AFTER_QUIET_MS;
+    let mut machine = VadMachine::default();
+    let mut onset = None;
+    let mut pending: Option<(usize, String, f64)> = None;
+    let mut line = Vec::new();
+    for (window, p) in probabilities(samples).iter().enumerate() {
+        let event = machine.step(*p);
+        if let Some(VadEvent::Start { onset_frame }) = event {
+            onset = Some(onset_frame as usize);
+        }
+        if matches!(event, Some(VadEvent::End { .. }))
+            && let Some((at, early, ms)) = pending.take()
+        {
+            let finished = completeness(&early) == Completeness::Finished;
+            if finished {
+                tally
+                    .saved_ms
+                    .push((window - at) as f64 * WINDOW_MS as f64 - ms);
+            }
+            line.push(format!("end{}{early:?}", if finished { "+" } else { "-" }));
+        }
+        if !machine.in_speech() {
+            continue;
+        }
+        let quiet = machine.quiet_ms();
+        if quiet >= EARLY_FINAL_AFTER_QUIET_MS && pending.is_none() {
+            let Some(onset) = onset else { continue };
+            let after_ms = machine.next_frame() as usize / FRAMES_PER_MS - onset / FRAMES_PER_MS;
+            let started = Instant::now();
+            let early = decode(whisper, samples, onset, after_ms);
+            let ms = started.elapsed().as_secs_f64() * 1_000.0;
+            decode_ms.push(ms);
+            tally.early += 1;
+            tally.started += usize::from(completeness(&early) == Completeness::Finished);
+            pending = Some((window, early, ms));
+        } else if quiet == 0
+            && let Some((_, early, _)) = pending.take()
+        {
+            let finished = completeness(&early) == Completeness::Finished;
+            tally.cancelled += usize::from(finished);
+            line.push(format!(
+                "resumed{}{early:?}",
+                if finished { "+" } else { "-" }
+            ));
+        }
+    }
+    line
 }

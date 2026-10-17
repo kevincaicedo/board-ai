@@ -10,11 +10,20 @@ use boardai_core::setup::{
     FileState, HarnessesFound, InputDevice, KeyName, KeyState, MicChoice, MicPermission,
     OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider, VoiceEngine,
 };
+use boardai_runtime::llm::catalog::ModelCatalog;
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::settings::{MemorySecretStore, Settings};
 
 use super::status::{Probes, gather};
-use super::{Downloads, SetupPaths, SetupState, mark_complete, save_edit, save_key};
+use super::{Downloads, Known, SetupPaths, SetupState, mark_complete, save_edit, save_key};
+
+fn known<'a>(ollama: &'a OllamaStatus, catalog: &'a ModelCatalog) -> Known<'a> {
+    Known {
+        ollama,
+        catalog,
+        devices: &[],
+    }
+}
 
 const PLANTED_KEY: &str = "sk-ant-api03-PLANTEDsetupKEYplantedSETUPkey-0123456789abcdef";
 const PLANTED_ELEVENLABS: &str = "sk_PLANTEDelevenLABSkeyPLANTED0123456789";
@@ -129,6 +138,7 @@ fn choices_round_trip_through_settings_and_finishing_sets_the_flag() {
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
     let lock = Mutex::new(());
+    let catalog = ModelCatalog::default();
     let ollama = OllamaStatus::Reachable {
         models: vec!["gemma4:latest".to_owned()],
     };
@@ -145,7 +155,7 @@ fn choices_round_trip_through_settings_and_finishing_sets_the_flag() {
         },
     ];
     for edit in &edits {
-        save_edit(&paths, &lock, edit, &secrets, &ollama, &[]).expect("saved");
+        save_edit(&paths, &lock, edit, &secrets, known(&ollama, &catalog)).expect("saved");
     }
     let saved = status(&paths, &secrets);
     assert_eq!(saved.talker.provider, TalkerProvider::Ollama);
@@ -181,6 +191,7 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
     let lock = Mutex::new(());
+    let catalog = ModelCatalog::default();
     let unreachable = OllamaStatus::Unreachable;
 
     save_key(&secrets, KeyName::Anthropic, format!("{PLANTED_KEY}\n")).expect("key saved");
@@ -193,7 +204,7 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
         engine: VoiceEngine::ElevenLabs,
     };
     for edit in [&claude, &elevenlabs] {
-        save_edit(&paths, &lock, edit, &secrets, &unreachable, &[]).expect("saved");
+        save_edit(&paths, &lock, edit, &secrets, known(&unreachable, &catalog)).expect("saved");
     }
     mark_complete(&paths, &lock).expect("flag set");
 
@@ -253,8 +264,7 @@ fn a_bad_key_or_an_unusable_file_changes_nothing() {
             mode: MicChoice::Open,
         },
         &secrets,
-        &OllamaStatus::Unreachable,
-        &[],
+        known(&OllamaStatus::Unreachable, &ModelCatalog::default()),
     );
     assert!(refused.is_err_and(|reason| reason.contains("`mic`")));
     assert!(mark_complete(&paths, &lock).is_err());

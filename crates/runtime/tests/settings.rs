@@ -6,7 +6,9 @@ mod support;
 use std::path::{Path, PathBuf};
 
 use boardai_runtime::audio::{InputChoice, OutputChoice};
+use boardai_runtime::limits::OPENROUTER_ROUTE_MAX;
 use boardai_runtime::llm::Effort;
+use boardai_runtime::llm::openrouter::{GPT_OSS_120B, ProviderSlug};
 use boardai_runtime::settings::{
     HarnessChoice, LlmChoice, LlmKind, MicMode, SecretName, Settings, SettingsEdit, SettingsError,
     TtsKind,
@@ -243,8 +245,10 @@ fn ollama(model: &str) -> LlmChoice {
         kind: LlmKind::OpenAiCompatible,
         model: Some(model.to_owned()),
         effort: Some(Effort::None),
+        max_tokens: None,
         base_url: None,
         secret: None,
+        route: Vec::new(),
     }
 }
 
@@ -313,8 +317,10 @@ fn edits_switch_back_to_the_defaults_and_pick_a_microphone_by_name() {
         kind: LlmKind::Anthropic,
         model: None,
         effort: None,
+        max_tokens: None,
         base_url: None,
         secret: SecretName::parse("anthropic"),
+        route: Vec::new(),
     };
     let back = Settings::edit(
         &path,
@@ -408,4 +414,90 @@ fn an_edit_that_cannot_write_reports_it_and_keeps_the_old_file() {
         .map(|entry| entry.file_name())
         .collect();
     assert_eq!(names, vec![std::ffi::OsString::from("settings.toml")]);
+}
+
+const OPEN_ROUTER_TALKER: &str = "[talker]\nkind = \"openai_compatible\"\nmodel = \"openai/gpt-oss-120b\"\nbase_url = \"https://openrouter.ai/api/v1\"\nsecret = \"openrouter\"\n";
+
+#[test]
+fn an_openrouter_route_is_read_and_bounded() {
+    let settings = parse(&format!(
+        "{OPEN_ROUTER_TALKER}route = [\"cerebras\", \"deepinfra/turbo\"]"
+    ))
+    .expect("parses");
+    let route: Vec<&str> = settings
+        .talker
+        .route
+        .iter()
+        .map(ProviderSlug::as_str)
+        .collect();
+    assert_eq!(route, ["cerebras", "deepinfra/turbo"]);
+    assert!(
+        parse(OPEN_ROUTER_TALKER)
+            .expect("parses")
+            .talker
+            .route
+            .is_empty()
+    );
+    assert_eq!(
+        invalid_field(&format!(
+            "{OPEN_ROUTER_TALKER}route = [\"cerebras\", \"Groq Cloud\"]"
+        )),
+        "talker.route[1]"
+    );
+    let long: Vec<String> = (0..=OPENROUTER_ROUTE_MAX)
+        .map(|_| "\"groq\"".to_owned())
+        .collect();
+    assert_eq!(
+        invalid_field(&format!(
+            "{OPEN_ROUTER_TALKER}route = [{}]",
+            long.join(", ")
+        )),
+        "talker.route"
+    );
+    // A route means nothing to other servers: saying so beats ignoring it.
+    let local =
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"gemma4:latest\"\nroute = [\"cerebras\"]";
+    assert_eq!(invalid_field(local), "talker.route");
+    assert_eq!(
+        invalid_field("[scribe]\nroute = [\"cerebras\"]"),
+        "scribe.route"
+    );
+}
+
+#[test]
+fn a_route_error_never_quotes_the_slug() {
+    let text = format!("{OPEN_ROUTER_TALKER}route = [\"{PLANTED_KEY}\"]");
+    let error = parse(&text).expect_err("a key is not a slug").to_string();
+    assert!(!error.contains(&PLANTED_KEY[..20]), "{error}");
+}
+
+#[test]
+fn an_edit_writes_a_preset_with_its_route() {
+    let folder = TempFolder::new("settings-route");
+    let home = Path::new(HOME);
+    let path = folder.path.join("config/settings.toml");
+    let open_router = LlmChoice {
+        kind: LlmKind::OpenAiCompatible,
+        model: Some(GPT_OSS_120B.model.to_owned()),
+        effort: Some(GPT_OSS_120B.talker.effort),
+        max_tokens: Some(GPT_OSS_120B.talker.max_tokens),
+        base_url: Some("https://openrouter.ai/api/v1".to_owned()),
+        secret: SecretName::parse("openrouter"),
+        route: GPT_OSS_120B.route(),
+    };
+    let edited = Settings::edit(
+        &path,
+        home,
+        &[SettingsEdit::Llm {
+            talker: open_router.clone(),
+            scribe: open_router,
+        }],
+    )
+    .expect("edited");
+    assert_eq!(edited.talker.route, GPT_OSS_120B.route());
+    assert_eq!(edited.talker.effort, Effort::Low);
+    assert_eq!(edited.talker.max_tokens, 4_096);
+    let written = std::fs::read_to_string(&path).expect("written");
+    assert!(written.contains("route = [\"cerebras\"]"), "{written}");
+    assert_eq!(Settings::load(&path, home).expect("reloads"), edited);
 }

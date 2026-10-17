@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use boardai_core::effect::TalkRequest;
 use boardai_core::history::Conversation;
@@ -18,13 +19,17 @@ use tokio::task::JoinHandle;
 use super::inbox::Inbox;
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
+use crate::limits::TALKER_WARM_UP_TIMEOUT_MS;
 use crate::llm::anthropic::{AnthropicOptions, AnthropicProvider};
-use crate::llm::ollama_chat::{OllamaChatOptions, OllamaChatProvider, is_local_ollama};
-use crate::llm::openai::{OLLAMA_BASE_URL, OpenAiCompatibleProvider, OpenAiOptions};
+use crate::llm::ollama_chat::{
+    MaybeOllama, OllamaChatOptions, OllamaChatProvider, is_local_ollama,
+};
+use crate::llm::openai::{Dialect, OLLAMA_BASE_URL, OpenAiCompatibleProvider, OpenAiOptions};
+use crate::llm::openrouter::{ProviderSlug, is_openrouter};
 use crate::llm::{
     ChatEvent, ChatStream, LlmCapabilities, LlmProvider, ProviderError, TalkerConfig, ToolSpec,
 };
-use crate::settings::{LlmKind, LlmSettings, SecretError, SecretStore};
+use crate::settings::{LlmKind, LlmSettings, Secret, SecretError, SecretStore};
 
 /// The current stream, if any.
 #[derive(Debug)]
@@ -38,6 +43,8 @@ pub(crate) struct Talker {
     provider: Arc<dyn LlmProvider>,
     next_generation: u64,
     current: Option<Run>,
+    /// The session's warm-up (D-154), dropped when a real request starts or the talker stops.
+    warming: Option<JoinHandle<()>>,
 }
 
 impl Talker {
@@ -46,6 +53,35 @@ impl Talker {
             provider,
             next_generation: 0,
             current: None,
+            warming: None,
+        }
+    }
+
+    /// Readies the provider for the session's first request, in the background and within
+    /// `TALKER_WARM_UP_TIMEOUT_MS`. Nothing it does reaches the core or the conversation; a
+    /// real request drops it at once, so it never holds one up.
+    pub(crate) fn warm_up(&mut self) {
+        self.stop_warm_up();
+        let Some(warm_up) = self.provider.warm_up() else {
+            return;
+        };
+        let bound = Duration::from_millis(TALKER_WARM_UP_TIMEOUT_MS);
+        self.warming = Some(tokio::spawn(async move {
+            let started = tokio::time::Instant::now();
+            let outcome = tokio::time::timeout(bound, warm_up).await;
+            let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            match outcome {
+                Ok(Ok(())) => tracing::info!(elapsed_ms, "talker warmed up"),
+                // The first request will meet the same problem and say it out loud.
+                Ok(Err(error)) => tracing::info!(elapsed_ms, %error, "talker warm-up failed"),
+                Err(_elapsed) => tracing::info!(elapsed_ms, "talker warm-up timed out"),
+            }
+        }));
+    }
+
+    fn stop_warm_up(&mut self) {
+        if let Some(task) = self.warming.take() {
+            task.abort();
         }
     }
 
@@ -73,8 +109,10 @@ impl Talker {
         });
     }
 
-    /// Drops the stream in flight; its inputs still in the inbox are dropped there.
+    /// Drops the stream in flight and any warm-up; the stream's inputs still in the inbox are
+    /// dropped there.
     pub(crate) fn cancel(&mut self) {
+        self.stop_warm_up();
         if let Some(run) = self.current.take() {
             run.cancel.cancel();
             run.task.abort();
@@ -93,6 +131,13 @@ impl Talker {
         if self.accepts(generation) {
             self.current = None;
         }
+    }
+}
+
+/// A talker dropped without `cancel` (an aborted session task) still stops its tasks.
+impl Drop for Talker {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -253,33 +298,74 @@ fn provider_from_settings(
             };
             Arc::new(AnthropicProvider::new(config, options).map_err(TalkerSetupError::Provider)?)
         }
-        LlmKind::OpenAiCompatible => {
-            let base_url = settings
-                .base_url
-                .clone()
-                .unwrap_or_else(|| OLLAMA_BASE_URL.to_owned());
-            // Ollama on this machine is spoken to natively, so it can be asked for a context
-            // window the system prompt and a conversation fit in (D-148).
-            if is_local_ollama(&base_url) {
-                let options = OllamaChatOptions {
-                    base_url,
-                    clock,
-                    policy: None,
-                };
-                let provider = OllamaChatProvider::new(config, options);
-                return Ok(Arc::new(provider.map_err(TalkerSetupError::Provider)?));
-            }
-            let options = OpenAiOptions {
-                base_url,
-                api_key: secret,
-                clock,
-                policy: None,
-            };
-            Arc::new(
-                OpenAiCompatibleProvider::new(config, options)
-                    .map_err(TalkerSetupError::Provider)?,
-            )
+        LlmKind::OpenAiCompatible => open_ai_compatible(settings, config, secret, clock)
+            .map_err(TalkerSetupError::Provider)?,
+    };
+    Ok(provider)
+}
+
+/// Which adapter an OpenAI-compatible base URL gets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum CompatibleApi {
+    /// Ollama on this machine: native without asking, so it can be given a context window
+    /// the system prompt and a conversation fit in (D-133).
+    LocalOllama,
+    /// OpenRouter: its own request fields, and the settings' route (D-152).
+    OpenRouter { route: Vec<ProviderSlug> },
+    /// Anything else: asked on first use whether it is Ollama (D-156).
+    Probed,
+}
+
+fn compatible_api(settings: &LlmSettings, base_url: &str) -> CompatibleApi {
+    if is_local_ollama(base_url) {
+        CompatibleApi::LocalOllama
+    } else if is_openrouter(base_url) {
+        CompatibleApi::OpenRouter {
+            route: settings.route.clone(),
         }
+    } else {
+        CompatibleApi::Probed
+    }
+}
+
+fn open_ai_compatible(
+    settings: &LlmSettings,
+    config: &TalkerConfig,
+    secret: Option<Secret>,
+    clock: Arc<dyn Clock>,
+) -> Result<Arc<dyn LlmProvider>, ProviderError> {
+    let base_url = settings
+        .base_url
+        .clone()
+        .unwrap_or_else(|| OLLAMA_BASE_URL.to_owned());
+    let native = |clock| {
+        let options = OllamaChatOptions {
+            base_url: base_url.clone(),
+            clock,
+            policy: None,
+        };
+        OllamaChatProvider::new(config, options)
+    };
+    let compatible = |dialect, clock| {
+        let options = OpenAiOptions {
+            base_url: base_url.clone(),
+            api_key: secret.clone(),
+            clock,
+            policy: None,
+            dialect,
+        };
+        OpenAiCompatibleProvider::new(config, options)
+    };
+    let provider: Arc<dyn LlmProvider> = match compatible_api(settings, &base_url) {
+        CompatibleApi::LocalOllama => Arc::new(native(clock)?),
+        CompatibleApi::OpenRouter { route } => {
+            Arc::new(compatible(Dialect::OpenRouter { route }, clock)?)
+        }
+        CompatibleApi::Probed => Arc::new(MaybeOllama::new(
+            native(Arc::clone(&clock))?,
+            compatible(Dialect::Standard, clock)?,
+            base_url.clone(),
+        )),
     };
     Ok(provider)
 }
@@ -291,9 +377,59 @@ pub fn talker_name(settings: &LlmSettings) -> String {
         .base_url
         .as_deref()
         .is_none_or(|url| url.contains("localhost") || url.contains("127.0.0.1"));
+    let open_router = settings.base_url.as_deref().is_some_and(is_openrouter);
     match settings.kind {
         LlmKind::Anthropic => "Claude".to_owned(),
         LlmKind::OpenAiCompatible if local => "the local model".to_owned(),
+        LlmKind::OpenAiCompatible if open_router => "OpenRouter".to_owned(),
         LlmKind::OpenAiCompatible => "the model".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompatibleApi, compatible_api, talker_name};
+    use crate::llm::Effort;
+    use crate::llm::openrouter::ProviderSlug;
+    use crate::settings::{LlmKind, LlmSettings};
+
+    fn settings(kind: LlmKind, base_url: Option<&str>) -> LlmSettings {
+        LlmSettings {
+            kind,
+            model: "m".to_owned(),
+            effort: Effort::Low,
+            max_tokens: 100,
+            base_url: base_url.map(str::to_owned),
+            secret: None,
+            route: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn failure_lines_name_the_talker_by_where_it_runs() {
+        let name = |kind, url| talker_name(&settings(kind, url));
+        assert_eq!(name(LlmKind::Anthropic, None), "Claude");
+        let local = Some("http://localhost:11434/v1");
+        assert_eq!(name(LlmKind::OpenAiCompatible, local), "the local model");
+        let open_router = Some("https://openrouter.ai/api/v1");
+        assert_eq!(name(LlmKind::OpenAiCompatible, open_router), "OpenRouter");
+        let other = Some("http://gpu-box:1234/v1");
+        assert_eq!(name(LlmKind::OpenAiCompatible, other), "the model");
+    }
+
+    #[test]
+    fn each_server_gets_its_adapter() {
+        let mut open_router = settings(LlmKind::OpenAiCompatible, None);
+        open_router.route = ProviderSlug::parse("cerebras").into_iter().collect();
+        let api = |url: &str| compatible_api(&open_router, url);
+        assert_eq!(api("http://localhost:11434/v1"), CompatibleApi::LocalOllama);
+        assert_eq!(
+            api("https://openrouter.ai/api/v1"),
+            CompatibleApi::OpenRouter {
+                route: open_router.route.clone()
+            }
+        );
+        assert_eq!(api("http://gpu-box:11434/v1"), CompatibleApi::Probed);
+        assert_eq!(api("http://localhost:1234/v1"), CompatibleApi::Probed);
     }
 }

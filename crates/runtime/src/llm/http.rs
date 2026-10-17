@@ -40,6 +40,84 @@ fn install_crypto_provider() {
     }
 }
 
+/// One GET under one deadline (connect, status and the whole body), its body bounded: the
+/// model lists and Ollama's probes. `what` names the server in errors ("OpenRouter's model
+/// list"). A slow server fails as `Network`, a large answer as `BadOutput`.
+pub(crate) async fn get_bounded(
+    url: &str,
+    max_bytes: usize,
+    deadline: Duration,
+    what: &str,
+) -> Result<Vec<u8>, ProviderError> {
+    let client = build_client()?;
+    let fetched = tokio::time::timeout(deadline, async move {
+        let mut response =
+            client
+                .get(url)
+                .send()
+                .await
+                .map_err(|error| ProviderError::Network {
+                    detail: bounded_detail(&error.without_url().to_string()),
+                })?;
+        if !response.status().is_success() {
+            return Err(error_from_response(response).await);
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| ProviderError::Network {
+                detail: bounded_detail(&error.without_url().to_string()),
+            })?
+        {
+            if body.len() + chunk.len() > max_bytes {
+                return Err(ProviderError::BadOutput {
+                    detail: format!("{what} exceeds {max_bytes} bytes"),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    })
+    .await;
+    fetched.unwrap_or_else(|_elapsed| {
+        Err(ProviderError::Network {
+            detail: format!("{what} did not arrive within {} ms", deadline.as_millis()),
+        })
+    })
+}
+
+/// Sends a warm-up request and reads at most `max_bytes` of its answer, then drops the
+/// connection: only the server's side effects matter (a loaded model, a cached prompt). An
+/// error status keeps its category. Unbounded in time: the caller bounds it.
+pub(crate) async fn post_and_drain(
+    client: reqwest::Client,
+    request: RequestSpec,
+    max_bytes: usize,
+) -> Result<(), ProviderError> {
+    let network = |error: reqwest::Error| ProviderError::Network {
+        detail: bounded_detail(&error.without_url().to_string()),
+    };
+    let mut response = client
+        .post(&request.url)
+        .headers(request.headers)
+        .body(request.body)
+        .send()
+        .await
+        .map_err(network)?;
+    if !response.status().is_success() {
+        return Err(error_from_response(response).await);
+    }
+    let mut read = 0;
+    while let Some(chunk) = response.chunk().await.map_err(network)? {
+        read += chunk.len();
+        if read >= max_bytes {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// `base_url` joined with `path`, after checking it is an http(s) URL.
 pub(crate) fn endpoint(base_url: &str, path: &str) -> Result<String, ProviderError> {
     let parsed = reqwest::Url::parse(base_url).map_err(|_| ProviderError::NotConfigured {

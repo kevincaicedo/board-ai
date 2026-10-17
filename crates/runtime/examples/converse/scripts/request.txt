@@ -1,0 +1,2 @@
+# The standard drawing question (spikes S3 and S5): a request through five systems.
+How does a request get from the browser to our database? Walk me through the CDN, the load balancer, the API pods, Redis and Postgres.

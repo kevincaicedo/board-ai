@@ -233,6 +233,8 @@ impl Orchestrator {
         };
         config.suggestion = opened.suggestion.or(config.suggestion);
         self.core = Core::new(config);
+        // Before anything is said: a cold local model takes ~10 s to load and prefill.
+        self.talker.warm_up();
         self.stats.sessions += 1;
         let now = self.clock.now();
         self.phase = Phase::Active {

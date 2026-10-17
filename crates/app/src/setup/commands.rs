@@ -1,14 +1,16 @@
-//! The first-run screen's commands (D-100, `ui/src/setup/tauriSetup.ts`). Each returns the
+//! The first-run screen's commands (D-100, D-153, `ui/src/setup/tauriSetup.ts`). Each returns the
 //! fresh [`SetupStatus`] (or nothing) and errors in plain words for the card that asked. File,
 //! Keychain and permission work runs on the blocking pool, never on the main thread.
 
 use std::sync::Arc;
 
 use boardai_core::setup::{
-    DownloadEvent, HarnessesFound, KeyName, OllamaStatus, SetupEdit, SetupStatus,
+    DownloadEvent, HarnessesFound, KeyName, ModelListing, ModelQuery, OllamaStatus, SetupEdit,
+    SetupStatus,
 };
 use boardai_runtime::audio::input_device_names;
 use boardai_runtime::harness::discover_from_environment;
+use boardai_runtime::llm::catalog::CatalogError;
 use boardai_runtime::llm::ollama::ollama_models;
 use boardai_runtime::llm::openai::OLLAMA_BASE_URL;
 use boardai_runtime::models::ModelStore;
@@ -16,7 +18,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
 use super::status::{self, Probes};
-use super::{SetupState, downloads, input, mark_complete, paths, save_edit, save_key};
+use super::{Known, SetupState, downloads, input, mark_complete, paths, save_edit, save_key};
 use crate::permission;
 use crate::secrets::KeychainSecrets;
 
@@ -48,9 +50,15 @@ pub async fn setup_save(
     };
     let lock = Arc::clone(&state.settings);
     let seen = ollama.clone();
+    let catalog = Arc::clone(&state.catalog);
     blocking(move || {
         let devices = input_device_names();
-        save_edit(&paths, &lock, &edit, &KeychainSecrets, &seen, &devices)
+        let known = Known {
+            ollama: &seen,
+            catalog: &catalog,
+            devices: &devices,
+        };
+        save_edit(&paths, &lock, &edit, &KeychainSecrets, known)
     })
     .await?;
     state.mark_changed();
@@ -94,6 +102,28 @@ pub async fn setup_download(
     downloads::download(&store, id, &send)
         .await
         .map_err(|_| "The download stopped.".to_owned())
+}
+
+/// The model picker's lists (D-153): OpenRouter's tool-capable models, one OpenRouter model's
+/// providers, or the local Ollama's models. Bounded by `MODEL_LIST_TIMEOUT_MS` (Ollama's by
+/// `OLLAMA_PROBE_TIMEOUT_MS`) and kept a while, so asking again is cheap. Needs no key.
+#[tauri::command]
+pub async fn setup_models(
+    query: ModelQuery,
+    state: State<'_, SetupState>,
+) -> Result<ModelListing, String> {
+    state.catalog.answer(&query).await.map_err(|error| {
+        tracing::info!(?error, ?query, "a model list was not answered");
+        match (&query, error) {
+            (_, CatalogError::NotAModelId) => "That is not an OpenRouter model id.".to_owned(),
+            (ModelQuery::Ollama, CatalogError::Provider(_)) => {
+                "Ollama isn't answering on this Mac. Start it and try again.".to_owned()
+            }
+            (ModelQuery::OpenRouter | ModelQuery::Providers { .. }, CatalogError::Provider(_)) => {
+                "OpenRouter's list didn't arrive. Check the connection and try again.".to_owned()
+            }
+        }
+    })
 }
 
 /// Asks macOS for the microphone (its prompt shows only the first time).

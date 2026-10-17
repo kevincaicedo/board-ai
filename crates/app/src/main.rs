@@ -28,6 +28,7 @@ fn main() -> ExitCode {
             commands::command,
             commands::session_log,
             setup::commands::setup_status,
+            setup::commands::setup_models,
             setup::commands::setup_save,
             setup::commands::setup_key,
             setup::commands::setup_download,

@@ -13,6 +13,7 @@ use serde::Deserialize;
 
 use super::request::{assistant_message, tool_call};
 use crate::llm::error::bounded_detail;
+use crate::llm::openrouter::ProviderSlug;
 use crate::llm::session::{Decoder, Flow};
 use crate::llm::sse::SseEvent;
 use crate::llm::{ChatEvent, ProviderError, Usage};
@@ -24,6 +25,10 @@ pub(super) struct OpenAiDecoder {
     finish: Option<String>,
     refused: bool,
     usage: Usage,
+    /// The provider a route asked for first; kept across retries.
+    expected: Option<ProviderSlug>,
+    /// OpenRouter named who served the response.
+    served_by_seen: bool,
 }
 
 #[derive(Debug)]
@@ -42,6 +47,10 @@ struct Chunk {
     usage: Option<WireUsage>,
     #[serde(default)]
     error: Option<WireError>,
+    /// OpenRouter: who served the response (`Cerebras`). Read loosely: other servers may use
+    /// the name for something else, and it never fails a chunk.
+    #[serde(default)]
+    provider: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +96,15 @@ struct WireUsage {
     prompt_tokens: u64,
     #[serde(default)]
     completion_tokens: u64,
+    /// OpenRouter: how much of the prompt came from the provider's cache.
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptDetails>,
+}
+
+#[derive(Deserialize)]
+struct PromptDetails {
+    #[serde(default)]
+    cached_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +113,34 @@ struct WireError {
     message: String,
     #[serde(default, rename = "type")]
     kind: Option<String>,
+    /// OpenRouter sends an HTTP status (`502`) or a name (`server_error`) here instead of a
+    /// `type`.
+    #[serde(default)]
+    code: Option<serde_json::Value>,
+}
+
+impl WireError {
+    /// The error in its category, so an upstream failure before the first token is retried
+    /// like the same failure as an HTTP status.
+    fn into_provider_error(self) -> ProviderError {
+        let detail = bounded_detail(&self.message);
+        if let Some(kind) = self.kind.as_deref() {
+            return ProviderError::from_error_type(kind, detail);
+        }
+        let status = self
+            .code
+            .as_ref()
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|code| u16::try_from(code).ok());
+        match (
+            status,
+            self.code.as_ref().and_then(serde_json::Value::as_str),
+        ) {
+            (Some(status), _) => ProviderError::from_status(status, None, detail),
+            (None, Some(name)) => ProviderError::from_error_type(name, detail),
+            (None, None) => ProviderError::from_error_type("provider_error", detail),
+        }
+    }
 }
 
 impl Decoder for OpenAiDecoder {
@@ -110,14 +156,19 @@ impl Decoder for OpenAiDecoder {
         let chunk: Chunk = serde_json::from_str(&event.data)
             .map_err(|error| bad(&format!("a chunk is not valid: {error}")))?;
         if let Some(error) = chunk.error {
-            let kind = error.kind.as_deref().unwrap_or("provider_error");
-            return Err(ProviderError::from_error_type(
-                kind,
-                bounded_detail(&error.message),
-            ));
+            return Err(error.into_provider_error());
+        }
+        if let Some(name) = chunk.provider.as_ref().and_then(serde_json::Value::as_str) {
+            self.note_served_by(name);
         }
         if let Some(usage) = chunk.usage {
-            self.usage.input_tokens = usage.prompt_tokens;
+            let cached = usage
+                .prompt_tokens_details
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0);
+            // `input_tokens` is the uncached remainder, as Anthropic reports it.
+            self.usage.input_tokens = usage.prompt_tokens.saturating_sub(cached);
+            self.usage.cache_read_input_tokens = cached;
             self.usage.output_tokens = usage.completion_tokens;
         }
         for choice in chunk.choices {
@@ -143,11 +194,36 @@ impl Decoder for OpenAiDecoder {
     }
 
     fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self::new(self.expected.take());
     }
 }
 
 impl OpenAiDecoder {
+    pub(super) fn new(expected: Option<ProviderSlug>) -> Self {
+        Self {
+            expected,
+            ..Self::default()
+        }
+    }
+
+    /// An answer from a later provider in the route is worth a warning: its latency is not
+    /// what the route's first provider was chosen for.
+    fn note_served_by(&mut self, name: &str) {
+        if self.served_by_seen {
+            return;
+        }
+        self.served_by_seen = true;
+        let name = bounded_detail(name);
+        match &self.expected {
+            Some(expected) if !expected.names(&name) => tracing::warn!(
+                served_by = %name,
+                route = expected.as_str(),
+                "OpenRouter served the response from another provider"
+            ),
+            Some(_) | None => tracing::debug!(served_by = %name, "OpenRouter provider"),
+        }
+    }
+
     fn apply(&mut self, delta: Delta, out: &mut VecDeque<ChatEvent>) -> Result<(), ProviderError> {
         for text in [delta.content, delta.refusal.clone()].into_iter().flatten() {
             if !text.is_empty() {

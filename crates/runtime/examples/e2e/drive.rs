@@ -16,14 +16,18 @@ use boardai_runtime::bridge::UiSink;
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
 use boardai_runtime::limits::{SCRIPT_WAIT_MAX_MS, TALKER_MAX_TOKENS_DEFAULT};
-use boardai_runtime::llm::openai::OLLAMA_BASE_URL;
+use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
+use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
+use boardai_runtime::llm::openrouter::{self, ProviderSlug, TALKER_PRESET, parse_route};
 use boardai_runtime::llm::{ChatEvent, Effort, LlmProvider};
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
     Cue, LiveListener, LiveVoice, Observed, Progress, Script, SessionChannels, SessionParts,
     SessionStats, StoreSink, talker_from_settings, wait_for_answer,
 };
-use boardai_runtime::settings::{LlmKind, LlmSettings, MemorySecretStore, TtsKind, TtsSettings};
+use boardai_runtime::settings::{
+    LlmKind, LlmSettings, MemorySecretStore, Secret, SecretName, TtsKind, TtsSettings,
+};
 use boardai_runtime::speech_in::{SileroVad, SpeechIn, WhisperStt, load_speech_in, repo_terms};
 use boardai_runtime::speech_out::{ChosenVoice, choose_voice};
 use boardai_runtime::tools::RepoTools;
@@ -33,7 +37,7 @@ use tokio::sync::{oneshot, watch};
 use crate::check;
 use crate::clips::{self, Clip};
 use crate::trace::{Recorder, UiLog};
-use crate::{Args, Output, Voice};
+use crate::{Args, Output, Provider, Voice};
 
 /// What keeps playing the voice: a null output, or the audio unit on the speakers.
 enum Device {
@@ -73,7 +77,18 @@ async fn prepare(args: &Args) -> Result<Prepared, String> {
     if let Some(error) = &voice.replaced {
         println!("e2e: the configured voice could not start ({error}); using the system voice");
     }
-    let talker = ollama(&args.model)?;
+    let (talker, settings) = talker(args)?;
+    println!(
+        "e2e: talker {} at effort {}{}",
+        settings.model,
+        settings.effort.as_str(),
+        if settings.route.is_empty() {
+            String::new()
+        } else {
+            let route: Vec<&str> = settings.route.iter().map(ProviderSlug::as_str).collect();
+            format!(", routed to {}", route.join(", "))
+        }
+    );
     warm_up(&talker).await;
     Ok(Prepared {
         clips,
@@ -109,7 +124,10 @@ pub async fn run(args: &Args) -> Result<bool, String> {
     let (store, mut progress) = Observed::new(Arc::clone(&recorder));
     let ui_log = Arc::new(UiLog::create(&out.join("events.jsonl"))?);
     let clock = TokioClock::start();
-    let config = core_config(&args.model);
+    let config = core_config(args.model.as_deref().unwrap_or(match args.provider {
+        Provider::Ollama => OLLAMA_DEFAULT_MODEL,
+        Provider::OpenRouter => TALKER_PRESET.model,
+    }));
     let parts = SessionParts {
         core: config.clone(),
         clock,
@@ -263,17 +281,59 @@ fn core_config(model: &str) -> CoreConfig {
     }
 }
 
-fn ollama(model: &str) -> Result<Arc<dyn LlmProvider>, String> {
-    let settings = LlmSettings {
-        kind: LlmKind::OpenAiCompatible,
-        model: model.to_owned(),
-        effort: Effort::None,
-        max_tokens: TALKER_MAX_TOKENS_DEFAULT,
-        base_url: Some(OLLAMA_BASE_URL.to_owned()),
-        secret: None,
+/// The talker `--provider` names: a local Ollama model at effort `none`, or an OpenRouter
+/// model (a preset keeps its thinking and route) with the key from the environment.
+fn talker(args: &Args) -> Result<(Arc<dyn LlmProvider>, LlmSettings), String> {
+    let mut secrets = MemorySecretStore::new();
+    let settings = match args.provider {
+        Provider::Ollama => LlmSettings {
+            kind: LlmKind::OpenAiCompatible,
+            model: args
+                .model
+                .clone()
+                .unwrap_or_else(|| OLLAMA_DEFAULT_MODEL.to_owned()),
+            effort: Effort::None,
+            max_tokens: TALKER_MAX_TOKENS_DEFAULT,
+            base_url: Some(OLLAMA_BASE_URL.to_owned()),
+            secret: None,
+            route: Vec::new(),
+        },
+        Provider::OpenRouter => {
+            let model = args
+                .model
+                .clone()
+                .unwrap_or_else(|| TALKER_PRESET.model.to_owned());
+            let preset = openrouter::preset(&model);
+            let route = match (args.route.as_deref(), preset) {
+                (Some("none"), _) | (None, None) => Vec::new(),
+                (Some(slugs), _) => {
+                    let slugs: Vec<String> = slugs.split(',').map(str::to_owned).collect();
+                    parse_route(&slugs).map_err(|error| format!("bad --route: {error:?}"))?
+                }
+                (None, Some(preset)) => preset.route(),
+            };
+            let name = SecretName::parse("openrouter").ok_or("bad secret name")?;
+            let key = ["OPEN_ROUTER_KEY", "OPENROUTER_API_KEY"]
+                .iter()
+                .find_map(|variable| std::env::var(variable).ok().filter(|key| !key.is_empty()))
+                .ok_or("OPEN_ROUTER_KEY or OPENROUTER_API_KEY is not set")?;
+            secrets.insert(name.clone(), Secret::new(key.trim().to_owned()));
+            LlmSettings {
+                kind: LlmKind::OpenAiCompatible,
+                effort: preset.map_or(Effort::Low, |preset| preset.talker.effort),
+                model,
+                max_tokens: args.max_tokens.unwrap_or_else(|| {
+                    preset.map_or(TALKER_MAX_TOKENS_DEFAULT, |preset| preset.talker.max_tokens)
+                }),
+                base_url: Some(OPENROUTER_BASE_URL.to_owned()),
+                secret: Some(name),
+                route,
+            }
+        }
     };
     let clock = Arc::new(MonotonicClock::start());
-    talker_from_settings(&settings, &MemorySecretStore::new(), clock).map_err(|e| e.to_string())
+    let talker = talker_from_settings(&settings, &secrets, clock).map_err(|e| e.to_string())?;
+    Ok((talker, settings))
 }
 
 /// Warm-up requests before giving up: a cold Ollama loads the model (~5 s) and prefills the
@@ -282,6 +342,8 @@ fn ollama(model: &str) -> Result<Arc<dyn LlmProvider>, String> {
 const WARM_UP_ATTEMPTS: usize = 4;
 
 /// Loads the model and its prompt before the clock matters, so line 1 measures a warm talker.
+/// The answer is read to its end: a dropped OpenRouter stream may keep running (and holding
+/// credit) at a provider that can't cancel, which can route line 1 to a slower provider.
 async fn warm_up(talker: &Arc<dyn LlmProvider>) {
     let mut conversation = Conversation::new();
     conversation.push(Message::User {
@@ -291,15 +353,22 @@ async fn warm_up(talker: &Arc<dyn LlmProvider>) {
     });
     for attempt in 1..=WARM_UP_ATTEMPTS {
         let mut stream = talker.stream(&conversation, CancelToken::new());
-        let first = tokio::time::timeout(Duration::from_secs(60), stream.next()).await;
-        match first {
-            Ok(Some(Ok(
-                ChatEvent::TextDelta(_) | ChatEvent::ToolCall(_) | ChatEvent::Done { .. },
-            ))) => return,
-            Ok(Some(Err(error))) => {
-                println!("e2e: the talker's warm-up {attempt} failed: {error}");
+        let answered = tokio::time::timeout(Duration::from_secs(60), async {
+            let mut outcome = None;
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(ChatEvent::Done { .. }) => return Ok(()),
+                    Ok(ChatEvent::TextDelta(_) | ChatEvent::ToolCall(_)) => outcome = Some(()),
+                    Err(error) => return Err(error.to_string()),
+                }
             }
-            Ok(None) | Err(_) => println!("e2e: the talker did not answer warm-up {attempt}"),
+            outcome.ok_or_else(|| "the stream ended without an answer".to_owned())
+        })
+        .await;
+        match answered {
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => println!("e2e: the talker's warm-up {attempt} failed: {error}"),
+            Err(_) => println!("e2e: the talker did not answer warm-up {attempt}"),
         }
     }
 }

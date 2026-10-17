@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::audio::{InputChoice, OutputChoice};
 use crate::limits::SETTINGS_FILE_MAX_BYTES;
 use crate::llm::Effort;
+use crate::llm::openrouter::ProviderSlug;
 
 pub use edit::{LlmChoice, SettingsEdit};
 pub use secrets::{MemorySecretStore, Secret, SecretError, SecretName, SecretStore};
@@ -54,6 +55,9 @@ pub struct LlmSettings {
     pub base_url: Option<String>,
     /// Required for Anthropic; optional for OpenAI-compatible servers (Ollama needs none).
     pub secret: Option<SecretName>,
+    /// OpenRouter only: the only providers tried, in order (`route = ["cerebras"]`, D-152).
+    /// Empty leaves the choice to OpenRouter.
+    pub route: Vec<ProviderSlug>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

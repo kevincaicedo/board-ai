@@ -4,7 +4,9 @@
 use std::path::PathBuf;
 
 use boardai_runtime::limits::TALKER_MAX_TOKENS_DEFAULT;
+use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
 use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
+use boardai_runtime::llm::openrouter::{self, ProviderSlug, TALKER_PRESET, parse_route};
 use boardai_runtime::llm::{DEFAULT_TALKER_MODEL, Effort};
 use boardai_runtime::settings::{LlmKind, LlmSettings, Secret, SecretName};
 
@@ -14,10 +16,16 @@ usage: just converse [options]
 Type a line to say it; a line typed while BoardAI speaks is a barge-in. Ctrl-D ends.
 
   --provider ollama|anthropic|openrouter   default ollama
-  --model <name>        default gemma4:latest (ollama), claude-opus-5-5 (anthropic);
-                        required for openrouter
-  --effort none|low|medium|high|xhigh|max  default none for ollama, low otherwise
+  --model <name>        default gemma4:latest (ollama), claude-opus-5-5 (anthropic),
+                        openai/gpt-oss-120b (openrouter; qwen/qwen3.8-27b is the other preset)
+  --effort none|low|medium|high|xhigh|max  default none for ollama, the preset's for
+                        openrouter (gpt-oss: low, qwen: none), low otherwise
+  --route <a,b|none>    OpenRouter providers to try first; default the preset's (cerebras)
+  --max-tokens <n>      the talker's output budget; default the preset's (4096 on OpenRouter)
   --base-url <url>      override the provider's endpoint
+  --no-warm-up          skip the talker's warm-up at session open (to measure it)
+  --first-after <ms>    wait this long after the session opens before the first line, as a
+                        user takes a moment to speak (default 0)
   --repo <path>         open a folder for the repo tools (read_file, search_code, list_dir)
   --script <file>       say the file's lines instead of reading stdin (`@<ms> text` times a
                         barge-in that long into the previous answer)
@@ -26,9 +34,8 @@ Type a line to say it; a line typed while BoardAI speaks is a barge-in. Ctrl-D e
   --raw                 print each response's raw narration, tags included
   --ui-log <file>       write the UI events as an events.jsonl the UI's replay mode plays
 
-Keys come from the environment: ANTHROPIC_API_KEY, OPENROUTER_API_KEY.";
-
-const OLLAMA_DEFAULT_MODEL: &str = "gemma4:latest";
+Keys come from the environment: ANTHROPIC_API_KEY, and OPEN_ROUTER_KEY (or
+OPENROUTER_API_KEY). `just converse` loads them from the repo's gitignored `.env`.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
@@ -43,6 +50,10 @@ pub struct Args {
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub base_url: Option<String>,
+    pub route: Option<Vec<ProviderSlug>>,
+    pub max_tokens: Option<u32>,
+    pub warm_up: bool,
+    pub first_after_ms: u64,
     pub repo: Option<PathBuf>,
     pub script: Option<PathBuf>,
     pub speed: f32,
@@ -58,6 +69,10 @@ impl Args {
             model: None,
             effort: None,
             base_url: None,
+            route: None,
+            max_tokens: None,
+            warm_up: true,
+            first_after_ms: 0,
             repo: None,
             script: None,
             speed: 1.0,
@@ -75,6 +90,10 @@ impl Args {
                     args.raw = true;
                     continue;
                 }
+                "--no-warm-up" => {
+                    args.warm_up = false;
+                    continue;
+                }
                 _ => {}
             }
             let value = words
@@ -85,6 +104,18 @@ impl Args {
                 "--model" => args.model = Some(value),
                 "--effort" => args.effort = Some(effort(&value)?),
                 "--base-url" => args.base_url = Some(value),
+                "--route" => args.route = Some(route(&value)?),
+                "--max-tokens" => {
+                    let tokens = value
+                        .parse()
+                        .map_err(|_| format!("bad --max-tokens {value}"))?;
+                    args.max_tokens = Some(tokens);
+                }
+                "--first-after" => {
+                    args.first_after_ms = value
+                        .parse()
+                        .map_err(|_| format!("bad --first-after {value}"))?;
+                }
                 "--repo" => args.repo = Some(PathBuf::from(value)),
                 "--script" => args.script = Some(PathBuf::from(value)),
                 "--ui-log" => args.ui_log = Some(PathBuf::from(value)),
@@ -110,24 +141,34 @@ impl Args {
                 LlmKind::Anthropic,
                 Some(DEFAULT_TALKER_MODEL),
                 "",
-                Some("ANTHROPIC_API_KEY"),
+                Some(ANTHROPIC_KEYS),
             ),
             Provider::OpenRouter => (
                 LlmKind::OpenAiCompatible,
-                None,
+                Some(TALKER_PRESET.model),
                 OPENROUTER_BASE_URL,
-                Some("OPENROUTER_API_KEY"),
+                Some(OPEN_ROUTER_KEYS),
             ),
         };
         let model = self
             .model
             .clone()
             .or_else(|| default_model.map(str::to_owned))
-            .ok_or("--model is required for openrouter")?;
+            .ok_or("--model is required")?;
         let secret = key_variable.map(key_from_environment).transpose()?;
-        let default_effort = match self.provider {
-            Provider::Ollama => Effort::None,
-            Provider::Anthropic | Provider::OpenRouter => Effort::Low,
+        let preset = openrouter::preset(&model).filter(|_| self.provider == Provider::OpenRouter);
+        let default_effort = match (self.provider, preset) {
+            (Provider::Ollama, _) => Effort::None,
+            (Provider::OpenRouter, Some(preset)) => preset.talker.effort,
+            (Provider::Anthropic | Provider::OpenRouter, _) => Effort::Low,
+        };
+        let max_tokens = self.max_tokens.unwrap_or_else(|| {
+            preset.map_or(TALKER_MAX_TOKENS_DEFAULT, |preset| preset.talker.max_tokens)
+        });
+        let route = match (&self.route, preset) {
+            (Some(route), _) => route.clone(),
+            (None, Some(preset)) => preset.route(),
+            (None, None) => Vec::new(),
         };
         let base_url = self
             .base_url
@@ -137,19 +178,45 @@ impl Args {
             kind,
             model,
             effort: self.effort.unwrap_or(default_effort),
-            max_tokens: TALKER_MAX_TOKENS_DEFAULT,
+            max_tokens,
             base_url,
             secret: secret.as_ref().map(|(name, _)| name.clone()),
+            route,
         };
         Ok((settings, secret))
     }
 }
 
-fn key_from_environment(variable: &str) -> Result<(SecretName, Secret), String> {
-    let value = std::env::var(variable).map_err(|_| format!("{variable} is not set"))?;
-    let name = SecretName::parse(&variable.to_ascii_lowercase().replace("_api_key", ""))
-        .ok_or("bad secret name")?;
-    Ok((name, Secret::new(value)))
+/// Where a key comes from: the secret's name, and the variables tried in order.
+type KeyVariables = (&'static str, &'static [&'static str]);
+
+const ANTHROPIC_KEYS: KeyVariables = ("anthropic", &["ANTHROPIC_API_KEY"]);
+const OPEN_ROUTER_KEYS: KeyVariables = ("openrouter", &["OPEN_ROUTER_KEY", "OPENROUTER_API_KEY"]);
+
+/// The key from the first variable set. The value goes straight into a `Secret`; it is never
+/// printed, and an error names the variables only.
+fn key_from_environment((name, variables): KeyVariables) -> Result<(SecretName, Secret), String> {
+    let value = variables
+        .iter()
+        .find_map(|variable| {
+            std::env::var(variable)
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .ok_or_else(|| format!("{} is not set", variables.join(" or ")))?;
+    let name = SecretName::parse(name).ok_or("bad secret name")?;
+    Ok((name, Secret::new(value.trim().to_owned())))
+}
+
+fn route(value: &str) -> Result<Vec<ProviderSlug>, String> {
+    if value == "none" {
+        return Ok(Vec::new());
+    }
+    let slugs: Vec<String> = value
+        .split(',')
+        .map(|slug| slug.trim().to_owned())
+        .collect();
+    parse_route(&slugs).map_err(|error| format!("bad --route: {error:?}"))
 }
 
 fn provider(value: &str) -> Result<Provider, String> {

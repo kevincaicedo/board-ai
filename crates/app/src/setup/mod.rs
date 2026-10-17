@@ -16,7 +16,8 @@ mod tests;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use boardai_core::setup::{KeyName, OllamaStatus, SetupEdit};
+use boardai_core::setup::{KeyName, OllamaStatus, SetupEdit, TalkerProvider};
+use boardai_runtime::llm::catalog::{ModelCatalog, OpenRouterModelId};
 use boardai_runtime::settings::{SecretStore, Settings, SettingsEdit};
 use tauri::{AppHandle, Manager};
 
@@ -33,6 +34,8 @@ pub struct SetupState {
     /// The last Ollama answer, so a save doesn't wait on the probe again.
     // Held only to read or replace the value.
     ollama: Mutex<Option<OllamaStatus>>,
+    /// The model picker's lists, fetched on demand and kept a while (D-153).
+    catalog: Arc<ModelCatalog>,
     /// The session was started (at launch, or by finishing setup); it starts once.
     started: AtomicBool,
     /// A choice or a key was saved while the session runs (the screen opened as settings):
@@ -92,24 +95,48 @@ pub fn paths(app: &AppHandle) -> Option<SetupPaths> {
     })
 }
 
-/// Saves one edit to `settings.toml`. `devices` are the input devices macOS lists now. Blocks
-/// (file I/O, maybe the Keychain).
+/// What the app has seen that a save is checked against.
+#[derive(Clone, Copy)]
+pub struct Known<'a> {
+    pub ollama: &'a OllamaStatus,
+    /// The model picker's lists: a picked OpenRouter model's thinking comes from here.
+    pub catalog: &'a ModelCatalog,
+    /// The input devices macOS lists now.
+    pub devices: &'a [String],
+}
+
+/// Saves one edit to `settings.toml`. Blocks (file I/O, maybe the Keychain).
 pub fn save_edit(
     paths: &SetupPaths,
     lock: &Mutex<()>,
     edit: &SetupEdit,
     secrets: &dyn SecretStore,
-    ollama: &OllamaStatus,
-    devices: &[String],
+    known: Known<'_>,
 ) -> Result<(), String> {
+    let Known {
+        ollama,
+        catalog,
+        devices,
+    } = known;
     let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
     let current =
         Settings::load(&paths.settings, &paths.home).map_err(|error| error.to_string())?;
     let elevenlabs_key = input::secret_name(KeyName::ElevenLabs)
         .is_some_and(|name| secrets.contains(&name).unwrap_or(false));
+    let open_router_model = match edit {
+        SetupEdit::Talker {
+            provider: TalkerProvider::OpenRouter,
+            model: Some(model),
+        } => OpenRouterModelId::parse(model).and_then(|id| catalog.listed(&id)),
+        SetupEdit::Talker { .. }
+        | SetupEdit::Voice { .. }
+        | SetupEdit::Mic { .. }
+        | SetupEdit::Input { .. } => None,
+    };
     let known = input::EditContext {
         current: &current,
         ollama,
+        open_router_model: open_router_model.as_ref(),
         elevenlabs_key,
         devices,
     };

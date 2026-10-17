@@ -4,6 +4,8 @@ use boardai_core::history::{AssistantPart, Message, ProviderFamily, RawAssistant
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
+use super::Dialect;
+use crate::llm::openrouter;
 use crate::llm::{Effort, ProviderError, TalkerConfig};
 
 #[derive(Clone, Debug)]
@@ -20,17 +22,22 @@ struct Body<'a> {
 }
 
 impl FrozenRequest {
-    pub(super) fn new(config: &TalkerConfig) -> Self {
+    pub(super) fn new(config: &TalkerConfig, dialect: &Dialect) -> Self {
         let mut fields = Map::new();
         fields.insert("model".into(), json!(config.model));
         fields.insert("max_tokens".into(), json!(config.max_tokens));
         fields.insert("stream".into(), json!(true));
         // Without it the final usage chunk is never sent.
         fields.insert("stream_options".into(), json!({"include_usage": true}));
-        fields.insert(
-            "reasoning_effort".into(),
-            json!(reasoning_effort(config.effort)),
-        );
+        match dialect {
+            Dialect::Standard => {
+                fields.insert(
+                    "reasoning_effort".into(),
+                    json!(reasoning_effort(config.effort)),
+                );
+            }
+            Dialect::OpenRouter { route } => open_router_fields(config.effort, route, &mut fields),
+        }
         if !config.tools.is_empty() {
             let tools: Vec<Value> = config
                 .tools
@@ -53,6 +60,29 @@ impl FrozenRequest {
             fields,
             system_prompt: config.system_prompt.clone(),
         }
+    }
+
+    /// A warm-up request (D-154): the frozen fields, the system prompt and a one-word user
+    /// turn, answered with one token and not streamed.
+    pub(super) fn warm_up_body(&self) -> Result<Vec<u8>, ProviderError> {
+        let mut fields = self.fields.clone();
+        fields.insert("stream".into(), json!(false));
+        // OpenAI-compatible servers refuse `stream_options` on a request that doesn't stream.
+        fields.remove("stream_options");
+        fields.insert("max_tokens".into(), json!(1));
+        let mut messages = Vec::with_capacity(2);
+        if !self.system_prompt.is_empty() {
+            messages.push(json!({"role": "system", "content": self.system_prompt}));
+        }
+        messages.push(json!({"role": "user", "content": "Hi."}));
+        let body = Body {
+            fields: &fields,
+            messages,
+        };
+        serde_json::to_vec(&body).map_err(|error| ProviderError::InvalidRequest {
+            status: None,
+            detail: error.to_string(),
+        })
     }
 
     pub(super) fn body(&self, messages: &[Message]) -> Result<Vec<u8>, ProviderError> {
@@ -83,6 +113,32 @@ impl FrozenRequest {
             status: None,
             detail: error.to_string(),
         })
+    }
+}
+
+/// OpenRouter's documented fields (D-152): `reasoning.effort`, with the reasoning text left
+/// out of the stream (it is never spoken, and never echoed back); and for a route,
+/// `provider.order` with no fallbacks, so the route's providers are the only ones tried. A
+/// provider outside it can be ten times slower to the first token (Near AI against Cerebras
+/// on gpt-oss-120b, 2026-10-16), and a voice is better told the route is down than slowed
+/// silently. `require_parameters` keeps a routed provider from ignoring `reasoning` (Qwen
+/// would think at its default, `xhigh`) or `tools`.
+fn open_router_fields(
+    effort: Effort,
+    route: &[openrouter::ProviderSlug],
+    fields: &mut Map<String, Value>,
+) {
+    let effort = openrouter::reasoning_effort(effort);
+    fields.insert(
+        "reasoning".into(),
+        json!({"effort": effort, "exclude": true}),
+    );
+    if !route.is_empty() {
+        let order: Vec<&str> = route.iter().map(openrouter::ProviderSlug::as_str).collect();
+        fields.insert(
+            "provider".into(),
+            json!({"order": order, "allow_fallbacks": false, "require_parameters": true}),
+        );
     }
 }
 

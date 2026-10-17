@@ -3,24 +3,22 @@
 //! settings change. Refusals are plain words for the card they belong to; none quotes a key.
 
 use boardai_core::setup::{
-    InputDevice, KeyName, MicChoice, OllamaStatus, SetupEdit, TalkerProvider, VoiceEngine,
+    InputDevice, KeyName, MicChoice, ModelInfo, OllamaStatus, SetupEdit, TalkerProvider,
+    VoiceEngine,
 };
 use boardai_runtime::audio::InputChoice;
-use boardai_runtime::limits::{OLLAMA_MODEL_NAME_MAX_BYTES, SECRET_VALUE_MAX_BYTES};
-use boardai_runtime::llm::Effort;
+use boardai_runtime::limits::{
+    OLLAMA_MODEL_NAME_MAX_BYTES, OPENROUTER_TALKER_MAX_TOKENS, SECRET_VALUE_MAX_BYTES,
+};
+use boardai_runtime::llm::catalog::{OpenRouterModelId, talker_effort};
+use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
 use boardai_runtime::llm::openai::OPENROUTER_BASE_URL;
+use boardai_runtime::llm::openrouter::{self, Preset, SCRIBE_PRESET, TALKER_PRESET};
+use boardai_runtime::llm::{Effort, LlmRole};
 use boardai_runtime::models::ModelId;
 use boardai_runtime::settings::{
     LlmChoice, LlmKind, MicMode, Secret, SecretName, Settings, SettingsEdit, TtsKind,
 };
-
-/// The local model the screen picks when Ollama has it and nothing else is chosen (the
-/// `converse` default, D-103).
-pub const DEFAULT_OLLAMA_MODEL: &str = "gemma4:latest";
-/// OpenRouter's talker, as the design names it, and the matching scribe (D-017's pair on
-/// OpenRouter; the owner's call, D-103).
-pub const OPENROUTER_TALKER_MODEL: &str = "anthropic/claude-opus-5.5";
-pub const OPENROUTER_SCRIBE_MODEL: &str = "anthropic/claude-haiku-5.5";
 
 /// Why a pasted key was refused. The key itself is never kept or quoted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +74,9 @@ pub struct EditContext<'a> {
     pub current: &'a Settings,
     /// Picks the Ollama model when the screen names none.
     pub ollama: &'a OllamaStatus,
+    /// What the model picker last listed about the chosen OpenRouter model (its thinking);
+    /// `None` when the picker never listed it.
+    pub open_router_model: Option<&'a ModelInfo>,
     /// An ElevenLabs key is saved.
     pub elevenlabs_key: bool,
     /// Input devices macOS lists now; a microphone is chosen by name only from these.
@@ -87,12 +88,17 @@ pub fn settings_edit(edit: &SetupEdit, known: EditContext<'_>) -> Result<Setting
     let EditContext {
         current,
         ollama,
+        open_router_model,
         elevenlabs_key,
         devices,
     } = known;
     match edit {
         SetupEdit::Talker { provider, model } => {
-            talker(*provider, model.as_deref(), current, ollama)
+            let listed = Listed {
+                ollama,
+                open_router_model,
+            };
+            talker(*provider, model.as_deref(), current, listed)
         }
         SetupEdit::Voice { engine } => match engine {
             VoiceEngine::Kokoro => Ok(SettingsEdit::Tts(TtsKind::Kokoro)),
@@ -117,11 +123,18 @@ pub fn settings_edit(edit: &SetupEdit, known: EditContext<'_>) -> Result<Setting
     }
 }
 
+/// What the screen's lists said, for picking a model.
+#[derive(Clone, Copy, Debug)]
+struct Listed<'a> {
+    ollama: &'a OllamaStatus,
+    open_router_model: Option<&'a ModelInfo>,
+}
+
 fn talker(
     provider: TalkerProvider,
     model: Option<&str>,
     current: &Settings,
-    ollama: &OllamaStatus,
+    listed: Listed<'_>,
 ) -> Result<SettingsEdit, String> {
     let (talker, scribe) = match provider {
         TalkerProvider::Claude => {
@@ -129,36 +142,35 @@ fn talker(
                 kind: LlmKind::Anthropic,
                 model: None,
                 effort: None,
+                max_tokens: None,
                 base_url: None,
                 secret: secret_name(KeyName::Anthropic),
+                route: Vec::new(),
             };
             (claude.clone(), claude)
         }
         TalkerProvider::OpenRouter => {
-            let open_router = |model: &str| LlmChoice {
-                kind: LlmKind::OpenAiCompatible,
-                model: Some(model.to_owned()),
-                effort: None,
-                base_url: Some(OPENROUTER_BASE_URL.to_owned()),
-                secret: secret_name(KeyName::OpenRouter),
+            let talker = match model {
+                None => open_router_preset(TALKER_PRESET, LlmRole::Talker),
+                Some(id) => open_router_model(id, listed.open_router_model)?,
             };
-            (
-                open_router(OPENROUTER_TALKER_MODEL),
-                open_router(OPENROUTER_SCRIBE_MODEL),
-            )
+            let scribe = open_router_preset(SCRIBE_PRESET, LlmRole::Scribe);
+            (talker, scribe)
         }
         TalkerProvider::Ollama => {
             let model = match model {
                 Some(name) => ollama_model_name(name)?,
-                None => pick_ollama_model(current, ollama),
+                None => pick_ollama_model(current, listed.ollama),
             };
             // Local thinking models need effort `none` for a responsive voice (llm::Effort).
             let local = LlmChoice {
                 kind: LlmKind::OpenAiCompatible,
                 model: Some(model),
                 effort: Some(Effort::None),
+                max_tokens: None,
                 base_url: None,
                 secret: None,
+                route: Vec::new(),
             };
             (local.clone(), local)
         }
@@ -167,6 +179,43 @@ fn talker(
         }
     };
     Ok(SettingsEdit::Llm { talker, scribe })
+}
+
+/// A preset as it was measured for `role`: its thinking, output budget and route (D-152).
+fn open_router_preset(preset: Preset, role: LlmRole) -> LlmChoice {
+    let settings = preset.for_role(role);
+    LlmChoice {
+        kind: LlmKind::OpenAiCompatible,
+        model: Some(preset.model.to_owned()),
+        effort: Some(settings.effort),
+        max_tokens: Some(settings.max_tokens),
+        base_url: Some(OPENROUTER_BASE_URL.to_owned()),
+        secret: secret_name(KeyName::OpenRouter),
+        route: preset.route(),
+    }
+}
+
+/// A model picked from OpenRouter's list: a preset keeps its settings; another model thinks
+/// as little as the list says it allows, and OpenRouter routes it (D-152).
+fn open_router_model(id: &str, listed: Option<&ModelInfo>) -> Result<LlmChoice, String> {
+    let id = OpenRouterModelId::parse(id)
+        .ok_or_else(|| "That is not an OpenRouter model id.".to_owned())?;
+    if let Some(preset) = openrouter::preset(id.as_str()) {
+        return Ok(open_router_preset(preset, LlmRole::Talker));
+    }
+    let reasoning = listed
+        .filter(|model| model.id == id.as_str())
+        .map(|model| &model.reasoning);
+    let effort = reasoning.map_or(Effort::Low, talker_effort);
+    Ok(LlmChoice {
+        kind: LlmKind::OpenAiCompatible,
+        model: Some(id.as_str().to_owned()),
+        effort: Some(effort),
+        max_tokens: Some(OPENROUTER_TALKER_MAX_TOKENS),
+        base_url: Some(OPENROUTER_BASE_URL.to_owned()),
+        secret: secret_name(KeyName::OpenRouter),
+        route: Vec::new(),
+    })
 }
 
 fn ollama_model_name(name: &str) -> Result<String, String> {
@@ -193,13 +242,13 @@ fn pick_ollama_model(current: &Settings, ollama: &OllamaStatus) -> String {
     if local_now && (listed.is_empty() || listed.contains(&current.talker.model)) {
         return current.talker.model.clone();
     }
-    if listed.iter().any(|name| name == DEFAULT_OLLAMA_MODEL) {
-        return DEFAULT_OLLAMA_MODEL.to_owned();
+    if listed.iter().any(|name| name == OLLAMA_DEFAULT_MODEL) {
+        return OLLAMA_DEFAULT_MODEL.to_owned();
     }
     listed
         .first()
         .cloned()
-        .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_owned())
+        .unwrap_or_else(|| OLLAMA_DEFAULT_MODEL.to_owned())
 }
 
 #[cfg(test)]
@@ -207,11 +256,15 @@ mod tests {
     use std::path::Path;
 
     use boardai_core::setup::{
-        InputDevice, KeyName, OllamaStatus, SetupEdit, TalkerProvider, VoiceEngine,
+        InputDevice, KeyName, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit, TalkerProvider,
+        VoiceEngine,
     };
     use boardai_runtime::audio::InputChoice;
     use boardai_runtime::limits::SECRET_VALUE_MAX_BYTES;
-    use boardai_runtime::settings::{LlmKind, Settings, SettingsEdit};
+    use boardai_runtime::llm::Effort;
+    use boardai_runtime::llm::openai::OPENROUTER_BASE_URL;
+    use boardai_runtime::llm::openrouter::{QWEN_3_8_27B, SCRIBE_PRESET, TALKER_PRESET};
+    use boardai_runtime::settings::{LlmChoice, LlmKind, Settings, SettingsEdit};
 
     use super::{EditContext, KeyRefused, parse_key, parse_model, settings_edit};
 
@@ -228,6 +281,7 @@ mod tests {
         EditContext {
             current,
             ollama,
+            open_router_model: None,
             elevenlabs_key,
             devices,
         }
@@ -306,6 +360,77 @@ mod tests {
             model: Some("x".repeat(500)),
         };
         assert!(settings_edit(&named, known(&defaults(), &listed, false, &[])).is_err());
+    }
+
+    fn open_router(model: Option<&str>) -> SetupEdit {
+        SetupEdit::Talker {
+            provider: TalkerProvider::OpenRouter,
+            model: model.map(str::to_owned),
+        }
+    }
+
+    fn picked(edit: &SetupEdit, listed: Option<&ModelInfo>) -> (LlmChoice, LlmChoice) {
+        let unreachable = OllamaStatus::Unreachable;
+        let current = defaults();
+        let mut context = known(&current, &unreachable, false, &[]);
+        context.open_router_model = listed;
+        let Ok(SettingsEdit::Llm { talker, scribe }) = settings_edit(edit, context) else {
+            panic!("an OpenRouter talker for {edit:?}");
+        };
+        (talker, scribe)
+    }
+
+    #[test]
+    fn openrouter_starts_from_its_presets_with_their_route_and_thinking() {
+        let (talker, scribe) = picked(&open_router(None), None);
+        assert_eq!(talker.model.as_deref(), Some(TALKER_PRESET.model));
+        assert_eq!(talker.effort, Some(TALKER_PRESET.talker.effort));
+        assert_eq!(talker.route, TALKER_PRESET.route());
+        assert_eq!(talker.max_tokens, Some(TALKER_PRESET.talker.max_tokens));
+        assert_eq!(talker.secret, super::secret_name(KeyName::OpenRouter));
+        assert_eq!(talker.base_url.as_deref(), Some(OPENROUTER_BASE_URL));
+        assert_eq!(scribe.model.as_deref(), Some(SCRIBE_PRESET.model));
+        assert_eq!(scribe.route, SCRIBE_PRESET.route());
+        assert_eq!(scribe.max_tokens, Some(SCRIBE_PRESET.scribe.max_tokens));
+        assert_eq!(scribe.effort, Some(Effort::Medium));
+        let (qwen, _) = picked(&open_router(Some(QWEN_3_8_27B.model)), None);
+        assert_eq!(qwen.effort, Some(Effort::None));
+        assert_eq!(qwen.route, QWEN_3_8_27B.route());
+    }
+
+    #[test]
+    fn another_openrouter_model_thinks_as_little_as_its_listing_allows() {
+        let listing = |id: &str, reasoning: ModelReasoning| ModelInfo {
+            id: id.to_owned(),
+            name: id.to_owned(),
+            context_tokens: None,
+            price: None,
+            reasoning,
+            preset: false,
+        };
+        let optional = listing("x/optional", ModelReasoning::Optional);
+        let (talker, _) = picked(&open_router(Some("x/optional")), Some(&optional));
+        assert_eq!(talker.effort, Some(Effort::None));
+        assert!(
+            talker.route.is_empty(),
+            "OpenRouter routes models it was not measured on"
+        );
+        let always = listing(
+            "x/always",
+            ModelReasoning::Always {
+                least_effort: "medium".to_owned(),
+            },
+        );
+        let (talker, _) = picked(&open_router(Some("x/always")), Some(&always));
+        assert_eq!(talker.effort, Some(Effort::Medium));
+        // Unlisted, or a listing for another model: `low`, which every thinking model takes.
+        let (talker, _) = picked(&open_router(Some("x/unlisted")), Some(&always));
+        assert_eq!(talker.effort, Some(Effort::Low));
+        let unreachable = OllamaStatus::Unreachable;
+        for bad in ["gemma4:latest", "../../etc", "x/a b"] {
+            let edit = open_router(Some(bad));
+            assert!(settings_edit(&edit, known(&defaults(), &unreachable, false, &[])).is_err());
+        }
     }
 
     #[test]

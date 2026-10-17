@@ -1,0 +1,2 @@
+# A data structure with cells (D-120).
+Show me how a hash map handles collisions.

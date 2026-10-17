@@ -18,10 +18,16 @@ pub const CONTINUATION_WORDS: &[&str] = &[
 /// ellipsis, and a trailing comma is a clause in progress.
 pub const CONTINUATION_ENDINGS: &[&str] = &["...", "…", ","];
 
-/// Rule (a): any of these among the first [`BARGE_IN_CUE_WORDS`] words is an interruption.
+/// Rule (a): any of these among the first [`BARGE_IN_CUE_WORDS`] words is an interruption. The
+/// LLD's cues, then what Whisper's earliest partials (256 ms after the onset) make of them:
+/// "way" and "we" for "wait", "hold" and "hang" before their "on", "actual" and "action" for
+/// "actually" (`spike_turns`: 37 of 50 cue clips heard at 256 ms instead of 29, and none of 450
+/// backchannel clips misread, D-159). "hold up" is a cue in its own right. After an early
+/// partial the final decides nothing these add: a short remark that isn't a backchannel
+/// interrupts anyway (rule e).
 pub const INTERRUPTION_CUES: &[&str] = &[
     "wait", "stop", "hold on", "hang on", "what", "why", "how", "no", "actually", "sorry", "pause",
-    "slower", "repeat", "back", "skip",
+    "slower", "repeat", "back", "skip", "hold up", "hold", "hang", "way", "we", "actual", "action",
 ];
 
 /// A short utterance made only of these keeps BoardAI going (LLD §2.2). The LLD's list plus the
@@ -484,6 +490,20 @@ mod tests {
         }
         assert!(has_interruption_cue("What's an inode?"));
         assert!(!has_interruption_cue("whatever"));
+    }
+
+    /// Whisper's early partials of real cues (`spike_turns`, D-159) stop BoardAI as the cues do.
+    #[test]
+    fn early_partial_spellings_of_cues_interrupt() {
+        for partial in [
+            "way", "We", "Hold.", "Hold it.", "Hang!", "action.", "actual", "Hold up.",
+        ] {
+            assert!(has_interruption_cue(partial), "{partial}");
+            assert!(!is_backchannel(partial), "{partial}");
+        }
+        for not_a_cue in ["Weight", "wean", "holder", "hanger", "Okay.", "Yeah."] {
+            assert!(!has_interruption_cue(not_a_cue), "{not_a_cue}");
+        }
     }
 
     #[test]

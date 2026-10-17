@@ -11,16 +11,20 @@ use std::io::{BufWriter, Write as _};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
+use boardai_core::history::Conversation;
 use boardai_core::protocol::{UiBatch, UiLogKind, UiLogLine};
 use boardai_core::{CoreConfig, MicMode};
 use boardai_runtime::bridge::{UiSink, UiSinkClosed};
+use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
+use boardai_runtime::llm::openrouter::ProviderSlug;
+use boardai_runtime::llm::{ChatStream, LlmCapabilities, LlmProvider};
 use boardai_runtime::session::{
     Observed, Progress, Script, SessionChannels, SessionParts, SpeechInLink, StoreSink,
     VirtualVoice, VirtualVoiceConfig, run_script, say_typed, talker_from_settings, talker_name,
     wait_for_answer,
 };
-use boardai_runtime::settings::MemorySecretStore;
+use boardai_runtime::settings::{LlmSettings, MemorySecretStore};
 use boardai_runtime::tools::{RepoRoots, RepoTools};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::watch;
@@ -106,7 +110,8 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run(args: &Args) -> Result<Vec<Answer>, String> {
+/// The talker the options describe, and its settings.
+fn talker(args: &Args) -> Result<(LlmSettings, Arc<dyn LlmProvider>), String> {
     let (settings, secret) = args.talker()?;
     let mut secrets = MemorySecretStore::new();
     if let Some((name, value)) = secret {
@@ -115,6 +120,15 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
     let clock = Arc::new(MonotonicClock::start());
     let talker =
         talker_from_settings(&settings, &secrets, clock).map_err(|error| error.to_string())?;
+    if args.warm_up {
+        Ok((settings, talker))
+    } else {
+        Ok((settings, Arc::new(NoWarmUp(talker))))
+    }
+}
+
+async fn run(args: &Args) -> Result<Vec<Answer>, String> {
+    let (settings, talker) = talker(args)?;
     let tools = match &args.repo {
         Some(repo) => RepoTools::new(
             RepoRoots::open(std::slice::from_ref(repo)).map_err(|error| error.message)?,
@@ -128,11 +142,18 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
         }
         None => None,
     };
+    let route: Vec<&str> = settings.route.iter().map(ProviderSlug::as_str).collect();
     println!(
-        "converse: {} via {:?} at effort {}; type a line (Ctrl-D to end)",
+        "converse: {} via {:?} at effort {}{}{}; type a line (Ctrl-D to end)",
         settings.model,
         args.provider,
-        settings.effort.as_str()
+        settings.effort.as_str(),
+        if route.is_empty() {
+            String::new()
+        } else {
+            format!(", routed to {}", route.join(", "))
+        },
+        if args.warm_up { "" } else { ", no warm-up" },
     );
     let printer = Arc::new(Printer::new(args.verbose, args.raw));
     let ui_log = Arc::new(UiLog::create(args.ui_log.as_deref())?);
@@ -158,6 +179,7 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
         ui: Arc::clone(&ui_log) as Arc<dyn UiSink>,
     };
     let session = boardai_runtime::session::spawn(channels, parts);
+    tokio::time::sleep(std::time::Duration::from_millis(args.first_after_ms)).await;
     let link = session.speech_in();
     let said = match script {
         Some(script) => run_script(script, &link, &mut progress).await,
@@ -171,6 +193,19 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
         stats.steps, stats.stale_talker_inputs
     );
     Ok(printer.answers())
+}
+
+/// The talker without its session warm-up, to measure what the warm-up saves.
+struct NoWarmUp(Arc<dyn LlmProvider>);
+
+impl LlmProvider for NoWarmUp {
+    fn capabilities(&self) -> LlmCapabilities {
+        self.0.capabilities()
+    }
+
+    fn stream(&self, conversation: &Conversation, cancel: CancelToken) -> ChatStream {
+        self.0.stream(conversation, cancel)
+    }
 }
 
 /// Says each typed line at once; at the end waits for the last answer to finish.

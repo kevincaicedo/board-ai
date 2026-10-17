@@ -158,7 +158,7 @@ impl ProviderError {
                 retry_after: None,
                 detail,
             },
-            "api_error" => Self::Server {
+            "api_error" | "server_error" => Self::Server {
                 status: 500,
                 detail,
             },

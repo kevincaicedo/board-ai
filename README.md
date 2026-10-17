@@ -50,10 +50,19 @@ Your settings live in `~/Library/Application Support/ai.boardai.desktop/settings
 ```bash
 just check         # everything CI runs: lint, types, tests, builds, cargo deny, protocol, file lengths
 just converse      # text-only dev loop against the real talker (Ollama by default); prints ops and latency
-just e2e           # the voice pipeline end to end with no human: a `say` file mic, Whisper, the core, Ollama, the voice
-just live          # real-provider smoke tests (Ollama; Anthropic when ANTHROPIC_API_KEY is set)
+just e2e           # the voice pipeline end to end with no human: a `say` file mic, Whisper, the core, the talker, the voice
+just live          # real-provider smoke tests (Ollama; Anthropic and OpenRouter when their keys are set)
 just audio-probe   # play through VoiceProcessingIO and print playback positions
 just spike-s1      # echo-cancellation spike: run in a quiet room on laptop speakers
+```
+
+**Development keys.** Put the keys the dev tools use in a `.env` file at the repo root (it is gitignored), one `NAME=value` per line: `OPEN_ROUTER_KEY`, `ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`. `just converse`, `just e2e` and `just live` load it into their own environment only (`scripts/with-dev-keys.sh`; a git worktree uses the main checkout's). Never paste a key on a command line. The app never reads keys from the environment, in debug or release builds: paste them on the setup screen, which keeps them in the Keychain.
+
+```bash
+just converse --provider openrouter                       # gpt-oss-120b on Cerebras (the preset)
+just converse --provider openrouter --model qwen/qwen3.8-27b \
+  --script crates/runtime/examples/converse/scripts/barge_in.txt
+just e2e --provider openrouter                            # voice to voice with an OpenRouter talker
 ```
 
 Open the UI alone with `npm --prefix ui run dev`: outside the app it plays the design's demo from a replay file (`?replay=/fixtures/demo.events.jsonl&t=<ms>`).

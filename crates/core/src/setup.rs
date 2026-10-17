@@ -228,8 +228,9 @@ pub struct SetupStatus {
 #[serde(tag = "kind")]
 #[ts(export)]
 pub enum SetupEdit {
-    /// Picks a provider for the talker and the scribe. `model` is the Ollama model to use;
-    /// `None` keeps the current one or picks a found one. Other providers use their defaults.
+    /// Picks a provider for the talker and the scribe. `model` is the talker's model: an Ollama
+    /// model (`None` keeps the current one or picks a found one), or an OpenRouter model id from
+    /// [`ModelListing::OpenRouter`] (`None` is the default preset). Claude uses its defaults.
     Talker {
         provider: TalkerProvider,
         model: Option<String>,
@@ -278,6 +279,100 @@ pub enum DownloadEvent {
     Failed {
         problem: DownloadProblem,
     },
+}
+
+/// What the model picker asks for (`setup_models`, D-153). Lists are bounded and cached by the
+/// app for a while, so asking again is cheap.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum ModelQuery {
+    /// OpenRouter's models that can call tools (BoardAI's talker needs them).
+    OpenRouter,
+    /// The models the local Ollama has.
+    Ollama,
+    /// Who serves one OpenRouter model: its providers, their limits and prices.
+    Providers { model: String },
+}
+
+/// The answer to a [`ModelQuery`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum ModelListing {
+    /// BoardAI's presets first, then the rest in OpenRouter's order. `left_out` counts models
+    /// past the list's bound, or with an id or name too long to keep.
+    OpenRouter {
+        models: Vec<ModelInfo>,
+        left_out: u32,
+    },
+    Ollama {
+        models: Vec<ModelInfo>,
+    },
+    Providers {
+        model: String,
+        providers: Vec<ModelProvider>,
+        left_out: u32,
+    },
+}
+
+/// One model in a picker.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelInfo {
+    /// What settings store and the provider is asked for (`qwen/qwen3.8-27b`, `gemma4:latest`).
+    pub id: String,
+    /// The provider's display name (`Qwen: Qwen3.8 27B`); the id where there is none.
+    pub name: String,
+    pub context_tokens: Option<u32>,
+    /// `None` for local models, or when the provider lists no fixed price.
+    pub price: Option<ModelPrice>,
+    pub reasoning: ModelReasoning,
+    /// A BoardAI preset: measured with its voice and drawing, with a provider route and
+    /// thinking set for speed (D-152). Other models may draw less well or answer more slowly.
+    pub preset: bool,
+}
+
+/// Prices in millionths of a US dollar per million tokens (`240000` is $0.24 per million).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelPrice {
+    #[ts(type = "number")]
+    pub input_micro_usd_per_million_tokens: u64,
+    #[ts(type = "number")]
+    pub output_micro_usd_per_million_tokens: u64,
+}
+
+/// Whether a model thinks before it answers, which costs the voice time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum ModelReasoning {
+    /// The list doesn't say (Ollama's list never does).
+    Unknown,
+    /// The model takes no reasoning setting.
+    Never,
+    /// Thinking can be turned off; BoardAI turns it off for the voice.
+    Optional,
+    /// The model always thinks; BoardAI asks for the least it allows (`low`).
+    Always { least_effort: String },
+}
+
+/// One provider serving an OpenRouter model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModelProvider {
+    /// As OpenRouter shows it (`Cerebras`).
+    pub name: String,
+    /// What a route names it by (`cerebras/fp16`).
+    pub slug: String,
+    pub context_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
+    pub price: Option<ModelPrice>,
+    /// `fp16`, `fp8`, `int4`…, when listed.
+    pub quantization: Option<String>,
+    /// The provider takes tool calls for this model.
+    pub tools: bool,
 }
 
 /// What stands between the screen and a session (D-101): a usable talker, the hearing files,
@@ -335,8 +430,9 @@ const HEARING_FILES: usize = 2;
 mod tests {
     use super::{
         FileState, HarnessesFound, InputDevice, KeyName, KeyState, MicChoice, MicPermission,
-        ModelFileStatus, OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider,
-        TalkerSetup, VoiceEngine, blockers,
+        ModelFileStatus, ModelInfo, ModelListing, ModelPrice, ModelQuery, ModelReasoning,
+        OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider, TalkerSetup,
+        VoiceEngine, blockers,
     };
 
     fn file(id: &str, state: FileState) -> ModelFileStatus {
@@ -473,6 +569,47 @@ mod tests {
             assert!(serde_json::from_str::<SetupEdit>(bad).is_err(), "{bad}");
         }
         assert!(serde_json::from_str::<KeyName>(r#""GitHub""#).is_err());
+    }
+
+    #[test]
+    fn model_queries_from_the_ui_are_parsed_and_unknown_ones_refused() {
+        let providers: Result<ModelQuery, _> =
+            serde_json::from_str(r#"{"kind":"Providers","model":"qwen/qwen3.8-27b"}"#);
+        assert!(matches!(providers, Ok(ModelQuery::Providers { .. })));
+        assert_eq!(
+            serde_json::from_str::<ModelQuery>(r#"{"kind":"OpenRouter"}"#).ok(),
+            Some(ModelQuery::OpenRouter)
+        );
+        for bad in [
+            r#"{"kind":"Anthropic"}"#,
+            r#"{"kind":"Providers"}"#,
+            r#"{"kind":"Providers","model":7}"#,
+        ] {
+            assert!(serde_json::from_str::<ModelQuery>(bad).is_err(), "{bad}");
+        }
+        let listing = ModelListing::OpenRouter {
+            models: vec![ModelInfo {
+                id: "openai/gpt-oss-120b".to_owned(),
+                name: "OpenAI: gpt-oss-120b".to_owned(),
+                context_tokens: Some(131_072),
+                price: Some(ModelPrice {
+                    input_micro_usd_per_million_tokens: 150_000,
+                    output_micro_usd_per_million_tokens: 600_000,
+                }),
+                reasoning: ModelReasoning::Always {
+                    least_effort: "low".to_owned(),
+                },
+                preset: true,
+            }],
+            left_out: 0,
+        };
+        let wire = serde_json::to_value(&listing).unwrap_or_default();
+        assert_eq!(wire["kind"], "OpenRouter");
+        assert_eq!(wire["models"][0]["reasoning"]["kind"], "Always");
+        assert_eq!(
+            wire["models"][0]["price"]["input_micro_usd_per_million_tokens"],
+            150_000
+        );
     }
 
     #[test]

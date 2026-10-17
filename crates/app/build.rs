@@ -7,6 +7,7 @@ fn main() {
         "command",
         "session_log",
         "setup_status",
+        "setup_models",
         "setup_save",
         "setup_key",
         "setup_download",

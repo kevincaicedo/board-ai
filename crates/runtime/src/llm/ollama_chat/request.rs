@@ -60,6 +60,31 @@ impl FrozenRequest {
         }
     }
 
+    /// The warm-up (D-154): the frozen fields with the system prompt and a one-word user
+    /// turn, answered with one token and not streamed. `num_ctx` and `keep_alive` match the
+    /// real requests (a different `num_ctx` would reload the model), so Ollama keeps the model
+    /// loaded and the prompt's prefix cached for the first real request.
+    pub(super) fn warm_up_body(&self) -> Result<Vec<u8>, ProviderError> {
+        let mut fields = self.fields.clone();
+        fields.insert("stream".into(), json!(false));
+        if let Some(Value::Object(options)) = fields.get_mut("options") {
+            options.insert("num_predict".into(), json!(1));
+        }
+        let mut messages = Vec::with_capacity(2);
+        if !self.system_prompt.is_empty() {
+            messages.push(json!({"role": "system", "content": self.system_prompt}));
+        }
+        messages.push(json!({"role": "user", "content": "Hi."}));
+        let body = Body {
+            fields: &fields,
+            messages,
+        };
+        serde_json::to_vec(&body).map_err(|error| ProviderError::InvalidRequest {
+            status: None,
+            detail: error.to_string(),
+        })
+    }
+
     pub(super) fn body(&self, messages: &[Message]) -> Result<Vec<u8>, ProviderError> {
         let mut rendered = Vec::with_capacity(messages.len() + 1);
         if !self.system_prompt.is_empty() {

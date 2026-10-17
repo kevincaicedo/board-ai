@@ -10,8 +10,10 @@ use super::{
     Settings, SettingsError, SttKind, SttSettings, TtsKind, TtsSettings, VoiceSettings,
 };
 use crate::audio::{InputChoice, OutputChoice};
+use crate::limits::OPENROUTER_ROUTE_MAX;
 use crate::limits::{LLM_MAX_TOKENS_MAX, SCRIBE_MAX_TOKENS_DEFAULT, TALKER_MAX_TOKENS_DEFAULT};
 use crate::llm::openai::OLLAMA_BASE_URL;
+use crate::llm::openrouter::{ProviderSlug, RouteError, is_openrouter, parse_route};
 use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
 
 pub(super) const ANTHROPIC_SECRET: &str = "anthropic";
@@ -46,6 +48,7 @@ pub(super) struct RawLlm {
     pub(super) max_tokens: Option<i64>,
     pub(super) base_url: Option<String>,
     pub(super) secret: Option<String>,
+    pub(super) route: Option<Vec<String>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -126,6 +129,7 @@ fn fallback_llm(role: Role) -> LlmSettings {
         max_tokens,
         base_url: None,
         secret: SecretName::parse(ANTHROPIC_SECRET),
+        route: Vec::new(),
     }
 }
 
@@ -224,6 +228,7 @@ fn llm(raw: RawLlm, role: Role) -> Result<LlmSettings, SettingsError> {
             secret,
         ),
     };
+    let route = route(&field("route"), raw.route.as_deref(), base_url.as_deref())?;
     Ok(LlmSettings {
         kind,
         model,
@@ -231,6 +236,31 @@ fn llm(raw: RawLlm, role: Role) -> Result<LlmSettings, SettingsError> {
         max_tokens: max_tokens(&field("max_tokens"), raw.max_tokens, default_max_tokens)?,
         base_url,
         secret,
+        route,
+    })
+}
+
+/// A provider route, which only OpenRouter takes (D-152).
+fn route(
+    field: &str,
+    value: Option<&[String]>,
+    base_url: Option<&str>,
+) -> Result<Vec<ProviderSlug>, SettingsError> {
+    let Some(slugs) = value else {
+        return Ok(Vec::new());
+    };
+    if !base_url.is_some_and(is_openrouter) {
+        return Err(invalid(field, "applies to OpenRouter only"));
+    }
+    parse_route(slugs).map_err(|error| match error {
+        RouteError::TooLong => invalid(
+            field,
+            &format!("names at most {OPENROUTER_ROUTE_MAX} providers"),
+        ),
+        RouteError::BadSlug { index } => invalid(
+            &format!("{field}[{index}]"),
+            "must be a provider slug of lowercase letters, digits, `-`, `_`, `.` or `/`",
+        ),
     })
 }
 

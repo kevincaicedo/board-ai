@@ -22,10 +22,11 @@ files:
     scripts/check-file-length.sh
 
 # Real-provider smoke tests, never part of `check` or CI: Ollama (local), Anthropic when
-# ANTHROPIC_API_KEY is set, and Claude Code / pi with BOARDAI_LIVE_CLAUDE=1 / BOARDAI_LIVE_PI=1
-# (they use your account).
-live:
-    BOARDAI_LIVE=1 cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1
+# ANTHROPIC_API_KEY is set, OpenRouter's presets when OPEN_ROUTER_KEY is set, and Claude Code /
+# pi with BOARDAI_LIVE_CLAUDE=1 / BOARDAI_LIVE_PI=1 (they use your account). Keys come from the
+# gitignored `.env` (scripts/with-dev-keys.sh).
+live *filter:
+    BOARDAI_LIVE=1 scripts/with-dev-keys.sh cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1 {{filter}}
 
 # The ElevenLabs live check, never part of `check`: three short clauses over the realtime
 # WebSocket (the first on a cold connection) and one over HTTP, about 150 characters billed.
@@ -65,13 +66,14 @@ spike-s1 *args:
     cargo run -q -p boardai-runtime --example spike_s1 -- {{args}}
 
 # The voice steel thread end to end, no human (LLD §7): macOS `say` speaks the user's lines into
-# a file mic, and the VAD, Whisper, the core, Ollama, the system voice, the playback clock and
-# the ops run for real (the voice plays silently unless `--output speakers`). Writes
+# a file mic, and the VAD, Whisper, the core, the talker, the system voice, the playback clock
+# and the ops run for real (the voice plays silently unless `--output speakers`). Writes
 # target/e2e/{events,trace}.jsonl and prints the checks and HLD §8 latencies. Needs Ollama with
-# gemma4:latest and `just models silero-vad whisper-base.en`. The vocabulary stands in for the
-# opened repo's symbols, which the app gives Whisper. See `just e2e --help`.
+# gemma4:latest (or `--provider openrouter` and OPEN_ROUTER_KEY in `.env`) and
+# `just models silero-vad whisper-base.en`. The vocabulary stands in for the opened repo's
+# symbols, which the app gives Whisper. See `just e2e --help`.
 e2e *args:
-    cargo run -q --locked -p boardai-runtime --example e2e -- --vocabulary "Redis,Postgres" {{args}}
+    scripts/with-dev-keys.sh cargo run -q --locked -p boardai-runtime --example e2e -- --vocabulary "Redis,Postgres" {{args}}
 
 # Run the desktop app with hot reload.
 dev:
@@ -86,6 +88,8 @@ fmt:
     npm --prefix ui run format
 
 # Text-only dev loop: type to BoardAI, watch the narration, ops and latency marks (no audio).
-# Defaults to Ollama with gemma4:latest; see `just converse --help` for providers and scripts.
+# Defaults to Ollama with gemma4:latest; `--provider openrouter` uses the presets with
+# OPEN_ROUTER_KEY from `.env`. The standard scripts are in crates/runtime/examples/converse/scripts
+# (`--script crates/runtime/examples/converse/scripts/barge_in.txt`); see `just converse --help`.
 converse *ARGS:
-    cargo run --quiet --locked -p boardai-runtime --example converse -- {{ARGS}}
+    scripts/with-dev-keys.sh cargo run --quiet --locked -p boardai-runtime --example converse -- {{ARGS}}

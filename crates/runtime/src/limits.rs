@@ -78,6 +78,55 @@ pub const SCRIBE_MAX_TOKENS_DEFAULT: u32 = 16_000;
 /// a settings error.
 pub const LLM_MAX_TOKENS_MAX: u32 = 128_000;
 
+/// Output budget of an OpenRouter preset talker, reasoning included: ~3,000 spoken words, past
+/// any answer measured. OpenRouter holds credit for the whole budget and routes a low balance
+/// away from Cerebras at 16,000 (LLD §3.3). Crossing it ends the answer with `MaxTokens`.
+pub const OPENROUTER_TALKER_MAX_TOKENS: u32 = 4_096;
+
+/// Providers in an OpenRouter route (`route` in settings, `provider.order` on the wire); a
+/// longer route is a settings error.
+pub const OPENROUTER_ROUTE_MAX: usize = 8;
+
+/// Longest provider slug in a route (`cerebras`, `deepinfra/turbo`); a longer one is a
+/// settings error.
+pub const OPENROUTER_SLUG_MAX_BYTES: usize = 64;
+
+/// Time for a model list (or one model's providers) to arrive whole; past it, `Network`.
+pub const MODEL_LIST_TIMEOUT_MS: u64 = 8_000;
+
+/// Largest model list read (OpenRouter's was 665 KB in 2026-10); past it, `BadOutput`.
+pub const MODEL_LIST_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Models kept from one list (OpenRouter listed 372); the rest are counted in `left_out`.
+pub const MODEL_LIST_MODELS_MAX: usize = 1_000;
+
+/// Largest list of one model's providers (21–25 KB for the presets); past it, `BadOutput`.
+pub const MODEL_PROVIDERS_MAX_BYTES: usize = 512 * 1024;
+
+/// Providers kept for one model; the rest are counted in `left_out`.
+pub const MODEL_PROVIDERS_MAX: usize = 64;
+
+/// Longest model id, display name, provider name or slug kept from a list; an entry with a
+/// longer id or name is left out and counted, a longer optional field is dropped.
+pub const MODEL_TEXT_MAX_BYTES: usize = 200;
+
+/// How long a fetched list is reused before the next ask fetches it again. Lists and prices
+/// change rarely; a picker opened twice in a session asks OpenRouter once.
+pub const MODEL_LIST_CACHE_MS: u64 = 10 * 60 * 1_000;
+
+/// How long Ollama's model list is reused: it changes as soon as a model is pulled.
+pub const OLLAMA_LIST_CACHE_MS: u64 = 5_000;
+
+/// Models whose provider lists are cached at once; asking for one more forgets the oldest.
+pub const MODEL_PROVIDERS_CACHED_MAX: usize = 32;
+
+/// Time the talker's warm-up at session open may take (a cold Ollama: ~4 s load, ~3 s
+/// prefill); past it the warm-up is dropped and the first request does the rest.
+pub const TALKER_WARM_UP_TIMEOUT_MS: u64 = 30_000;
+
+/// Bytes of a warm-up's answer that are read; the rest is dropped with the connection.
+pub const TALKER_WARM_UP_MAX_BYTES: usize = 64 * 1024;
+
 // ---------------------------------------------------------------------------------------------
 // Repo tools (owner: runtime::tools)
 

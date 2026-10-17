@@ -1,0 +1,6 @@
+data: {"id":"gen-3","object":"chat.completion.chunk","created":1792195434,"model":"qwen/qwen3.8-27b","provider":"Cerebras","choices":[{"index":0,"delta":{"content":"A load balancer","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-3","object":"chat.completion.chunk","created":1792195434,"model":"qwen/qwen3.8-27b","provider":"Cerebras","error":{"code":"server_error","message":"Provider disconnected unexpectedly"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+

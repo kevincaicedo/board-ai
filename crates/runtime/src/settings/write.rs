@@ -55,12 +55,20 @@ fn llm(out: &mut String, name: &str, raw: &RawLlm) {
         ("base_url", raw.base_url.as_deref()),
         ("secret", raw.secret.as_deref()),
     ];
-    let set = table(out, name, &fields);
+    let mut set = table(out, name, &fields);
     if let Some(tokens) = raw.max_tokens {
         if !set {
             let _ = writeln!(out, "\n[{name}]");
+            set = true;
         }
         let _ = writeln!(out, "max_tokens = {tokens}");
+    }
+    if let Some(route) = &raw.route {
+        if !set {
+            let _ = writeln!(out, "\n[{name}]");
+        }
+        let items: Vec<String> = route.iter().map(|slug| quoted(slug)).collect();
+        let _ = writeln!(out, "route = [{}]", items.join(", "));
     }
 }
 
@@ -147,6 +155,11 @@ effort = "none"
 max_tokens = 4000
 
 [scribe]
+kind = "openai_compatible"
+model = "qwen/qwen3.8-27b"
+base_url = "https://openrouter.ai/api/v1"
+secret = "openrouter"
+route = ["cerebras", "deepinfra/turbo"]
 max_tokens = 2000
 
 [stt]

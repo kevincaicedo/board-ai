@@ -3,6 +3,8 @@
 //!
 //! - Ollama: a running server with `BOARDAI_LIVE_OLLAMA_MODEL` (default `qwen3.5:2b`).
 //! - Anthropic: `ANTHROPIC_API_KEY` in the environment.
+//! - OpenRouter: `OPEN_ROUTER_KEY` (or `OPENROUTER_API_KEY`); the presets on their route, and
+//!   the first token cold, on a warm connection, and after the session warm-up (D-154).
 //! - Claude Code and pi: `BOARDAI_LIVE_CLAUDE=1` / `BOARDAI_LIVE_PI=1`, since they use your
 //!   account. `BOARDAI_LIVE_CAPTURE=<file>` saves Claude Code's raw stream-json.
 #![allow(clippy::expect_used, reason = "smoke tests fail loudly")]
@@ -24,11 +26,15 @@ use boardai_runtime::harness::{
     discover_from_environment,
 };
 use boardai_runtime::llm::anthropic::{AnthropicOptions, AnthropicProvider};
-use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OpenAiCompatibleProvider, OpenAiOptions};
+use boardai_runtime::llm::openai::{
+    Dialect, OLLAMA_BASE_URL, OPENROUTER_BASE_URL, OpenAiCompatibleProvider, OpenAiOptions,
+};
+use boardai_runtime::llm::openrouter::{PRESETS, Preset};
 use boardai_runtime::llm::{
     ChatEvent, ChatStream, Effort, LlmProvider, LlmRole, TalkerConfig, ToolSpec,
 };
-use boardai_runtime::settings::Secret;
+use boardai_runtime::session::talker_from_settings;
+use boardai_runtime::settings::{LlmKind, LlmSettings, MemorySecretStore, Secret, SecretName};
 use futures_util::StreamExt;
 use serde_json::json;
 use support::TempFolder;
@@ -109,6 +115,7 @@ fn ollama(tools: Vec<ToolSpec>) -> OpenAiCompatibleProvider {
             api_key: None,
             clock: Arc::new(MonotonicClock::start()),
             policy: None,
+            dialect: Dialect::Standard,
         },
     )
     .expect("provider builds")
@@ -288,4 +295,141 @@ async fn pi_answers_a_read_only_question() {
         matches!(events.last(), Some(HarnessEvent::Finished { .. })),
         "{events:?}"
     );
+}
+
+fn open_router_key() -> Option<Secret> {
+    ["OPEN_ROUTER_KEY", "OPENROUTER_API_KEY"]
+        .iter()
+        .find_map(|variable| std::env::var(variable).ok().filter(|key| !key.is_empty()))
+        .map(|key| Secret::new(key.trim().to_owned()))
+}
+
+/// The talker the app builds for a preset: BoardAI's real system prompt and tools.
+fn open_router_talker(preset: Preset, key: &Secret) -> Arc<dyn LlmProvider> {
+    let name = SecretName::parse("openrouter").expect("a name");
+    let mut secrets = MemorySecretStore::new();
+    secrets.insert(name.clone(), key.clone());
+    let settings = LlmSettings {
+        kind: LlmKind::OpenAiCompatible,
+        model: preset.model.to_owned(),
+        effort: preset.talker.effort,
+        // OpenRouter holds back credit for every request's whole output budget while it runs;
+        // these answers are only timed, so a short budget keeps a low balance from refusing.
+        max_tokens: 600,
+        base_url: Some(OPENROUTER_BASE_URL.to_owned()),
+        secret: Some(name),
+        route: preset.route(),
+    };
+    talker_from_settings(&settings, &secrets, Arc::new(MonotonicClock::start()))
+        .expect("talker builds")
+}
+
+/// Time to the first text or tool call. The answer is read to its end: a dropped stream may
+/// keep running (and holding credit) at a provider that can't cancel.
+async fn first_token_ms(talker: &dyn LlmProvider, question: &str) -> u128 {
+    let started = Instant::now();
+    let mut first = None;
+    let mut stream = talker.stream(&ask(question), CancelToken::new());
+    while let Some(item) = stream.next().await {
+        match item.unwrap_or_else(|error| panic!("{question}: {error}")) {
+            ChatEvent::TextDelta(_) | ChatEvent::ToolCall(_) => {
+                first.get_or_insert_with(|| started.elapsed().as_millis());
+            }
+            ChatEvent::Done { .. } => break,
+        }
+    }
+    first.unwrap_or_else(|| panic!("{question}: no first token"))
+}
+
+#[tokio::test]
+#[ignore = "live: run with `just live`"]
+async fn openrouter_presets_answer_and_call_tools() {
+    if !enabled("BOARDAI_LIVE") {
+        return;
+    }
+    let Some(key) = open_router_key() else {
+        println!("skipped: OPEN_ROUTER_KEY is not set");
+        return;
+    };
+    for preset in PRESETS {
+        let config = TalkerConfig {
+            role: LlmRole::Talker,
+            model: preset.model.to_owned(),
+            effort: preset.talker.effort,
+            max_tokens: 400,
+            system_prompt: "You are a concise tutor. Answer in one short sentence.".into(),
+            tools: vec![read_file_tool()],
+        };
+        let provider = OpenAiCompatibleProvider::new(
+            &config,
+            OpenAiOptions {
+                base_url: OPENROUTER_BASE_URL.into(),
+                api_key: Some(key.clone()),
+                clock: Arc::new(MonotonicClock::start()),
+                policy: None,
+                dialect: Dialect::OpenRouter {
+                    route: preset.route(),
+                },
+            },
+        )
+        .expect("provider builds");
+        let label = format!("{} text", preset.model);
+        let stream = provider.stream(&ask("What is a load balancer?"), CancelToken::new());
+        let events = measure(&label, stream).await;
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, ChatEvent::TextDelta(_)))
+        );
+        let label = format!("{} tool", preset.model);
+        let ask_tool = ask("Use the read_file tool to read src/main.rs.");
+        let events = measure(&label, provider.stream(&ask_tool, CancelToken::new())).await;
+        let call = events.iter().find_map(|event| match event {
+            ChatEvent::ToolCall(invocation) => Some(invocation.call.clone()),
+            ChatEvent::TextDelta(_) | ChatEvent::Done { .. } => None,
+        });
+        assert!(
+            matches!(call, Some(Ok(ToolCall::ReadFile { ref path, .. })) if path.ends_with("main.rs")),
+            "{call:?}"
+        );
+    }
+}
+
+/// What the session warm-up buys on OpenRouter (D-154): the first token of BoardAI's real
+/// prompt from a fresh process-like talker (cold connection), from the same talker again (warm
+/// connection, provider cache), and from a fresh talker after its warm-up.
+#[tokio::test]
+#[ignore = "live: run with `just live`"]
+async fn openrouter_first_token_cold_warm_and_after_the_warm_up() {
+    if !enabled("BOARDAI_LIVE") {
+        return;
+    }
+    let Some(key) = open_router_key() else {
+        println!("skipped: OPEN_ROUTER_KEY is not set");
+        return;
+    };
+    // Shows who served each answer (`served_by`), to tell a slow Cerebras from a fallback.
+    let _ = boardai_runtime::logging::init_stderr(tracing::Level::DEBUG);
+    let rounds = std::env::var("BOARDAI_LIVE_ROUNDS")
+        .ok()
+        .and_then(|rounds| rounds.parse().ok())
+        .unwrap_or(3_usize);
+    let question = "How does a request get from the browser to our database?";
+    for preset in PRESETS {
+        for round in 1..=rounds {
+            let cold = open_router_talker(preset, &key);
+            let cold_ms = first_token_ms(cold.as_ref(), question).await;
+            let warm_ms = first_token_ms(cold.as_ref(), question).await;
+            let warmed = open_router_talker(preset, &key);
+            let started = Instant::now();
+            let warm_up = warmed.warm_up().expect("OpenRouter warms up").await;
+            let warm_up_ms = started.elapsed().as_millis();
+            let after_ms = first_token_ms(warmed.as_ref(), question).await;
+            println!(
+                "{} round {round}: cold {cold_ms} ms, warm connection {warm_ms} ms, warm-up \
+                 {warm_up_ms} ms ({warm_up:?}) then {after_ms} ms",
+                preset.model
+            );
+        }
+    }
 }

@@ -1,0 +1,2 @@
+# A sequence diagram (D-120).
+Explain the TCP handshake as a sequence diagram.

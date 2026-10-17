@@ -26,7 +26,7 @@ use super::{
 use crate::bridge::{UiSink, UiSinkClosed};
 use crate::cancel::CancelToken;
 use crate::clock::TokioClock;
-use crate::llm::{ChatEvent, ChatStream, LlmCapabilities, LlmProvider, Usage};
+use crate::llm::{ChatEvent, ChatStream, LlmCapabilities, LlmProvider, Usage, WarmUp};
 use crate::tools::RepoTools;
 
 const DEMO: &str = concat!(
@@ -53,6 +53,10 @@ struct ScriptedTalker {
     replies: Mutex<VecDeque<Option<Reply>>>,
     requests: Mutex<Vec<Conversation>>,
     dropped: Arc<AtomicUsize>,
+    /// Warm-ups asked for; each never finishes, like a cold model loading.
+    warms_up: bool,
+    warm_ups: Arc<AtomicUsize>,
+    warm_ups_dropped: Arc<AtomicUsize>,
 }
 
 impl ScriptedTalker {
@@ -104,6 +108,19 @@ impl LlmProvider for ScriptedTalker {
             tools: true,
             server_side_fallback: false,
         }
+    }
+
+    fn warm_up(&self) -> Option<WarmUp> {
+        if !self.warms_up {
+            return None;
+        }
+        self.warm_ups.fetch_add(1, Ordering::SeqCst);
+        let guard = DropCount(Arc::clone(&self.warm_ups_dropped));
+        Some(Box::pin(async move {
+            let _keep = guard;
+            std::future::pending::<()>().await;
+            Ok(())
+        }))
     }
 
     fn stream(&self, conversation: &Conversation, _cancel: CancelToken) -> ChatStream {
@@ -388,3 +405,4 @@ async fn close(harness: Harness) -> (SessionStats, Arc<Recorder>, Arc<ScriptedTa
 mod flow;
 mod lifecycle;
 mod live;
+mod warm_up;

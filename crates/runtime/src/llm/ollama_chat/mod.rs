@@ -13,6 +13,7 @@
 //! [`OLLAMA_KEEP_ALIVE_SECONDS`]: crate::limits::OLLAMA_KEEP_ALIVE_SECONDS
 
 mod decode;
+mod maybe;
 mod request;
 
 use std::sync::Arc;
@@ -23,11 +24,15 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use self::decode::OllamaDecoder;
 use self::request::FrozenRequest;
 use super::error::ProviderError;
-use super::http::{RequestSpec, build_client, endpoint};
+use super::http::{RequestSpec, build_client, endpoint, post_and_drain};
+use super::ollama::ollama_root;
 use super::session::{self, Framing, SessionParts};
-use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig};
+use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig, WarmUp};
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
+use crate::limits::TALKER_WARM_UP_MAX_BYTES;
+
+pub use maybe::MaybeOllama;
 
 /// Ollama's port when it runs as installed.
 const OLLAMA_PORT: u16 = 11434;
@@ -97,17 +102,27 @@ impl LlmProvider for OllamaChatProvider {
         };
         session::open(parts, OllamaDecoder::default(), cancel)
     }
+
+    /// Loads the model with the session's context window (~4 s cold) and prefills the system
+    /// prompt and tools (~3 s), which the first answer would otherwise wait for (D-154). The
+    /// prefill is reused only by a model whose cache can be cut back to a shared prefix
+    /// (qwen3.5:2b: 2.4 s → 0.6 s); gemma4's sliding-window cache can't, so for it only the
+    /// load is saved. Dropped when the first real request starts.
+    fn warm_up(&self) -> Option<WarmUp> {
+        let request = self.frozen.warm_up_body().map(|body| RequestSpec {
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            body,
+        });
+        let client = self.client.clone();
+        Some(Box::pin(async move {
+            post_and_drain(client, request?, TALKER_WARM_UP_MAX_BYTES).await
+        }))
+    }
 }
 
-/// The native API's root for an OpenAI-compatible Ollama URL: `…:11434/v1` → `…:11434`.
-fn ollama_root(base_url: &str) -> &str {
-    let trimmed = base_url.trim_end_matches('/');
-    trimmed.strip_suffix("/v1").unwrap_or(trimmed)
-}
-
-/// Whether an OpenAI-compatible base URL is Ollama as installed: port 11434 on this machine.
-/// Ollama elsewhere, or on another port, keeps the OpenAI-compatible adapter (and Ollama's
-/// 4,096-token default context).
+/// Whether an OpenAI-compatible base URL is Ollama as installed: port 11434 on this machine,
+/// which gets the native API without asking. Any other server is probed ([`MaybeOllama`]).
 #[must_use]
 pub fn is_local_ollama(base_url: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(base_url) else {

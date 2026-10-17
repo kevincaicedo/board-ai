@@ -1,7 +1,7 @@
 //! `just e2e`: the voice steel thread with real audio and no human (LLD §7). Lines spoken by
 //! macOS `say` play into the mic ring in real time through a file mic, and everything after is
 //! the app's own pipeline: Silero VAD and Whisper, the core, the talker (Ollama, gemma4 by
-//! default), speech out (the system voice or Kokoro), the playback clock, ops.
+//! default; or an OpenRouter preset), speech out (the system voice or Kokoro), the playback clock, ops.
 //!
 //! The voice plays through a null output (real time, nothing heard) unless `--output speakers`.
 //! The run records `events.jsonl` (replay it in the UI with `?replay=`) and `trace.jsonl`, then
@@ -31,7 +31,11 @@ usage: just e2e [options]
   --out <folder>      where clips, events.jsonl and trace.jsonl go; default target/e2e
   --voice system|kokoro   BoardAI's voice; default system
   --output null|speakers  default null (real time, silent)
-  --model <name>      the Ollama model; default gemma4:latest
+  --provider ollama|openrouter  the talker; default ollama (local)
+  --model <name>      default gemma4:latest (ollama), openai/gpt-oss-120b (openrouter; the
+                      presets keep their thinking and route, D-152)
+  --route <a,b|none>  OpenRouter providers to try first; default the preset's (cerebras)
+  --max-tokens <n>    the talker's output budget; default the preset's (4096 on OpenRouter)
   --say-voice <name>  the macOS voice speaking the user's lines; default the system's
   --vocabulary <a,b>  terms Whisper should expect, as the app gives it the repo's symbols
   --repo <folder>     take Whisper's vocabulary from this repo's symbols, as the app does
@@ -55,13 +59,23 @@ pub enum Output {
     Speakers,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Provider {
+    Ollama,
+    /// Needs `OPEN_ROUTER_KEY` (or `OPENROUTER_API_KEY`) in the environment.
+    OpenRouter,
+}
+
 #[derive(Clone, Debug)]
 pub struct Args {
     pub script: String,
     pub out: PathBuf,
     pub voice: Voice,
     pub output: Output,
-    pub model: String,
+    pub provider: Provider,
+    pub model: Option<String>,
+    pub route: Option<String>,
+    pub max_tokens: Option<u32>,
     pub say_voice: Option<String>,
     pub vocabulary: Vec<String>,
     pub repo: Option<PathBuf>,
@@ -74,7 +88,10 @@ fn args() -> Result<Args, String> {
         out: PathBuf::from("target/e2e"),
         voice: Voice::System,
         output: Output::Null,
-        model: "gemma4:latest".to_owned(),
+        provider: Provider::Ollama,
+        model: None,
+        route: None,
+        max_tokens: None,
         say_voice: None,
         vocabulary: Vec::new(),
         repo: None,
@@ -96,20 +113,29 @@ fn args() -> Result<Args, String> {
             }
             "--out" => args.out = PathBuf::from(value),
             "--voice" => {
-                args.voice = match value.as_str() {
-                    "system" => Voice::System,
-                    "kokoro" => Voice::Kokoro,
-                    other => return Err(format!("unknown voice {other}")),
-                }
+                let voices = [("system", Voice::System), ("kokoro", Voice::Kokoro)];
+                args.voice = one_of("voice", &value, &voices)?;
             }
             "--output" => {
-                args.output = match value.as_str() {
-                    "null" => Output::Null,
-                    "speakers" => Output::Speakers,
-                    other => return Err(format!("unknown output {other}")),
-                }
+                let outputs = [("null", Output::Null), ("speakers", Output::Speakers)];
+                args.output = one_of("output", &value, &outputs)?;
             }
-            "--model" => args.model = value,
+            "--provider" => {
+                let providers = [
+                    ("ollama", Provider::Ollama),
+                    ("openrouter", Provider::OpenRouter),
+                ];
+                args.provider = one_of("provider", &value, &providers)?;
+            }
+            "--model" => args.model = Some(value),
+            "--route" => args.route = Some(value),
+            "--max-tokens" => {
+                args.max_tokens = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("bad --max-tokens {value}"))?,
+                );
+            }
             "--say-voice" => args.say_voice = Some(value),
             "--vocabulary" => {
                 args.vocabulary = value
@@ -122,6 +148,15 @@ fn args() -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+/// The option named `value` among `options`.
+fn one_of<T: Copy>(what: &str, value: &str, options: &[(&str, T)]) -> Result<T, String> {
+    options
+        .iter()
+        .find(|(name, _)| *name == value)
+        .map(|(_, option)| *option)
+        .ok_or_else(|| format!("unknown {what} {value}"))
 }
 
 /// Marks the run finished when dropped.

@@ -15,7 +15,8 @@ use boardai_core::input::StopReason;
 use boardai_core::tools::ToolCall;
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::FakeClock;
-use boardai_runtime::llm::openai::{OpenAiCompatibleProvider, OpenAiOptions};
+use boardai_runtime::llm::openai::{Dialect, OpenAiCompatibleProvider, OpenAiOptions};
+use boardai_runtime::llm::openrouter::ProviderSlug;
 use boardai_runtime::llm::{
     ChatEvent, Effort, LlmProvider, LlmRole, ProviderError, RetryPolicy, TalkerConfig, ToolSpec,
 };
@@ -40,6 +41,14 @@ fn config() -> TalkerConfig {
 }
 
 fn provider(server: &TestServer, api_key: Option<&str>) -> OpenAiCompatibleProvider {
+    provider_in(server, api_key, Dialect::Standard)
+}
+
+fn provider_in(
+    server: &TestServer,
+    api_key: Option<&str>,
+    dialect: Dialect,
+) -> OpenAiCompatibleProvider {
     OpenAiCompatibleProvider::new(
         &config(),
         OpenAiOptions {
@@ -51,6 +60,7 @@ fn provider(server: &TestServer, api_key: Option<&str>) -> OpenAiCompatibleProvi
                 idle_timeout: Duration::from_secs(5),
                 backoff_base: Duration::from_millis(10),
             }),
+            dialect,
         },
     )
     .expect("provider builds")
@@ -167,13 +177,128 @@ async fn length_without_done_marker_is_max_tokens() {
 }
 
 #[tokio::test]
-async fn an_error_chunk_is_a_provider_error() {
+async fn an_upstream_error_before_the_first_token_is_retried_in_its_category() {
+    // `{"error":{"code":502}}`: OpenRouter's upstream failed before anything was said, which is
+    // retried like an HTTP 502. The test server answers the retries with 500s.
     let (server, events) = serve("openai/error_chunk.sse").await;
     assert!(matches!(
         events.last(),
-        Some(Err(ProviderError::Provider { .. }))
+        Some(Err(ProviderError::Server { status: 500, .. }))
+    ));
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn an_error_after_text_is_never_retried() {
+    let server = TestServer::start(vec![Scripted::sse(
+        &fixture("openai/openrouter_error_mid_stream.sse"),
+        3,
+    )])
+    .await;
+    let events: Vec<_> = provider_in(&server, None, open_router(&["cerebras"]))
+        .stream(&question(), CancelToken::new())
+        .collect()
+        .await;
+    assert_eq!(text_of(&events), "A load balancer");
+    assert!(matches!(
+        events.last(),
+        Some(Err(ProviderError::Server { status: 500, .. }))
     ));
     assert_eq!(server.requests().len(), 1);
+}
+
+fn open_router(route: &[&str]) -> Dialect {
+    Dialect::OpenRouter {
+        route: route
+            .iter()
+            .map(|slug| ProviderSlug::parse(slug).expect("slug"))
+            .collect(),
+    }
+}
+
+/// A real gpt-oss-120b answer through OpenRouter (Cerebras, `reasoning.effort = "low"`,
+/// recorded 2026-10-16): the reasoning deltas are never spoken.
+#[tokio::test]
+async fn openrouter_reasoning_is_never_spoken() {
+    let server = TestServer::start(vec![Scripted::sse(
+        &fixture("openai/openrouter_gpt_oss_text.sse"),
+        4,
+    )])
+    .await;
+    let events: Vec<_> = provider_in(&server, Some("sk-or-test"), open_router(&["cerebras"]))
+        .stream(&question(), CancelToken::new())
+        .collect()
+        .await;
+    assert_eq!(
+        text_of(&events),
+        "A load balancer distributes incoming network traffic across multiple servers to \
+         improve performance and reliability."
+    );
+    let Some(Ok(ChatEvent::Done { stop, usage, raw })) = events.last() else {
+        panic!("expected Done, got {events:?}");
+    };
+    assert_eq!(*stop, StopReason::EndTurn);
+    assert_eq!((usage.input_tokens, usage.output_tokens), (147, 33));
+    assert_eq!(usage.cache_read_input_tokens, 0);
+    let raw: Value = serde_json::from_str(&raw.as_ref().expect("raw").content_json).expect("json");
+    assert_eq!(raw.get("reasoning"), None);
+}
+
+/// A real Qwen3.8 27B tool call through OpenRouter (Cerebras, thinking off, recorded
+/// 2026-10-16).
+#[tokio::test]
+async fn openrouter_tool_calls_parse() {
+    let server = TestServer::start(vec![Scripted::sse(
+        &fixture("openai/openrouter_qwen_tool.sse"),
+        2,
+    )])
+    .await;
+    let events: Vec<_> = provider_in(&server, None, open_router(&[]))
+        .stream(&question(), CancelToken::new())
+        .collect()
+        .await;
+    assert_eq!(
+        calls(&events),
+        [ToolCall::ReadFile {
+            path: "src/main.rs".into(),
+            start_line: None,
+            end_line: None
+        }]
+    );
+    assert_eq!(stop(&events), StopReason::ToolUse);
+}
+
+/// OpenRouter's documented request fields (D-152): `reasoning.effort` instead of
+/// `reasoning_effort`, and a route as `provider.order` with no fallbacks, whose providers
+/// must take every parameter.
+#[tokio::test]
+async fn openrouter_requests_carry_reasoning_and_the_route() {
+    let server = TestServer::start(vec![
+        Scripted::sse(&fixture("openai/openrouter_gpt_oss_text.sse"), 1),
+        Scripted::sse(&fixture("openai/openrouter_gpt_oss_text.sse"), 1),
+    ])
+    .await;
+    let routed = provider_in(&server, None, open_router(&["cerebras", "groq"]));
+    let _: Vec<_> = routed
+        .stream(&question(), CancelToken::new())
+        .collect()
+        .await;
+    let unrouted = provider_in(&server, None, open_router(&[]));
+    let _: Vec<_> = unrouted
+        .stream(&question(), CancelToken::new())
+        .collect()
+        .await;
+    let requests = server.requests();
+    let body = requests[0].json();
+    assert_eq!(body["reasoning"], json!({"effort": "low", "exclude": true}));
+    assert_eq!(body.get("reasoning_effort"), None);
+    assert_eq!(
+        body["provider"],
+        json!({"order": ["cerebras", "groq"], "allow_fallbacks": false, "require_parameters": true})
+    );
+    let body = requests[1].json();
+    assert_eq!(body["reasoning"], json!({"effort": "low", "exclude": true}));
+    assert_eq!(body.get("provider"), None);
 }
 
 #[tokio::test]
@@ -214,6 +339,8 @@ async fn the_request_uses_chat_completions_shapes() {
     let body = request.json();
     assert_eq!(body["stream_options"], json!({"include_usage": true}));
     assert_eq!(body["reasoning_effort"], "low");
+    assert_eq!(body.get("reasoning"), None);
+    assert_eq!(body.get("provider"), None);
     assert_eq!(body["tool_choice"], "auto");
     assert_eq!(body["tools"][0]["function"]["name"], "read_file");
     assert_eq!(

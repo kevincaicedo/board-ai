@@ -1,5 +1,7 @@
 //! OpenAI-compatible chat completions (`/v1/chat/completions`, streaming): OpenRouter, Ollama
-//! (`http://localhost:11434/v1`), LM Studio and similar servers (LLD §3.3).
+//! (`http://localhost:11434/v1`), LM Studio and similar servers (LLD §3.3). OpenRouter's
+//! requests differ in two fields ([`Dialect::OpenRouter`]): a provider route and its
+//! `reasoning` object.
 
 mod decode;
 mod request;
@@ -12,11 +14,13 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValu
 use self::decode::OpenAiDecoder;
 use self::request::FrozenRequest;
 use super::error::ProviderError;
-use super::http::{RequestSpec, build_client, endpoint};
+use super::http::{RequestSpec, build_client, endpoint, post_and_drain};
+use super::openrouter::ProviderSlug;
 use super::session::{self, Framing, SessionParts};
-use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig};
+use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig, WarmUp};
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
+use crate::limits::TALKER_WARM_UP_MAX_BYTES;
 use crate::settings::Secret;
 
 /// Ollama's OpenAI-compatible endpoint on its default port.
@@ -32,6 +36,19 @@ pub struct OpenAiOptions {
     pub api_key: Option<Secret>,
     pub clock: Arc<dyn Clock>,
     pub policy: Option<RetryPolicy>,
+    pub dialect: Dialect,
+}
+
+/// What the server makes of the request's extra fields.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Dialect {
+    /// Any OpenAI-compatible server: effort goes out as `reasoning_effort`.
+    #[default]
+    Standard,
+    /// OpenRouter: effort goes out as `reasoning.effort`, and a route as `provider.order`
+    /// with no fallbacks: only the route's providers, in order (D-152). An empty route leaves
+    /// the choice to OpenRouter.
+    OpenRouter { route: Vec<ProviderSlug> },
 }
 
 #[derive(Debug)]
@@ -40,6 +57,10 @@ pub struct OpenAiCompatibleProvider {
     url: String,
     headers: HeaderMap,
     frozen: FrozenRequest,
+    /// The provider a route asks for first, to notice when OpenRouter served another.
+    expected: Option<ProviderSlug>,
+    /// Whether a session's first request is worth readying (OpenRouter, D-154).
+    warms_up: bool,
     policy: RetryPolicy,
     clock: Arc<dyn Clock>,
 }
@@ -50,7 +71,12 @@ impl OpenAiCompatibleProvider {
             client: build_client()?,
             url: endpoint(&options.base_url, "chat/completions")?,
             headers: headers(options.api_key.as_ref())?,
-            frozen: FrozenRequest::new(config),
+            frozen: FrozenRequest::new(config, &options.dialect),
+            expected: match &options.dialect {
+                Dialect::Standard => None,
+                Dialect::OpenRouter { route } => route.first().cloned(),
+            },
+            warms_up: matches!(options.dialect, Dialect::OpenRouter { .. }),
             policy: options
                 .policy
                 .unwrap_or_else(|| RetryPolicy::for_role(config.role)),
@@ -85,7 +111,22 @@ impl LlmProvider for OpenAiCompatibleProvider {
             provider: "openai_compatible",
             framing: Framing::Sse,
         };
-        session::open(parts, OpenAiDecoder::default(), cancel)
+        session::open(parts, OpenAiDecoder::new(self.expected.clone()), cancel)
+    }
+
+    fn warm_up(&self) -> Option<WarmUp> {
+        if !self.warms_up {
+            return None;
+        }
+        let request = self.frozen.warm_up_body().map(|body| RequestSpec {
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            body,
+        });
+        let client = self.client.clone();
+        Some(Box::pin(async move {
+            post_and_drain(client, request?, TALKER_WARM_UP_MAX_BYTES).await
+        }))
     }
 }
 
