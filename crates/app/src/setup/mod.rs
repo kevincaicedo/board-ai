@@ -20,9 +20,11 @@ mod tests;
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use boardai_core::setup::{KeyName, KeyState, OllamaStatus, SetupEdit, TalkerProvider};
+use boardai_core::setup::{
+    KeyName, KeyState, OllamaStatus, SetupEdit, TalkerProvider, VoiceEngine,
+};
 use boardai_runtime::llm::catalog::{ModelCatalog, OpenRouterModelId};
 use boardai_runtime::settings::{SecretStore, Settings, SettingsEdit, TtsKind};
 use tauri::{AppHandle, Manager};
@@ -36,9 +38,9 @@ use keys::KeyLedger;
 /// What the setup commands share.
 #[derive(Default)]
 pub struct SetupState {
-    /// Serializes read-modify-write of `settings.toml`. Locked only inside a blocking task,
-    /// never across an await.
-    settings: Arc<Mutex<()>>,
+    /// Serializes read-modify-write of `settings.toml`, and guards whether a change may land
+    /// ([`SettingsGate`]). Locked only inside a blocking task, never across an await.
+    settings: Arc<Mutex<SettingsGate>>,
     downloads: Downloads,
     /// The last Ollama answer, so a save doesn't wait on the probe again.
     // Held only to read or replace the value.
@@ -51,9 +53,6 @@ pub struct SetupState {
     harness_versions: Arc<HarnessVersions>,
     /// The session was started (at launch, or by finishing setup); it starts once.
     started: AtomicBool,
-    /// A choice or a key was saved while the session runs (the screen opened as settings):
-    /// finishing restarts the session so it takes effect.
-    changed: AtomicBool,
 }
 
 impl SetupState {
@@ -69,18 +68,52 @@ impl SetupState {
     fn claim_start(&self) -> bool {
         !self.started.swap(true, Ordering::SeqCst)
     }
+}
 
-    /// Something was saved; it matters only once the session runs.
-    fn mark_changed(&self) {
-        if self.started() {
-            self.changed.store(true, Ordering::SeqCst);
-        }
-    }
+/// What the settings lock guards besides the file: whether a change may land, and whether one
+/// did since the session last started. Both change only under the lock, so a save and
+/// "Back to talking" can't interleave between the start rule's check and the session reading
+/// its settings.
+#[derive(Debug, Default)]
+pub struct SettingsGate {
+    /// "Start talking" or leaving the settings page is checking the start rule and starting
+    /// the session: every change is refused until the new session has read its settings.
+    finishing: bool,
+    /// A choice, key or folder was saved since the session last started; finishing restarts it
+    /// so the change takes effect (D-103). Before the first start it means nothing.
+    changed: bool,
+}
 
-    /// Whether something was saved since the last restart, clearing it.
-    fn take_changed(&self) -> bool {
-        self.changed.swap(false, Ordering::SeqCst)
+/// Why a change is refused while the session starts.
+pub const FINISHING_REFUSAL: &str =
+    "BoardAI is starting a session with your settings. Try again in a moment.";
+
+/// The settings lock for a change: refused while finishing.
+fn hold_for_change(lock: &Mutex<SettingsGate>) -> Result<MutexGuard<'_, SettingsGate>, String> {
+    let held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    if held.finishing {
+        return Err(FINISHING_REFUSAL.to_owned());
     }
+    Ok(held)
+}
+
+/// Finishing begins: changes are refused from here on. Returns whether something was saved
+/// since the last start (and forgets it); refused while another finish runs. Blocks (the lock).
+pub fn begin_finishing(lock: &Mutex<SettingsGate>) -> Result<bool, String> {
+    let mut held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    if held.finishing {
+        return Err("BoardAI is already starting the session.".to_owned());
+    }
+    held.finishing = true;
+    Ok(std::mem::take(&mut held.changed))
+}
+
+/// Finishing is over: changes land again. `unapplied` keeps a change the finish didn't apply
+/// (a blocker kept the page open), so the next one does. Blocks (the lock).
+pub fn end_finishing(lock: &Mutex<SettingsGate>, unapplied: bool) {
+    let mut held = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    held.finishing = false;
+    held.changed |= unapplied;
 }
 
 /// At launch: start the session when setup was finished, else leave the window to the
@@ -90,7 +123,7 @@ pub fn launch(app: &AppHandle) {
     let state = app.state::<SetupState>();
     if complete || crate::dev::skips_setup() {
         if state.claim_start() {
-            crate::session::start(app);
+            crate::session::start_soon(app);
         }
     } else {
         tracing::info!("first run: the session starts after setup");
@@ -116,12 +149,17 @@ pub struct Known<'a> {
     pub catalog: &'a ModelCatalog,
     /// The input devices macOS lists now.
     pub devices: &'a [String],
+    /// What the Keychain answered this run, by name.
+    pub keys: &'a KeyLedger,
+    /// A session runs: a key is taken from `keys` rather than read again (D-171).
+    pub session_runs: bool,
 }
 
-/// Saves one edit to `settings.toml`. Blocks (file I/O, maybe the Keychain).
+/// Saves one edit to `settings.toml`. Blocks (file I/O; the Keychain only for a choice that
+/// needs a key: ElevenLabs as the voice).
 pub fn save_edit(
     paths: &SetupPaths,
-    lock: &Mutex<()>,
+    lock: &Mutex<SettingsGate>,
     edit: &SetupEdit,
     secrets: &dyn SecretStore,
     known: Known<'_>,
@@ -130,12 +168,24 @@ pub fn save_edit(
         ollama,
         catalog,
         devices,
+        keys: ledger,
+        session_runs,
     } = known;
-    let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    // Read before the lock is taken: a Keychain prompt must not hold every other save.
+    let elevenlabs_key = match edit {
+        SetupEdit::Voice {
+            engine: VoiceEngine::ElevenLabs,
+        } => keys::for_choice(secrets, ledger, KeyName::ElevenLabs, session_runs),
+        SetupEdit::Voice { .. }
+        | SetupEdit::Talker { .. }
+        | SetupEdit::Mic { .. }
+        | SetupEdit::Input { .. }
+        | SetupEdit::Scribe { .. }
+        | SetupEdit::RemoveCodeFolder { .. } => KeyState::NotNeeded,
+    };
+    let mut held = hold_for_change(lock)?;
     let current =
         Settings::load(&paths.settings, &paths.home).map_err(|error| error.to_string())?;
-    let elevenlabs_key = input::secret_name(KeyName::ElevenLabs)
-        .is_some_and(|name| secrets.contains(&name).unwrap_or(false));
     let open_router_model = match edit {
         SetupEdit::Talker {
             provider: TalkerProvider::OpenRouter,
@@ -159,6 +209,7 @@ pub fn save_edit(
     };
     let change = input::settings_edit(edit, known)?;
     Settings::edit(&paths.settings, &paths.home, &[change]).map_err(|error| error.to_string())?;
+    held.changed = true;
     Ok(())
 }
 
@@ -167,16 +218,21 @@ pub fn save_edit(
 pub fn save_key(
     secrets: &dyn SecretStore,
     ledger: &KeyLedger,
+    lock: &Mutex<SettingsGate>,
     key: KeyName,
     value: String,
 ) -> Result<(), String> {
     let secret = input::parse_key(value).map_err(|refused| refused.words().to_owned())?;
     let name = input::secret_name(key).ok_or("that key has no name")?;
+    // Not held through the Keychain's write, which can wait on a prompt: a key saved as
+    // finishing begins counts as a change for the next one.
+    drop(hold_for_change(lock)?);
     secrets.set(&name, &secret).map_err(|error| {
         tracing::warn!(%error, "a key could not be saved");
         "The Keychain didn't save the key. Unlock it and try again.".to_owned()
     })?;
     ledger.record(key, KeyState::Saved);
+    lock.lock().unwrap_or_else(PoisonError::into_inner).changed = true;
     Ok(())
 }
 
@@ -184,18 +240,20 @@ pub fn save_key(
 /// goes back to Kokoro, so the next session still speaks. Blocks (the Keychain, file I/O).
 pub fn remove_key(
     paths: &SetupPaths,
-    lock: &Mutex<()>,
+    lock: &Mutex<SettingsGate>,
     secrets: &dyn SecretStore,
     ledger: &KeyLedger,
     key: KeyName,
 ) -> Result<(), String> {
     let name = input::secret_name(key).ok_or("that key has no name")?;
+    drop(hold_for_change(lock)?);
     secrets.remove(&name).map_err(|error| {
         tracing::warn!(%error, "a key could not be removed");
         "The Keychain didn't remove the key. Unlock it and try again.".to_owned()
     })?;
     ledger.record(key, KeyState::Missing);
-    let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+    let mut held = lock.lock().unwrap_or_else(PoisonError::into_inner);
+    held.changed = true;
     let voice_needs_it = key == KeyName::ElevenLabs
         && Settings::load(&paths.settings, &paths.home)
             .is_ok_and(|settings| settings.tts.kind == TtsKind::ElevenLabs);
@@ -211,17 +269,23 @@ pub fn remove_key(
 }
 
 /// Adds a folder picked in the system's chooser to `code_roots`. Blocks (file I/O).
-pub fn add_code_folder(paths: &SetupPaths, lock: &Mutex<()>, folder: &Path) -> Result<(), String> {
-    let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
+pub fn add_code_folder(
+    paths: &SetupPaths,
+    lock: &Mutex<SettingsGate>,
+    folder: &Path,
+) -> Result<(), String> {
+    let mut held = hold_for_change(lock)?;
     let current =
         Settings::load(&paths.settings, &paths.home).map_err(|error| error.to_string())?;
     let change = folders::add_folder(&current, folder, &paths.home)?;
     Settings::edit(&paths.settings, &paths.home, &[change]).map_err(|error| error.to_string())?;
+    held.changed = true;
     Ok(())
 }
 
-/// Sets the setup-complete flag. Blocks (file I/O).
-pub fn mark_complete(paths: &SetupPaths, lock: &Mutex<()>) -> Result<(), String> {
+/// Sets the setup-complete flag: part of finishing, so it is never refused for it. Blocks (file
+/// I/O).
+pub fn mark_complete(paths: &SetupPaths, lock: &Mutex<SettingsGate>) -> Result<(), String> {
     let _held = lock.lock().map_err(|_| "settings are busy".to_owned())?;
     Settings::edit(&paths.settings, &paths.home, &[SettingsEdit::SetupComplete])
         .map(|_| ())

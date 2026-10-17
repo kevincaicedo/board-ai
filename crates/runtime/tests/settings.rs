@@ -174,6 +174,29 @@ fn errors_name_the_field() {
     }
 }
 
+/// Review 2, finding 10: `http://openrouter.ai` was accepted, so the key went out in
+/// cleartext. A base URL that carries a key is https, unless it is this Mac.
+#[test]
+fn a_key_never_goes_to_a_plain_http_url_off_this_mac() {
+    for text in [
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"http://openrouter.ai/api/v1\"\nsecret = \"openrouter\"",
+        "[scribe]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"http://gpu.lan:8000/v1\"\nsecret = \"lan\"",
+        "[talker]\nbase_url = \"http://api.anthropic.com\"",
+        "[tts]\nkind = \"elevenlabs\"\nbase_url = \"http://api.elevenlabs.io\"",
+    ] {
+        let field = invalid_field(text);
+        assert!(field.ends_with(".base_url"), "{text}: {field}");
+    }
+    for text in [
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"http://localhost:1234/v1\"\nsecret = \"lm\"",
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"http://127.0.0.1:8000/v1\"\nsecret = \"lm\"",
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"http://gpu.lan:11434/v1\"",
+        "[talker]\nkind = \"openai_compatible\"\nmodel = \"x\"\nbase_url = \"https://openrouter.ai/api/v1\"\nsecret = \"openrouter\"",
+    ] {
+        assert!(parse(text).is_ok(), "{text}");
+    }
+}
+
 #[test]
 fn syntax_errors_carry_a_line() {
     let error = parse("mic = \"open\"\n[talker\nkind = 1").expect_err("bad toml");

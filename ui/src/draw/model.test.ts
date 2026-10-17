@@ -27,7 +27,7 @@ test("drawing mode, the hint and your shapes come from the core's events", () =>
   assert.ok(model.version > version);
   model.apply({ type: "UserShapeRemove", layer: 0, id: "u1" }, 400);
   assert.equal(model.shape(0, "u1"), null);
-  assert.equal(model.echoes.value, 3, "every echo moves the preview on");
+  assert.equal(model.accepted.value, 1, "only the new u1 was a shape taken from the pointer");
   model.apply({ type: "LabelHint", hint: { target: "u1", words: "x" } }, 450);
   model.apply({ type: "DrawMode", drawing: false }, 500);
   assert.equal(model.drawing.value, false);

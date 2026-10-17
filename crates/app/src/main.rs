@@ -8,6 +8,7 @@ mod capability;
 mod commands;
 mod dev;
 mod helper;
+mod lifecycle;
 mod permission;
 mod secrets;
 mod session;
@@ -48,6 +49,7 @@ fn main() -> ExitCode {
             dev::dev_say,
         ])
         .setup(|app| {
+            session::serve_lifecycle(app.handle());
             dev::grant(app.handle());
             setup::launch(app.handle());
             Ok(())

@@ -1,7 +1,7 @@
 // Turning the pointer into shapes (13 · You draw): pen points sampled into a fixed buffer, the
 // box and arrow tools' drags, screen to world, and the preview drawn while the pointer is down.
 // Pure functions and one preallocated sampler, so pointer moves allocate nothing until the stroke
-// is sent.
+// is sent but the preview's new segment.
 
 import type { DrawnShape } from "../protocol/generated/DrawnShape.ts";
 import type { Point } from "../protocol/generated/Point.ts";
@@ -29,6 +29,7 @@ export class StrokeSampler {
   readonly #baseDistance: number;
   #minDistance: number;
   #count = 0;
+  #generation = 0;
 
   constructor(capacity = USER_STROKE_POINTS_MAX, minDistance = PEN_SAMPLE_MIN_PX) {
     this.#capacity = Math.max(2, capacity);
@@ -42,6 +43,14 @@ export class StrokeSampler {
     return this.#count;
   }
 
+  /**
+   * Moves whenever a kept point changes (a new stroke, a decimation, the last point moved by
+   * `finish`); between two moves points are only appended, so a preview can append too.
+   */
+  get generation(): number {
+    return this.#generation;
+  }
+
   x(index: number): number {
     return this.#xs[index] ?? 0;
   }
@@ -51,6 +60,7 @@ export class StrokeSampler {
   }
 
   begin(x: number, y: number): void {
+    this.#generation += 1;
     this.#minDistance = this.#baseDistance;
     this.#xs[0] = x;
     this.#ys[0] = y;
@@ -79,12 +89,14 @@ export class StrokeSampler {
   /** The pointer came up at (x, y): the stroke ends exactly there. */
   finish(x: number, y: number): void {
     if (!this.add(x, y) && this.#count > 1) {
+      this.#generation += 1;
       this.#xs[this.#count - 1] = x;
       this.#ys[this.#count - 1] = y;
     }
   }
 
   #decimate(): void {
+    this.#generation += 1;
     let kept = 0;
     for (let index = 0; index < this.#count; index += 2) {
       this.#xs[kept] = this.#xs[index] ?? 0;
@@ -208,13 +220,33 @@ export function previewPath(tool: Tool, sampler: StrokeSampler): string {
         `${round1(x1 + Math.cos(angle + Math.PI + turn) * PREVIEW_HEAD_PX)} ${round1(y1 + Math.sin(angle + Math.PI + turn) * PREVIEW_HEAD_PX)}`;
       return `M${x0} ${y0}L${x1} ${y1}M${barb(-0.46)}L${x1} ${y1}L${barb(0.46)}`;
     }
-    case "pen": {
-      let path = `M${x0} ${y0}`;
-      for (let index = 1; index < sampler.count; index += 1) {
-        path += `L${round1(sampler.x(index))} ${round1(sampler.y(index))}`;
-      }
-      return path;
+    case "pen":
+      return new PenPath().path(sampler);
+  }
+}
+
+/**
+ * The live pen preview, kept between samples: each sample appends its own segment, and the path
+ * is written again only when the sampler's points change in place (a decimation halves them),
+ * so a stroke's preview costs work in proportion to its points, not their square.
+ */
+export class PenPath {
+  #path = "";
+  #points = 0;
+  #generation = -1;
+
+  path(sampler: StrokeSampler): string {
+    if (sampler.generation !== this.#generation || sampler.count < this.#points) {
+      this.#generation = sampler.generation;
+      this.#points = 0;
+      this.#path = "";
     }
+    for (let index = this.#points; index < sampler.count; index += 1) {
+      const command = index === 0 ? "M" : "L";
+      this.#path += `${command}${round1(sampler.x(index))} ${round1(sampler.y(index))}`;
+    }
+    this.#points = sampler.count;
+    return this.#path;
   }
 }
 

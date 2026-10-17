@@ -2,7 +2,8 @@
 // from a key event to the command it sends, so the rules are tested without a DOM. Esc closes
 // what is open first: a replay started from a card (the UI's own), then the core's view; with
 // nothing open it stops BoardAI. Drawing together (13 · You draw): D starts drawing, and while
-// you draw Enter is Done, Esc leaves drawing and ⌘Z (Ctrl+Z) undoes your last shape.
+// you draw Enter is Done (not while muted, like the button), Esc leaves drawing and ⌘Z (Ctrl+Z)
+// undoes your last shape. While the settings page is open no key reaches the stage.
 
 import type { DrawAction } from "../protocol/generated/DrawAction.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
@@ -16,6 +17,8 @@ export interface KeyPress {
   readonly editable: boolean;
   /** ⌘ (or Ctrl) without Alt: the platform's shortcut modifier, for ⌘Z. */
   readonly shortcut?: boolean;
+  /** Shift is held: ⌘⇧Z is redo on macOS, never undo. */
+  readonly shift?: boolean;
 }
 
 export interface KeyContext {
@@ -26,6 +29,12 @@ export interface KeyContext {
   readonly escape: EscapeAction;
   /** You are drawing (13 · You draw). */
   readonly drawing?: boolean;
+  /**
+   * The settings page is open over the stage: it owns the keyboard. Checked here rather than by
+   * the page stopping propagation, which a key pressed after its focused control went away
+   * (focus back on the body) never passed through.
+   */
+  readonly settings?: boolean;
 }
 
 function draw(action: DrawAction): UiCommand {
@@ -34,12 +43,13 @@ function draw(action: DrawAction): UiCommand {
 
 /** The command a key press sends, or `null` when the key is not ours. */
 export function keyDownCommand(key: KeyPress, context: KeyContext): UiCommand | null {
-  if (key.editable || key.repeat) {
+  if (key.editable || key.repeat || context.settings === true) {
     return null;
   }
   const drawing = context.drawing === true;
   if (key.modified) {
-    return drawing && key.shortcut === true && key.code === "KeyZ" ? draw({ kind: "Undo" }) : null;
+    const undo = key.shortcut === true && key.shift !== true && key.code === "KeyZ";
+    return drawing && undo ? draw({ kind: "Undo" }) : null;
   }
   switch (key.code) {
     case "Space":
@@ -52,7 +62,8 @@ export function keyDownCommand(key: KeyPress, context: KeyContext): UiCommand | 
       // Muted, you draw silently: the core starts drawing without its spoken line.
       return drawing || context.replay ? null : draw({ kind: "Start" });
     case "Enter":
-      return drawing ? draw({ kind: "Done" }) : null;
+      // Muted, Done is disabled (the core drops a muted Done, D-163); Enter follows the button.
+      return drawing && !context.muted ? draw({ kind: "Done" }) : null;
     default:
       return null;
   }

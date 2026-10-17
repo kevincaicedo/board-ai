@@ -8,7 +8,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use boardai_runtime::settings::{Settings, SettingsEdit};
+use boardai_runtime::tools::{TooBroad, too_broad};
 
+use super::SetupPaths;
 use crate::helper::{Finished, HELPER_PROCESS_TIMEOUT_MS, run_bounded};
 
 /// How long the folder chooser may stay open. Past it the chooser is closed and the card says
@@ -93,7 +95,26 @@ pub fn add_folder(current: &Settings, folder: &Path, home: &Path) -> Result<Sett
     if !folder.is_dir() {
         return Err("That folder isn't there any more. Pick another.".to_owned());
     }
-    Ok(SettingsEdit::AddCodeRoot(as_written(folder, home)))
+    match too_broad(folder, home) {
+        Some(TooBroad::HomeOrAbove) => Err(
+            "That holds every file of yours, keys included. Pick the folder your code is in."
+                .to_owned(),
+        ),
+        Some(TooBroad::AppData) => Err(
+            "That's where apps keep their data and keychains. Pick the folder your code is in."
+                .to_owned(),
+        ),
+        None => Ok(SettingsEdit::AddCodeRoot(as_written(folder, home))),
+    }
+}
+
+/// The vault "Open the vault" opens, from `settings.toml`. A file that doesn't parse opens
+/// nothing (not the default vault, which isn't the one configured): its error says which field
+/// and never quotes a value (D-025).
+pub fn configured_vault(paths: &SetupPaths) -> Result<PathBuf, String> {
+    Settings::load(&paths.settings, &paths.home)
+        .map(|settings| settings.vault)
+        .map_err(|error| format!("settings.toml can't be used ({error}). Fix it, then try again."))
 }
 
 /// "Open the vault": the vault folder in Finder. Blocks (it runs `open`).
@@ -110,13 +131,23 @@ pub fn open_vault(vault: &Path) -> Result<(), String> {
     }
 }
 
-/// The vault as `open` may take it: an absolute path to a folder. A relative value, or one
-/// starting with `-`, from a hand-edited `settings.toml` would reach `open` as a path relative to
-/// the app's folder or as an option, so it never runs.
+/// The vault as `open` may take it: an absolute path to a folder that Finder shows rather than
+/// opens. A relative value, or one starting with `-`, from a hand-edited `settings.toml` would
+/// reach `open` as a path relative to the app's folder or as an option; a folder whose name has
+/// an extension may be a package (`Safari.app`, `.photoslibrary`, `.pkg`), which `open`
+/// launches. Neither ever runs: no list of package kinds is complete, so any extension is
+/// refused (the default vault, `~/BoardAI`, has none).
 fn vault_to_open(vault: &Path) -> Result<&Path, String> {
     if !vault.is_absolute() {
         return Err(
             "settings.toml's vault isn't an absolute path. Fix it there, then try again."
+                .to_owned(),
+        );
+    }
+    if vault.extension().is_some() {
+        return Err(
+            "The vault's name ends like an app or a package, so Finder would open it instead of \
+             showing it. Rename it in settings.toml."
                 .to_owned(),
         );
     }
@@ -135,9 +166,11 @@ mod tests {
     use boardai_runtime::settings::{Settings, SettingsEdit};
 
     use super::{
-        CODE_FOLDERS_MAX, Chosen, add_folder, as_written, open_vault, parse_chosen, vault_to_open,
+        CODE_FOLDERS_MAX, Chosen, add_folder, as_written, configured_vault, open_vault,
+        parse_chosen, vault_to_open,
     };
     use crate::helper::Finished;
+    use crate::setup::SetupPaths;
 
     fn answered(success: bool, stdout: &str, stderr: &str) -> Finished {
         Finished {
@@ -202,6 +235,82 @@ mod tests {
             .map(|index| PathBuf::from(format!("/src/{index}")))
             .collect();
         assert!(add_folder(&current, &scratch, home).is_err(), "full");
+    }
+
+    /// Review 2, finding 10: `/` or `~` as a code folder put `~/.ssh` in `read_file`'s reach.
+    #[test]
+    fn the_disk_the_home_folder_and_app_data_are_never_code_folders() {
+        let scratch = std::env::temp_dir().join(format!("boardai-broad-{}", std::process::id()));
+        let home = scratch.join("Users/me");
+        for folder in ["code/app", "Library/Application Support/x", "Library"] {
+            std::fs::create_dir_all(home.join(folder)).expect("a folder");
+        }
+        let current = Settings::defaults(&home);
+        for broad in [
+            PathBuf::from("/"),
+            scratch.join("Users"),
+            home.clone(),
+            home.join("Library"),
+            home.join("Library/Application Support/x"),
+        ] {
+            let refused = add_folder(&current, &broad, &home);
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|words| words.contains("Pick the folder")),
+                "{} was accepted: {refused:?}",
+                broad.display()
+            );
+        }
+        assert_eq!(
+            add_folder(&current, &home.join("code/app"), &home),
+            Ok(SettingsEdit::AddCodeRoot("~/code/app".to_owned()))
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// Review 2, finding 10: `open` on a bundle launches it ("Open the vault" on `Safari.app`
+    /// would start Safari); a folder whose name has an extension is refused before `open`.
+    #[test]
+    fn a_vault_that_finder_would_open_as_a_package_never_reaches_open() {
+        let scratch = std::env::temp_dir().join(format!("boardai-bundle-{}", std::process::id()));
+        for package in ["Fake.app", "Photos Library.photoslibrary", "Tool.APP"] {
+            let folder = scratch.join(package);
+            std::fs::create_dir_all(&folder).expect("a folder");
+            assert!(
+                vault_to_open(&folder).is_err_and(|words| words.contains("package")),
+                "{package} would reach open"
+            );
+        }
+        let plain = scratch.join(".boardai-vault");
+        std::fs::create_dir_all(&plain).expect("a folder");
+        assert_eq!(vault_to_open(&plain), Ok(plain.as_path()));
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A `settings.toml` that doesn't parse used to open the default vault; it is refused with
+    /// the parse error, which names the field and never quotes a value (D-025).
+    #[test]
+    fn a_settings_file_that_does_not_parse_opens_no_vault() {
+        let scratch =
+            std::env::temp_dir().join(format!("boardai-vault-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).expect("a folder");
+        let paths = SetupPaths {
+            settings: scratch.join("settings.toml"),
+            home: scratch.join("home"),
+            models: scratch.join("models"),
+        };
+        std::fs::write(&paths.settings, "vault = 42\n").expect("written");
+        let refused = configured_vault(&paths);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|words| words.contains("settings.toml")),
+            "{refused:?}"
+        );
+        std::fs::write(&paths.settings, "vault = \"~/Notes\"\n").expect("written");
+        assert_eq!(configured_vault(&paths), Ok(paths.home.join("Notes")));
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     #[test]

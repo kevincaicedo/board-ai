@@ -23,12 +23,12 @@ use tauri::{AppHandle, Manager, State};
 use super::folders::{self, Chosen};
 use super::status::{self, Inputs, Probes, Seen};
 use super::{
-    Known, SetupState, add_code_folder, downloads, harnesses, input, keys, mark_complete, paths,
-    remove_key, save_edit, save_key,
+    Known, SetupState, add_code_folder, begin_finishing, downloads, end_finishing, harnesses,
+    input, keys, mark_complete, paths, remove_key, save_edit, save_key,
 };
 use crate::permission;
 use crate::secrets::KeychainSecrets;
-use crate::session::AppState;
+use crate::session::{AppState, Hearing};
 
 /// How long "Rebuild the index" waits for the store. Past it the screen says the rebuild goes
 /// on; the store finishes it (one transaction, D-116) whatever the screen does.
@@ -43,7 +43,7 @@ pub async fn setup_status(
     state: State<'_, SetupState>,
 ) -> Result<SetupStatus, String> {
     let ollama = probe_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// Saves one choice to `settings.toml`. Picking a talker looks at Ollama again first.
@@ -65,18 +65,21 @@ pub async fn setup_save(
     let lock = Arc::clone(&state.settings);
     let seen = ollama.clone();
     let catalog = Arc::clone(&state.catalog);
+    let ledger = Arc::clone(&state.keys);
+    let session_runs = state.started();
     blocking(move || {
         let devices = Inputs::from_snapshot(&device_snapshot()).names;
         let known = Known {
             ollama: &seen,
             catalog: &catalog,
             devices: &devices,
+            keys: &ledger,
+            session_runs,
         };
         save_edit(&paths, &lock, &edit, &KeychainSecrets, known)
     })
     .await?;
-    state.mark_changed();
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// Saves a pasted key to the Keychain. The UI gets back only that a key with this name exists.
@@ -88,10 +91,10 @@ pub async fn setup_key(
     state: State<'_, SetupState>,
 ) -> Result<SetupStatus, String> {
     let ledger = Arc::clone(&state.keys);
-    blocking(move || save_key(&KeychainSecrets, &ledger, name, value)).await?;
-    state.mark_changed();
+    let lock = Arc::clone(&state.settings);
+    blocking(move || save_key(&KeychainSecrets, &ledger, &lock, name, value)).await?;
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// Downloads (or resumes) one model file, with progress on `progress`. Resolves when the file
@@ -158,9 +161,8 @@ pub async fn setup_remove_key(
     let lock = Arc::clone(&state.settings);
     let ledger = Arc::clone(&state.keys);
     blocking(move || remove_key(&paths, &lock, &KeychainSecrets, &ledger, name)).await?;
-    state.mark_changed();
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// "Check keys": reads the Keychain for every key now, on the owner's request, even while a
@@ -179,7 +181,7 @@ pub async fn setup_check_keys(
     })
     .await?;
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// The coding section asks each installed harness for its version once, within
@@ -196,7 +198,7 @@ pub async fn setup_harness_versions(
     })
     .await?;
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// "Add a folder": the macOS folder chooser, shown by the app, so no path comes from the UI
@@ -208,27 +210,20 @@ pub async fn setup_add_code_folder(
 ) -> Result<SetupStatus, String> {
     let paths = paths(&app).ok_or(NO_FOLDERS)?;
     let lock = Arc::clone(&state.settings);
-    let added = blocking(move || match folders::choose_folder()? {
-        Chosen::Folder(folder) => add_code_folder(&paths, &lock, &folder).map(|()| true),
-        Chosen::Cancelled => Ok(false),
+    blocking(move || match folders::choose_folder()? {
+        Chosen::Folder(folder) => add_code_folder(&paths, &lock, &folder),
+        Chosen::Cancelled => Ok(()),
     })
     .await?;
-    if added {
-        state.mark_changed();
-    }
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// "Open the vault": the configured vault in Finder.
 #[tauri::command]
 pub async fn setup_open_vault(app: AppHandle) -> Result<(), String> {
     let paths = paths(&app).ok_or(NO_FOLDERS)?;
-    blocking(move || {
-        let (settings, _) = status::load(&paths);
-        folders::open_vault(&settings.vault)
-    })
-    .await
+    blocking(move || folders::open_vault(&folders::configured_vault(&paths)?)).await
 }
 
 /// "Rebuild the index": the store empties the index and fills it again from the vault (the
@@ -276,7 +271,7 @@ pub async fn setup_microphone(
     let answer = permission::request().await;
     tracing::info!(?answer, "microphone permission asked");
     let ollama = last_ollama(&state).await;
-    current_status(&app, &state, ollama).await
+    current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
 
 /// "Open Microphone settings": System Settings at Privacy & Security › Microphone, where the
@@ -288,37 +283,118 @@ pub async fn setup_open_microphone_settings() -> Result<(), String> {
 
 /// "Start talking": refused while `core::setup::blockers` names anything; otherwise sets the
 /// setup-complete flag and starts the session (once). Opened as settings over a running
-/// session, it closes the screen, and when something was saved it restarts the session the
-/// way quitting ends one (D-103).
+/// session, it closes the screen, and restarts the session the way quitting ends one (D-103)
+/// when something was saved, or when the session runs deaf and the microphone or hearing was
+/// fixed here.
+///
+/// From the start rule's check until the session has read its settings, every change is
+/// refused (`SettingsGate`), so what starts is what was checked. The talker's key is read from
+/// the Keychain for the check when this run never saw it: a key nobody checked is not usable.
 #[tauri::command]
 pub async fn setup_finish(app: AppHandle, state: State<'_, SetupState>) -> Result<(), String> {
-    if state.started() && !state.take_changed() {
-        return Ok(());
-    }
-    let ollama = probe_ollama(&state).await;
-    let checked = current_status(&app, &state, ollama).await?;
-    if !checked.blockers.is_empty() {
-        state.mark_changed();
-        return Err("Not ready to start yet.".to_owned());
-    }
-    if state.started() {
-        crate::session::restart(&app).await;
-        return Ok(());
-    }
-    let paths = paths(&app).ok_or(NO_FOLDERS)?;
     let lock = Arc::clone(&state.settings);
-    blocking(move || mark_complete(&paths, &lock)).await?;
-    if state.claim_start() {
-        tracing::info!("setup finished; the session starts");
-        crate::session::start(&app);
+    let changed = blocking(move || begin_finishing(&lock)).await?;
+    // Before the first start a change is the setup itself; after it, a finish that didn't
+    // restart keeps its changes for the next.
+    let mut finishing = Finishing {
+        lock: Arc::clone(&state.settings),
+        unapplied: changed && state.started(),
+    };
+    let finished = finish(&app, &state, changed).await;
+    finishing.unapplied &= finished.is_err();
+    drop(finishing);
+    finished
+}
+
+/// Ends finishing however `setup_finish` ends, its future dropped included, so changes always
+/// land again. The lock is only ever held for one settings write.
+struct Finishing {
+    lock: Arc<std::sync::Mutex<super::SettingsGate>>,
+    unapplied: bool,
+}
+
+impl Drop for Finishing {
+    fn drop(&mut self) {
+        end_finishing(&self.lock, self.unapplied);
     }
-    Ok(())
+}
+
+async fn finish(app: &AppHandle, state: &SetupState, changed: bool) -> Result<(), String> {
+    let started = state.started();
+    let hearing = app.state::<AppState>().hearing();
+    let Some(after) = finish_plan(started, changed, hearing) else {
+        return Ok(());
+    };
+    let ollama = probe_ollama(state).await;
+    let checked = current_status(app, state, ollama, TalkerKey::ReadIfUnseen).await?;
+    match after(checked.blockers.is_empty()) {
+        Finish::Close => Ok(()),
+        Finish::Refuse => Err("Not ready to start yet.".to_owned()),
+        Finish::Restart => {
+            crate::session::restart(app).await;
+            Ok(())
+        }
+        Finish::Start => {
+            let paths = paths(app).ok_or(NO_FOLDERS)?;
+            let lock = Arc::clone(&state.settings);
+            blocking(move || mark_complete(&paths, &lock)).await?;
+            if state.claim_start() {
+                tracing::info!("setup finished; the session starts");
+                crate::session::start(app).await;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// What finishing does once the start rule is checked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finish {
+    /// The first run is done: the session starts.
+    Start,
+    /// The settings page applies a change, or lets a deaf session hear: a new session starts.
+    Restart,
+    /// A blocker keeps the page open, and says why.
+    Refuse,
+    /// The page closes on the session as it is.
+    Close,
+}
+
+/// Whether finishing checks the start rule, and what it does after: `None` closes the page at
+/// once (nothing saved, and the session hears or no settings can fix what it lacks). A session
+/// that runs deaf is restarted once the microphone and hearing pass the rule (review 2, finding
+/// 5); one that is still deaf, with nothing saved, closes as it is.
+pub fn finish_plan(
+    started: bool,
+    changed: bool,
+    hearing: Hearing,
+) -> Option<impl Fn(bool) -> Finish> {
+    let deaf = started && hearing == Hearing::Deaf;
+    if started && !changed && !deaf {
+        return None;
+    }
+    Some(move |ready: bool| match (started, ready) {
+        (false, true) => Finish::Start,
+        (true, true) => Finish::Restart,
+        (true, false) if !changed => Finish::Close,
+        (false | true, false) => Finish::Refuse,
+    })
+}
+
+/// How the status learns the talker's key while a session runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TalkerKey {
+    /// As this run last saw it (`NotChecked` if never): every refresh of the page.
+    AsSeen,
+    /// Read from the Keychain when this run never saw it: the start rule's check on finishing.
+    ReadIfUnseen,
 }
 
 async fn current_status(
     app: &AppHandle,
     state: &SetupState,
     ollama: OllamaStatus,
+    talker_key: TalkerKey,
 ) -> Result<SetupStatus, String> {
     let paths = paths(app).ok_or(NO_FOLDERS)?;
     let downloads = state.downloads.clone();
@@ -332,6 +408,7 @@ async fn current_status(
             harnesses: harnesses::installed(&discover_from_environment(), &versions),
             inputs: Inputs::from_snapshot(&device_snapshot()),
             started,
+            read_talker_key: talker_key == TalkerKey::ReadIfUnseen,
             mic_attributed_to: permission::attributed_to(),
         };
         let models = ModelStore::new(paths.models.clone()).map_err(|error| error.to_string())?;

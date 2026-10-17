@@ -25,26 +25,14 @@ import type { SetupEdit } from "../protocol/generated/SetupEdit.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import type { TauriBridge, TauriCommand } from "../transport/tauri.ts";
 import {
+  parseDownloadEvent,
   parseIndexRebuilt,
   parseModelListing,
   parseSetupStatus,
-  reason,
-  type SetupTransport,
-} from "./transport.ts";
+} from "./parse.ts";
+import { reason, type SetupTransport } from "./transport.ts";
 
 const MISMATCH = "BoardAI's window and app don't match. Reinstall BoardAI.";
-
-const DOWNLOAD_KINDS = new Set(["Progress", "Done", "Failed"]);
-
-function isDownloadEvent(message: unknown): message is DownloadEvent {
-  return (
-    typeof message === "object" &&
-    message !== null &&
-    "kind" in message &&
-    typeof message.kind === "string" &&
-    DOWNLOAD_KINDS.has(message.kind)
-  );
-}
 
 export class TauriSetupTransport implements SetupTransport {
   readonly #bridge: TauriBridge;
@@ -69,10 +57,11 @@ export class TauriSetupTransport implements SetupTransport {
 
   async download(model: string, onEvent: (event: DownloadEvent) => void): Promise<void> {
     const progress = this.#bridge.channel((message) => {
-      if (isDownloadEvent(message)) {
-        onEvent(message);
-      } else {
+      const event = parseDownloadEvent(message);
+      if (event === null) {
         this.malformedEvents += 1;
+      } else {
+        onEvent(event);
       }
     });
     try {

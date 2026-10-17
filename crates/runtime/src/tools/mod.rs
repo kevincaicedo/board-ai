@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use boardai_core::tools::{ToolCall, ToolFailure, ToolOutput};
 
-pub use repo_path::{RepoPath, RepoRoots, ToolError};
+pub use repo_path::{CREDENTIAL_PATHS, RepoPath, RepoRoots, TooBroad, ToolError, too_broad};
 
 /// The repo tools over a fixed set of opened folders. Cheap to clone.
 #[derive(Clone, Debug, Default)]

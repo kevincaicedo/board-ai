@@ -19,15 +19,20 @@ use super::harnesses::Installed;
 use super::keys::KeyLedger;
 use super::status::{Inputs, Probes, Seen, gather};
 use super::{
-    Downloads, Known, SetupPaths, SetupState, add_code_folder, mark_complete, remove_key,
-    save_edit, save_key,
+    Downloads, Known, SettingsGate, SetupPaths, SetupState, add_code_folder, begin_finishing,
+    end_finishing, mark_complete, remove_key, save_edit, save_key,
 };
+
+/// Nothing seen yet, before a session runs.
+static NO_KEYS_SEEN: std::sync::LazyLock<KeyLedger> = std::sync::LazyLock::new(KeyLedger::default);
 
 fn known<'a>(ollama: &'a OllamaStatus, catalog: &'a ModelCatalog) -> Known<'a> {
     Known {
         ollama,
         catalog,
         devices: &[],
+        keys: &NO_KEYS_SEEN,
+        session_runs: false,
     }
 }
 
@@ -75,6 +80,7 @@ fn probes() -> Probes {
         },
         inputs: Inputs::default(),
         started: false,
+        read_talker_key: false,
         mic_attributed_to: None,
     }
 }
@@ -172,7 +178,7 @@ fn choices_round_trip_through_settings_and_finishing_sets_the_flag() {
     let scratch = Scratch::new("round-trip");
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let catalog = ModelCatalog::default();
     let ollama = OllamaStatus::Reachable {
         models: vec!["gemma4:latest".to_owned()],
@@ -220,7 +226,7 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     let scratch = Scratch::new("no-secret");
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let catalog = ModelCatalog::default();
     let unreachable = OllamaStatus::Unreachable;
 
@@ -228,6 +234,7 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     save_key(
         &secrets,
         &ledger,
+        &lock,
         KeyName::Anthropic,
         format!("{PLANTED_KEY}\n"),
     )
@@ -235,6 +242,7 @@ fn a_saved_key_reaches_the_store_and_no_file_or_status() {
     save_key(
         &secrets,
         &ledger,
+        &lock,
         KeyName::ElevenLabs,
         PLANTED_ELEVENLABS.to_owned(),
     )
@@ -307,10 +315,10 @@ fn a_bad_key_or_an_unusable_file_changes_nothing() {
     let scratch = Scratch::new("refused");
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let oversized = "k".repeat(boardai_runtime::limits::SECRET_VALUE_MAX_BYTES + 1);
     let ledger = KeyLedger::default();
-    assert!(save_key(&secrets, &ledger, KeyName::Anthropic, oversized).is_err());
+    assert!(save_key(&secrets, &ledger, &lock, KeyName::Anthropic, oversized).is_err());
     assert_eq!(saved(&status(&paths, &secrets)), []);
     assert_eq!(
         ledger.seen(KeyName::Anthropic),
@@ -344,17 +352,26 @@ fn a_bad_key_or_an_unusable_file_changes_nothing() {
 #[test]
 fn saving_while_the_session_runs_asks_for_one_restart() {
     let state = SetupState::new();
-    state.mark_changed();
-    assert!(
-        !state.take_changed(),
-        "before the session starts, saving is setup itself"
-    );
     assert!(state.claim_start());
     assert!(!state.claim_start(), "the session starts once");
-    state.mark_changed();
-    state.mark_changed();
-    assert!(state.take_changed());
-    assert!(!state.take_changed(), "one restart per round of changes");
+    let lock = Mutex::new(SettingsGate::default());
+    assert_eq!(begin_finishing(&lock), Ok(false), "nothing saved yet");
+    end_finishing(&lock, false);
+    lock.lock().expect("lock").changed = true;
+    lock.lock().expect("lock").changed = true;
+    assert_eq!(begin_finishing(&lock), Ok(true));
+    end_finishing(&lock, false);
+    assert_eq!(
+        begin_finishing(&lock),
+        Ok(false),
+        "one restart per round of changes"
+    );
+    end_finishing(&lock, true);
+    assert_eq!(
+        begin_finishing(&lock),
+        Ok(true),
+        "a refused finish keeps its change for the next"
+    );
 }
 
 /// A Keychain that refuses everything (locked, or a denied prompt).
@@ -432,7 +449,7 @@ fn the_settings_page_sees_the_talker_scribe_folders_and_vault_as_configured() {
             .blockers
             .iter()
             .any(|blocker| matches!(blocker, SetupBlocker::TalkerKey { .. })),
-        "an unchecked key never blocks going back"
+        "a refresh doesn't read the Keychain; finishing reads it (tests/keychain.rs)"
     );
     let claude = status(&scratch.paths(), &secrets);
     assert_eq!(
@@ -455,13 +472,14 @@ fn removing_a_key_forgets_it_and_takes_elevenlabs_off_the_voice() {
     let scratch = Scratch::new("remove-key");
     let paths = scratch.paths();
     let secrets = MemorySecretStore::new();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let ledger = KeyLedger::default();
     let catalog = ModelCatalog::default();
     let unreachable = OllamaStatus::Unreachable;
     save_key(
         &secrets,
         &ledger,
+        &lock,
         KeyName::ElevenLabs,
         PLANTED_ELEVENLABS.to_owned(),
     )
@@ -505,11 +523,12 @@ fn removing_a_key_forgets_it_and_takes_elevenlabs_off_the_voice() {
 fn a_locked_keychain_refuses_a_key_in_plain_words_and_changes_nothing() {
     let scratch = Scratch::new("locked");
     let paths = scratch.paths();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let ledger = KeyLedger::default();
     let refused = save_key(
         &Locked,
         &ledger,
+        &Mutex::new(SettingsGate::default()),
         KeyName::OpenRouter,
         "sk-or-v1-abc".to_owned(),
     );
@@ -524,7 +543,7 @@ fn a_locked_keychain_refuses_a_key_in_plain_words_and_changes_nothing() {
 fn a_chosen_code_folder_is_added_once_as_written() {
     let scratch = Scratch::new("folders");
     let paths = scratch.paths();
-    let lock = Mutex::new(());
+    let lock = Mutex::new(SettingsGate::default());
     let folder = scratch.0.join("home/code/boardai");
     std::fs::create_dir_all(&folder).expect("a folder");
     add_code_folder(&paths, &lock, &folder).expect("added");
@@ -568,3 +587,6 @@ fn a_list_that_does_not_arrive_or_an_unfinished_rebuild_is_said_in_plain_words()
     let failed = index_rebuild_answer(Some(Err(boardai_runtime::store::StoreError::Stopped)));
     assert!(failed.is_err_and(|words| words.contains("old one is kept")));
 }
+
+mod finish;
+mod keychain;

@@ -14,6 +14,11 @@ use crate::llm::error::bounded_detail;
 /// read; digits past the 12th are below one unit and dropped.
 const PRICE_PLACES: usize = 12;
 
+/// Whole dollars per token a price may have: up to $999,999 per token, which scaled by
+/// [`PRICE_PLACES`] stays well inside `u64` (about 10¹⁸ of its 1.8 × 10¹⁹). A longer whole part
+/// is no real price; the price is unknown, never wrapped or cut.
+const PRICE_WHOLE_DOLLAR_DIGITS_MAX: usize = 6;
+
 /// OpenRouter's reasoning efforts, least first.
 const EFFORTS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -232,7 +237,11 @@ fn per_token(value: &Value) -> Option<u64> {
     let text = value.as_str()?.trim();
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
     let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    if whole.is_empty() || whole.len() > 6 || !digits(whole) || !digits(fraction) {
+    if whole.is_empty()
+        || whole.len() > PRICE_WHOLE_DOLLAR_DIGITS_MAX
+        || !digits(whole)
+        || !digits(fraction)
+    {
         return None;
     }
     let mut scaled: u64 = whole.parse().ok()?;
@@ -254,7 +263,7 @@ mod tests {
     use boardai_core::setup::ModelReasoning;
     use serde_json::json;
 
-    use super::{median, models, per_token, providers};
+    use super::{PRICE_WHOLE_DOLLAR_DIGITS_MAX, median, models, per_token, providers};
     use crate::limits::{MODEL_LIST_MODELS_MAX, MODEL_TEXT_MAX_BYTES};
 
     #[test]
@@ -264,6 +273,20 @@ mod tests {
         assert_eq!(per_token(&json!("0")), Some(0));
         assert_eq!(per_token(&json!("1.5")), Some(1_500_000_000_000));
         assert_eq!(per_token(&json!("0.0000000000001")), Some(0));
+        let widest = "9".repeat(PRICE_WHOLE_DOLLAR_DIGITS_MAX);
+        assert_eq!(
+            per_token(&json!(widest)),
+            widest
+                .parse::<u64>()
+                .ok()
+                .map(|whole| whole * 1_000_000_000_000)
+        );
+        let wider = "1".repeat(PRICE_WHOLE_DOLLAR_DIGITS_MAX + 1);
+        assert_eq!(
+            per_token(&json!(wider)),
+            None,
+            "past the whole digits: unknown"
+        );
         for unknown in [
             json!("-1"),
             json!("1e-6"),

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
 import type { TauriBridge, TauriCommand } from "../transport/tauri.ts";
-import { firstLaunch } from "./fake.ts";
+import { firstLaunch, PRESETS, presetTransport } from "./fake.ts";
 import { recordedListing } from "./fakeModels.ts";
+import { parseIndexRebuilt, parseModelListing, parseSetupStatus } from "./parse.ts";
 import { TauriSetupTransport } from "./tauriSetup.ts";
-import { parseIndexRebuilt, parseModelListing, parseSetupStatus } from "./transport.ts";
 
 interface Invoked {
   command: TauriCommand;
@@ -72,11 +72,15 @@ test("download events are checked and malformed ones dropped", async () => {
   deliver?.({ kind: "Teleport" });
   deliver?.("Done");
   deliver?.({ kind: "Done" });
+  // A kind with the wrong fields is as malformed as an unknown kind.
+  deliver?.({ kind: "Progress", received_bytes: "half" });
+  deliver?.({ kind: "Failed", problem: { kind: "Lava" } });
+  deliver?.({ kind: "Failed", problem: { kind: "Server", status: 503 } });
   assert.deepEqual(
     seen.map((event) => event.kind),
-    ["Progress", "Done"],
+    ["Progress", "Done", "Failed"],
   );
-  assert.equal(transport.malformedEvents, 2);
+  assert.equal(transport.malformedEvents, 4);
 });
 
 // D-149: a shell from before `mic_attributed_to` sends none; a blank one names nothing.
@@ -194,4 +198,77 @@ test("a status without the settings page's fields is from another build", () => 
   assert.equal(parseSetupStatus({ ...firstLaunch(), code_folders: "~/code" }), null);
   const { elevenlabs: _voice, ...withoutVoice } = firstLaunch();
   assert.equal(parseSetupStatus(withoutVoice), null);
+});
+
+// Review 2: the status and model rows were cast (`as unknown as`) after a few spot checks, so a
+// shell from another build could hand the screen a state no branch handles. Every field is now
+// parsed at the boundary, as protocol/parse.ts does for the session.
+test("every status the fake app answers survives parsing unchanged", () => {
+  assert.deepEqual(parseSetupStatus(firstLaunch()), firstLaunch());
+  for (const preset of PRESETS) {
+    const status = presetTransport(preset).current;
+    assert.deepEqual(parseSetupStatus(status), status, preset);
+  }
+});
+
+test("a status with a malformed nested field is from another build", () => {
+  const base = firstLaunch();
+  const malformed: Record<string, unknown>[] = [
+    { talker: { ...base.talker, ollama: { state: "Sleeping" } } },
+    { talker: { ...base.talker, ollama: { state: "Reachable", models: [7] } } },
+    { talker: { ...base.talker, key: "Perhaps" } },
+    { talker: { ...base.talker, provider: "Gemini" } },
+    { talker: { ...base.talker, thinking: "Lots" } },
+    { talker: { ...base.talker, route: ["cerebras", 3] } },
+    { keys: [{ name: "Gemini", state: "Saved" }] },
+    { hearing_files: [{ id: "silero-vad", state: "Halfway", have_bytes: 0, size_bytes: 1 }] },
+    { voice_files: [{ id: "kokoro", state: "Ready", have_bytes: -1, size_bytes: 1 }] },
+    { harnesses: { ...base.harnesses, pi: { state: "Maybe" } } },
+    { harnesses: { ...base.harnesses, default: "Cursor" } },
+    { blockers: [{ kind: "Unknown" }] },
+    { blockers: [{ kind: "TalkerKey" }] },
+    { voice: "Siri" },
+    { microphone: "Sometimes" },
+    { input: { kind: "Named" } },
+    { elevenlabs: { model: "Flash" } },
+    { input_devices: ["Shure", null] },
+    { default_input: 3 },
+  ];
+  for (const change of malformed) {
+    assert.equal(parseSetupStatus({ ...base, ...change }), null, JSON.stringify(change));
+  }
+});
+
+test("a model or provider row with a malformed field is left out; counts are whole", () => {
+  const good = { id: "a/kept", name: "Kept", preset: false, reasoning: { kind: "Never" } };
+  const listing = parseModelListing({
+    kind: "OpenRouter",
+    models: [
+      { ...good, context_tokens: null, price: null, route: [] },
+      { ...good, id: "b/odd", reasoning: { kind: "Sometimes" } },
+      { ...good, id: "c/odd", reasoning: { kind: "Always" } },
+      { ...good, id: "d/odd", price: { input_micro_usd_per_million_tokens: "free" } },
+      { ...good, id: "e/odd", context_tokens: 1.5 },
+    ],
+    left_out: 0,
+  });
+  assert.deepEqual(
+    listing?.kind === "OpenRouter" ? listing.models.map((model) => model.id) : null,
+    ["a/kept"],
+  );
+  const providers = parseModelListing({
+    kind: "Providers",
+    model: "q/x",
+    providers: [
+      { name: "Cerebras", slug: "cerebras", quantization: 16 },
+      { name: "Odd", slug: "odd", max_output_tokens: "many" },
+    ],
+    left_out: 0,
+  });
+  assert.equal(providers?.kind === "Providers" ? providers.providers.length : -1, 0);
+  assert.equal(
+    parseIndexRebuilt({ files_seen: 1.5, reindexed: 0, skipped: 0, truncated: false }),
+    null,
+  );
+  assert.equal(parseModelListing({ kind: "OpenRouter", models: [], left_out: -1 }), null);
 });

@@ -8,7 +8,7 @@ use ignore::WalkBuilder;
 use ignore::overrides::OverrideBuilder;
 use regex::bytes::{Regex, RegexBuilder};
 
-use super::repo_path::{RepoRoots, ToolError};
+use super::repo_path::{RepoRoots, ToolError, is_credential};
 use super::text::{LineRead, render_line};
 use crate::limits::{
     BINARY_SNIFF_BYTES, LIST_ENTRIES_MAX, SEARCH_FILE_MAX_BYTES, SEARCH_FILES_MAX, SEARCH_HITS_MAX,
@@ -16,8 +16,8 @@ use crate::limits::{
 };
 
 /// A walker over one folder: `.gitignore` applies even outside a git repo, hidden files are
-/// included (`.github` matters), `.git` itself is skipped, symlinks are not followed, and the
-/// order is by name so results are deterministic.
+/// included (`.github` matters), `.git` itself and credential folders are skipped, symlinks are
+/// not followed, and the order is by name so results are deterministic.
 fn walker(folder: &Path) -> WalkBuilder {
     let mut builder = WalkBuilder::new(folder);
     builder
@@ -25,7 +25,7 @@ fn walker(folder: &Path) -> WalkBuilder {
         .require_git(false)
         .follow_links(false)
         .sort_by_file_name(Ord::cmp)
-        .filter_entry(|entry| entry.file_name() != ".git");
+        .filter_entry(|entry| entry.file_name() != ".git" && !is_credential(entry.path()));
     builder
 }
 

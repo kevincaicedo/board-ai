@@ -67,7 +67,7 @@ function coveredAt(item: Pick<Placed, "cover">, at: number): boolean {
   return cover !== null && at >= cover.from && (cover.to === null || at < cover.to);
 }
 
-function visibleAt(items: readonly Placed[], at: number): Placed[] {
+function visibleAt<T extends Placed>(items: readonly T[], at: number): T[] {
   return items.filter(
     (item) =>
       item.shownAt <= at && (item.leftAt === null || at < item.leftAt) && !coveredAt(item, at),
@@ -78,31 +78,36 @@ function visibleAt(items: readonly Placed[], at: number): Placed[] {
  * Tops for a set of items: one is centered on the column's middle, but never above the column's
  * top (a detour card grown for its drawing, D-151); more stack from the top.
  */
-function stackTops(
-  visible: readonly Placed[],
+function stackTops<T extends Placed>(
+  visible: readonly T[],
   tokens: ColumnTokens,
+  height: (item: T) => number,
   out: Map<string, number>,
 ): void {
   const only = visible[0];
   if (visible.length === 1 && only !== undefined) {
-    out.set(only.key, Math.max(tokens.surfaceTop, tokens.surfaceCenter - only.height / 2));
+    out.set(only.key, Math.max(tokens.surfaceTop, tokens.surfaceCenter - height(only) / 2));
     return;
   }
   let top = tokens.surfaceTop;
   for (const item of visible) {
     out.set(item.key, top);
-    top += item.height + tokens.surfaceGap;
+    top += height(item) + tokens.surfaceGap;
   }
 }
+
+/** An item's height as the store placed it; a grown detour card's comes from its drawing. */
+const placedHeight = (item: Placed): number => item.height;
 
 /**
  * Where each item's top is at `at`. When the set of visible items changes, items that stay move
  * to their new place on a spring over a scene duration; leaving items stay where they were.
  */
-export function columnTops(
-  items: readonly Placed[],
+export function columnTops<T extends Placed>(
+  items: readonly T[],
   at: number,
   tokens: ColumnTokens,
+  height: (item: T) => number = placedHeight,
 ): Map<string, number> {
   const changes = new Set<number>();
   for (const item of items) {
@@ -117,9 +122,9 @@ export function columnTops(
   const before = ordered[ordered.length - 2];
   const now = new Map<string, number>();
   const previous = new Map<string, number>();
-  stackTops(visibleAt(items, at), tokens, now);
+  stackTops(visibleAt(items, at), tokens, height, now);
   if (latest !== undefined && before !== undefined) {
-    stackTops(visibleAt(items, latest - 0.5), tokens, previous);
+    stackTops(visibleAt(items, latest - 0.5), tokens, height, previous);
   }
   const tops = new Map<string, number>();
   const move = latest === undefined ? 1 : spring(ramp(at, latest, latest + tokens.durationSceneMs));
@@ -128,7 +133,7 @@ export function columnTops(
     const from = previous.get(item.key);
     if (target === undefined) {
       // Leaving (or not yet shown): hold the last place it had.
-      const held = from ?? holdTop(items, item, tokens);
+      const held = from ?? holdTop(items, item, tokens, height);
       tops.set(item.key, held);
     } else {
       tops.set(item.key, from === undefined ? target : lerp(from, target, move));
@@ -137,14 +142,78 @@ export function columnTops(
   return tops;
 }
 
-function holdTop(items: readonly Placed[], item: Placed, tokens: ColumnTokens): number {
+function holdTop<T extends Placed>(
+  items: readonly T[],
+  item: T,
+  tokens: ColumnTokens,
+  height: (item: T) => number,
+): number {
   // The last moment it was in the column: before it left, before a nested detour covered it.
   const hidden =
     item.leftAt ?? (item.cover !== null && item.cover.to === null ? item.cover.from : null);
   const at = hidden === null ? item.shownAt : hidden - 0.5;
   const tops = new Map<string, number>();
-  stackTops(visibleAt(items, at), tokens, tops);
-  return tops.get(item.key) ?? Math.max(tokens.surfaceTop, tokens.surfaceCenter - item.height / 2);
+  stackTops(visibleAt(items, at), tokens, height, tops);
+  return tops.get(item.key) ?? Math.max(tokens.surfaceTop, tokens.surfaceCenter - height(item) / 2);
+}
+
+/** When the column stops moving: its last change plus the spring's scene duration. */
+function settledAt(items: readonly Placed[], tokens: ColumnTokens): number {
+  let last = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    last = Math.max(last, item.shownAt, item.leftAt ?? last, item.cover?.from ?? last);
+    last = Math.max(last, item.cover?.to ?? last);
+  }
+  return last + tokens.durationSceneMs;
+}
+
+/**
+ * The column's tops frame after frame. Once every change is a scene duration behind, the tops are
+ * the same at every later time (`columnTops` depends on time only through the changes and the
+ * spring), so the same map is handed back until the items or a card's height change: a still
+ * column costs no layout and no allocation per frame. A seek back lays it out again.
+ */
+export class ColumnTopsCache<T extends Placed = Placed> {
+  #items: readonly T[] | null = null;
+  readonly #heights: number[] = [];
+  #settledAt = Number.POSITIVE_INFINITY;
+  #settled: Map<string, number> | null = null;
+
+  tops(
+    items: readonly T[],
+    at: number,
+    tokens: ColumnTokens,
+    height: (item: T) => number,
+  ): Map<string, number> {
+    if (!this.#same(items, height)) {
+      this.#items = items;
+      this.#heights.length = items.length;
+      items.forEach((item, index) => {
+        this.#heights[index] = height(item);
+      });
+      this.#settledAt = settledAt(items, tokens);
+      this.#settled = null;
+    }
+    if (this.#settled !== null && at >= this.#settledAt) {
+      return this.#settled;
+    }
+    const tops = columnTops(items, at, tokens, height);
+    this.#settled = at >= this.#settledAt ? tops : null;
+    return tops;
+  }
+
+  #same(items: readonly T[], height: (item: T) => number): boolean {
+    if (items !== this.#items || items.length !== this.#heights.length) {
+      return false;
+    }
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item === undefined || height(item) !== this.#heights[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 export interface Motion {

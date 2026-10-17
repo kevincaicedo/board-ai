@@ -6,6 +6,7 @@
 //! cached prefix never changes mid-session.
 
 pub mod anthropic;
+pub mod base_url;
 pub mod catalog;
 mod error;
 pub(crate) mod http;

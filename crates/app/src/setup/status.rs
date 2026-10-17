@@ -12,6 +12,7 @@ use boardai_core::setup::{
 use boardai_runtime::audio::InputChoice;
 use boardai_runtime::audio::devices::DeviceSnapshot;
 use boardai_runtime::llm::Effort;
+use boardai_runtime::llm::base_url::same_endpoint;
 use boardai_runtime::llm::ollama::OLLAMA_DEFAULT_MODEL;
 use boardai_runtime::llm::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
 use boardai_runtime::llm::openrouter;
@@ -46,6 +47,9 @@ pub struct Probes {
     pub inputs: Inputs,
     /// The session already runs (setup finished, or a dev script skipped it).
     pub started: bool,
+    /// The start rule is being checked (finishing): the talker's key is read from the Keychain
+    /// even while a session runs, when this run never saw it.
+    pub read_talker_key: bool,
     /// The app macOS asks about the microphone instead of BoardAI (`permission::attributed_to`).
     pub mic_attributed_to: Option<String>,
 }
@@ -106,8 +110,16 @@ pub fn gather(
     probes: Probes,
 ) -> SetupStatus {
     let (settings, settings_problem) = load(paths);
-    // Once the session runs, the Keychain is read only when the owner asks (D-102).
+    // Once the session runs, the Keychain is read only when the owner asks (D-102), or for the
+    // start rule: a talker key this run never saw must not pass it as `NotChecked`.
     let read_keys = !probes.started;
+    let read_talker_key = read_keys || probes.read_talker_key;
+    if let Some(listed) = settings.talker.secret.as_ref().and_then(keys::listed)
+        && probes.read_talker_key
+        && seen.keys.seen(listed) == KeyState::NotChecked
+    {
+        keys::read(secrets, seen.keys, listed);
+    }
     let keys = keys::states(secrets, seen.keys, read_keys);
     let hearing: Vec<ModelId> = ModelId::whisper(&settings.stt.model)
         .into_iter()
@@ -123,7 +135,7 @@ pub fn gather(
         .secret
         .as_ref()
         .map_or(KeyState::NotNeeded, |name| {
-            keys::named(secrets, &keys, name, read_keys)
+            keys::named(secrets, &keys, name, read_talker_key)
         });
     let mut status = SetupStatus {
         complete: settings.setup_complete || probes.started,
@@ -217,12 +229,19 @@ fn elevenlabs(settings: &Settings) -> ElevenLabsVoice {
     ElevenLabsVoice { model, voice }
 }
 
-/// Which pill the configured talker is. A base URL the screen doesn't offer is `Other`.
+/// Which pill the configured talker is, by the endpoint its base URL names (a trailing slash
+/// or `127.0.0.1` for `localhost` is the same endpoint). A base URL the screen doesn't offer is
+/// `Other`.
 pub fn provider(talker: &LlmSettings) -> TalkerProvider {
     match (talker.kind, talker.base_url.as_deref()) {
         (LlmKind::Anthropic, None) => TalkerProvider::Claude,
-        (LlmKind::OpenAiCompatible, None | Some(OLLAMA_BASE_URL)) => TalkerProvider::Ollama,
-        (LlmKind::OpenAiCompatible, Some(OPENROUTER_BASE_URL)) => TalkerProvider::OpenRouter,
+        (LlmKind::OpenAiCompatible, None) => TalkerProvider::Ollama,
+        (LlmKind::OpenAiCompatible, Some(url)) if same_endpoint(url, OLLAMA_BASE_URL) => {
+            TalkerProvider::Ollama
+        }
+        (LlmKind::OpenAiCompatible, Some(url)) if same_endpoint(url, OPENROUTER_BASE_URL) => {
+            TalkerProvider::OpenRouter
+        }
         (LlmKind::Anthropic | LlmKind::OpenAiCompatible, Some(_)) => TalkerProvider::Other,
     }
 }
@@ -253,4 +272,36 @@ fn file_status(models: &ModelStore, downloads: &Downloads, id: ModelId) -> Model
 /// The models folder for a home folder (`just models` uses the same one).
 pub fn models_root(home: &Path) -> PathBuf {
     ModelStore::default_root(home)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use boardai_core::setup::TalkerProvider;
+    use boardai_runtime::settings::{LlmKind, Settings};
+
+    use super::provider;
+
+    /// Review 2, finding 10: the pill matched the base URL as an exact string, so
+    /// `https://openrouter.ai/api/v1/` showed as Other.
+    #[test]
+    fn the_provider_pill_reads_the_url_not_its_spelling() {
+        let mut talker = Settings::defaults(Path::new("/Users/me")).talker;
+        talker.kind = LlmKind::OpenAiCompatible;
+        for (url, pill) in [
+            ("https://openrouter.ai/api/v1", TalkerProvider::OpenRouter),
+            ("https://openrouter.ai/api/v1/", TalkerProvider::OpenRouter),
+            ("https://OpenRouter.ai/api/v1", TalkerProvider::OpenRouter),
+            ("http://localhost:11434/v1", TalkerProvider::Ollama),
+            ("http://localhost:11434/v1/", TalkerProvider::Ollama),
+            ("http://127.0.0.1:11434/v1", TalkerProvider::Ollama),
+            ("https://openrouter.ai/api/v2", TalkerProvider::Other),
+            ("https://example.com/v1", TalkerProvider::Other),
+            ("http://localhost:1234/v1", TalkerProvider::Other),
+        ] {
+            talker.base_url = Some(url.to_owned());
+            assert_eq!(provider(&talker), pill, "{url}");
+        }
+    }
 }

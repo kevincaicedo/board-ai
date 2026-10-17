@@ -107,6 +107,9 @@ interface RunView {
   soft: boolean;
 }
 
+/** The nib's written state: shown, x, y, scale, pulse, pen down. */
+const NIB_STATE_SIZE = 6;
+
 interface LayerView {
   readonly id: number;
   readonly svg: SVGSVGElement;
@@ -122,8 +125,11 @@ interface LayerView {
   /** Scale, x and y last written, so an unchanged camera writes nothing. */
   readonly lastTransform: Float64Array;
   lastBlur: number;
-  /** A detour layer's viewBox last written: its card's size, one unit per CSS pixel (D-151). */
-  lastViewBox: string;
+  /**
+   * A detour layer's viewBox last written, as its card's width and height: one unit per CSS
+   * pixel (D-151). Kept as numbers, so a frame whose card didn't change builds no string.
+   */
+  readonly lastViewBox: Float64Array;
   /** How far a leaving page had gone when last written (D-177); NaN forces the next write. */
   lastLeave: number;
 }
@@ -147,10 +153,14 @@ export class BoardView {
     frozenAt: 0,
   };
   #syncedVersion = -1;
-  /** NaN forces the first write, so a reset never leaves a stale push-back on the board. */
-  /** The push-back and end fade last written (`push|end`), so an unchanged board writes nothing. */
-  #lastPush = "";
-  #lastNib = "";
+  /**
+   * The push-back and the end fade last written, so an unchanged board writes nothing; numbers,
+   * so a still frame builds no string. NaN forces the first write, so a reset never leaves a
+   * stale push-back on the board.
+   */
+  readonly #lastPush = Float64Array.of(Number.NaN, Number.NaN);
+  /** The nib last written: shown (1 or 0), x, y, scale, pulse, pen down (1 or 0). */
+  readonly #lastNib = new Float64Array(NIB_STATE_SIZE).fill(Number.NaN);
   #hovered: { layer: number; key: string } | null = null;
   #maskSerial = 0;
 
@@ -205,7 +215,7 @@ export class BoardView {
     }
     this.#layers.clear();
     this.#syncedVersion = -1;
-    this.#lastPush = "";
+    this.#lastPush.fill(Number.NaN);
     this.#hovered = null;
     this.#options.yours?.reset();
   }
@@ -328,7 +338,7 @@ export class BoardView {
       host,
       lastTransform: Float64Array.of(Number.NaN, Number.NaN, Number.NaN),
       lastBlur: -1,
-      lastViewBox: "",
+      lastViewBox: Float64Array.of(Number.NaN, Number.NaN),
       lastLeave: Number.NaN,
     };
   }
@@ -459,10 +469,11 @@ export class BoardView {
 
   /** A detour layer draws one unit per pixel of its card, whatever size the card has grown to. */
   #sizeDetour(view: LayerView, card: DetourCard): void {
-    const box = `0 0 ${card.width} ${card.height}`;
-    if (box !== view.lastViewBox) {
-      view.lastViewBox = box;
-      view.svg.setAttribute("viewBox", box);
+    const last = view.lastViewBox;
+    if (card.width !== last[0] || card.height !== last[1]) {
+      last[0] = card.width;
+      last[1] = card.height;
+      view.svg.setAttribute("viewBox", `0 0 ${card.width} ${card.height}`);
     }
   }
 
@@ -654,11 +665,12 @@ export class BoardView {
     const rounded = amount <= 0.001 ? 0 : Math.round(amount * 1000) / 1000;
     const ended = this.#model.endedAmount(at, tokens.durationSceneMs);
     const gone = ended <= 0.001 ? 0 : Math.round(ended * 1000) / 1000;
-    const key = `${rounded}|${gone}`;
-    if (key === this.#lastPush) {
+    const last = this.#lastPush;
+    if (rounded === last[0] && gone === last[1]) {
       return;
     }
-    this.#lastPush = key;
+    last[0] = rounded;
+    last[1] = gone;
     const host = this.#mainHost.style;
     if (rounded === 0 && gone === 0) {
       host.removeProperty("filter");
@@ -676,8 +688,9 @@ export class BoardView {
     const endedAt = this.#model.endedAt;
     if (endedAt !== null && at >= endedAt) {
       // The session ended: the pen rests with the orb.
-      if (this.#lastNib !== "none") {
-        this.#lastNib = "none";
+      if (this.#lastNib[0] !== 0) {
+        this.#lastNib.fill(Number.NaN);
+        this.#lastNib[0] = 0;
         this.#nib.style.display = "none";
       }
       return;
@@ -690,25 +703,41 @@ export class BoardView {
       anchors,
       this.#nibFrame,
     );
-    let state: string;
+    const last = this.#lastNib;
     if (!frame.visible) {
-      state = "none";
-    } else {
-      const pulse = frame.frozen ? 0.72 + 0.28 * Math.cos(((at - frame.frozenAt) / 1000) * 4) : 1;
-      state = `${round1(frame.x)}|${round1(frame.y)}|${round2(frame.scale)}|${round2(pulse)}|${frame.down ? 1 : 0}`;
-    }
-    if (state === this.#lastNib) {
+      if (last[0] !== 0) {
+        last.fill(Number.NaN);
+        last[0] = 0;
+        this.#nib.style.display = "none";
+      }
       return;
     }
-    this.#lastNib = state;
-    if (!frame.visible) {
-      this.#nib.style.display = "none";
+    const x = round1(frame.x);
+    const y = round1(frame.y);
+    const scale = round2(frame.scale);
+    const pulse = round2(
+      frame.frozen ? 0.72 + 0.28 * Math.cos(((at - frame.frozenAt) / 1000) * 4) : 1,
+    );
+    const down = frame.down ? 1 : 0;
+    if (
+      last[0] === 1 &&
+      last[1] === x &&
+      last[2] === y &&
+      last[3] === scale &&
+      last[4] === pulse &&
+      last[5] === down
+    ) {
       return;
     }
-    const pulse = frame.frozen ? 0.72 + 0.28 * Math.cos(((at - frame.frozenAt) / 1000) * 4) : 1;
+    last[0] = 1;
+    last[1] = x;
+    last[2] = y;
+    last[3] = scale;
+    last[4] = pulse;
+    last[5] = down;
     this.#nib.style.display = "block";
-    this.#nib.style.transform = `translate(${round1(frame.x)}px, ${round1(frame.y)}px) scale(${round2(frame.scale)})`;
-    this.#nib.style.opacity = String(round2(pulse));
+    this.#nib.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    this.#nib.style.opacity = String(pulse);
     this.#nibGlow.style.opacity = frame.down ? "0.95" : "0.55";
   }
 }

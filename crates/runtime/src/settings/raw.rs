@@ -12,6 +12,7 @@ use super::{
 use crate::audio::{InputChoice, OutputChoice};
 use crate::limits::OPENROUTER_ROUTE_MAX;
 use crate::limits::{LLM_MAX_TOKENS_MAX, SCRIBE_MAX_TOKENS_DEFAULT, TALKER_MAX_TOKENS_DEFAULT};
+use crate::llm::base_url::is_loopback;
 use crate::llm::openai::OLLAMA_BASE_URL;
 use crate::llm::openrouter::{ProviderSlug, RouteError, is_openrouter, parse_route};
 use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
@@ -229,6 +230,9 @@ fn llm(raw: RawLlm, role: Role) -> Result<LlmSettings, SettingsError> {
             secret,
         ),
     };
+    if let (Some(url), Some(_)) = (&base_url, &secret) {
+        carries_a_key(&field("base_url"), url)?;
+    }
     let route = route(&field("route"), raw.route.as_deref(), base_url.as_deref())?;
     Ok(LlmSettings {
         kind,
@@ -340,18 +344,24 @@ fn tts(raw: RawProvider) -> Result<TtsSettings, SettingsError> {
                 secret: None,
             })
         }
-        TtsKind::ElevenLabs => Ok(TtsSettings {
-            kind,
-            model,
-            base_url: raw
+        TtsKind::ElevenLabs => {
+            let base_url = raw
                 .base_url
                 .map(|url| base_url("tts.base_url", &url))
-                .transpose()?,
-            secret: Some(secret_name(
-                "tts.secret",
-                raw.secret.as_deref().unwrap_or(ELEVENLABS_SECRET),
-            )?),
-        }),
+                .transpose()?;
+            if let Some(url) = &base_url {
+                carries_a_key("tts.base_url", url)?;
+            }
+            Ok(TtsSettings {
+                kind,
+                model,
+                base_url,
+                secret: Some(secret_name(
+                    "tts.secret",
+                    raw.secret.as_deref().unwrap_or(ELEVENLABS_SECRET),
+                )?),
+            })
+        }
     }
 }
 
@@ -407,6 +417,19 @@ fn base_url(field: &str, value: &str) -> Result<String, SettingsError> {
         return Err(invalid(field, "must not carry credentials; use `secret`"));
     }
     Ok(value.to_owned())
+}
+
+/// A base URL a key goes to (the role names a `secret`): https, unless it is this Mac, so a key
+/// never crosses a network in cleartext (law 10). `url` already parsed in [`base_url`].
+fn carries_a_key(field: &str, url: &str) -> Result<(), SettingsError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| invalid(field, "is not a valid URL"))?;
+    if parsed.scheme() == "https" || is_loopback(&parsed) {
+        return Ok(());
+    }
+    Err(invalid(
+        field,
+        "must be https when a key goes with it (plain http only to this Mac)",
+    ))
 }
 
 /// A secret's name. A value that looks like the key itself gets its own error, so the user

@@ -3,7 +3,7 @@
 //! settings change. Refusals are plain words for the card they belong to; none quotes a key.
 
 use boardai_core::setup::{
-    InputDevice, KeyName, MicChoice, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit,
+    InputDevice, KeyName, KeyState, MicChoice, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit,
     TalkerProvider, VoiceEngine,
 };
 use boardai_runtime::audio::InputChoice;
@@ -77,8 +77,9 @@ pub struct EditContext<'a> {
     /// What the model picker last listed about the chosen OpenRouter model (its thinking);
     /// `None` when the picker never listed it.
     pub open_router_model: Option<&'a ModelInfo>,
-    /// An ElevenLabs key is saved.
-    pub elevenlabs_key: bool,
+    /// The ElevenLabs key's state; looked up only for the choice that needs it, else
+    /// `NotNeeded`.
+    pub elevenlabs_key: KeyState,
     /// Input devices macOS lists now; a microphone is chosen by name only from these.
     pub devices: &'a [String],
 }
@@ -103,8 +104,16 @@ pub fn settings_edit(edit: &SetupEdit, known: EditContext<'_>) -> Result<Setting
         SetupEdit::Voice { engine } => match engine {
             VoiceEngine::Kokoro => Ok(SettingsEdit::Tts(TtsKind::Kokoro)),
             VoiceEngine::System => Ok(SettingsEdit::Tts(TtsKind::System)),
-            VoiceEngine::ElevenLabs if elevenlabs_key => Ok(SettingsEdit::Tts(TtsKind::ElevenLabs)),
-            VoiceEngine::ElevenLabs => Err("Save an ElevenLabs key first.".to_owned()),
+            VoiceEngine::ElevenLabs => match elevenlabs_key {
+                KeyState::Saved => Ok(SettingsEdit::Tts(TtsKind::ElevenLabs)),
+                KeyState::Unreadable => Err(
+                    "The Keychain didn't answer for the ElevenLabs key. Unlock it and try again."
+                        .to_owned(),
+                ),
+                KeyState::Missing | KeyState::NotChecked | KeyState::NotNeeded => {
+                    Err("Save an ElevenLabs key first.".to_owned())
+                }
+            },
         },
         SetupEdit::Mic { mode } => Ok(SettingsEdit::Mic(match mode {
             MicChoice::Open => MicMode::Open,
@@ -311,8 +320,8 @@ mod tests {
     use std::path::Path;
 
     use boardai_core::setup::{
-        InputDevice, KeyName, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit, TalkerProvider,
-        VoiceEngine,
+        InputDevice, KeyName, KeyState, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit,
+        TalkerProvider, VoiceEngine,
     };
     use boardai_runtime::audio::InputChoice;
     use boardai_runtime::limits::SECRET_VALUE_MAX_BYTES;
@@ -330,7 +339,7 @@ mod tests {
     fn known<'a>(
         current: &'a Settings,
         ollama: &'a OllamaStatus,
-        elevenlabs_key: bool,
+        elevenlabs_key: KeyState,
         devices: &'a [String],
     ) -> EditContext<'a> {
         EditContext {
@@ -389,7 +398,13 @@ mod tests {
         };
         // An unknown provider name never gets this far: `SetupEdit` fails to deserialize at
         // the command boundary (core::setup tests).
-        assert!(settings_edit(&other, known(&defaults(), &unreachable, false, &[])).is_err());
+        assert!(
+            settings_edit(
+                &other,
+                known(&defaults(), &unreachable, KeyState::NotNeeded, &[])
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -402,7 +417,7 @@ mod tests {
             model: None,
         };
         let Ok(SettingsEdit::Llm { talker, scribe }) =
-            settings_edit(&pick, known(&defaults(), &listed, false, &[]))
+            settings_edit(&pick, known(&defaults(), &listed, KeyState::NotNeeded, &[]))
         else {
             panic!("an Ollama talker");
         };
@@ -414,7 +429,13 @@ mod tests {
             provider: TalkerProvider::Ollama,
             model: Some("x".repeat(500)),
         };
-        assert!(settings_edit(&named, known(&defaults(), &listed, false, &[])).is_err());
+        assert!(
+            settings_edit(
+                &named,
+                known(&defaults(), &listed, KeyState::NotNeeded, &[])
+            )
+            .is_err()
+        );
     }
 
     fn open_router(model: Option<&str>) -> SetupEdit {
@@ -427,7 +448,7 @@ mod tests {
     fn picked(edit: &SetupEdit, listed: Option<&ModelInfo>) -> (LlmChoice, LlmChoice) {
         let unreachable = OllamaStatus::Unreachable;
         let current = defaults();
-        let mut context = known(&current, &unreachable, false, &[]);
+        let mut context = known(&current, &unreachable, KeyState::NotNeeded, &[]);
         context.open_router_model = listed;
         let Ok(SettingsEdit::Llm { talker, scribe }) = settings_edit(edit, context) else {
             panic!("an OpenRouter talker for {edit:?}");
@@ -485,7 +506,13 @@ mod tests {
         let unreachable = OllamaStatus::Unreachable;
         for bad in ["gemma4:latest", "../../etc", "x/a b"] {
             let edit = open_router(Some(bad));
-            assert!(settings_edit(&edit, known(&defaults(), &unreachable, false, &[])).is_err());
+            assert!(
+                settings_edit(
+                    &edit,
+                    known(&defaults(), &unreachable, KeyState::NotNeeded, &[])
+                )
+                .is_err()
+            );
         }
     }
 
@@ -495,21 +522,48 @@ mod tests {
         let voice = SetupEdit::Voice {
             engine: VoiceEngine::ElevenLabs,
         };
-        assert!(settings_edit(&voice, known(&defaults(), &unreachable, false, &[])).is_err());
-        assert!(settings_edit(&voice, known(&defaults(), &unreachable, true, &[])).is_ok());
+        assert!(
+            settings_edit(
+                &voice,
+                known(&defaults(), &unreachable, KeyState::NotNeeded, &[])
+            )
+            .is_err()
+        );
+        assert!(
+            settings_edit(
+                &voice,
+                known(&defaults(), &unreachable, KeyState::Saved, &[])
+            )
+            .is_ok()
+        );
+        let current = defaults();
+        let locked = known(&current, &unreachable, KeyState::Unreadable, &[]);
+        assert!(
+            settings_edit(&voice, locked).is_err_and(|words| words.contains("Unlock")),
+            "a locked Keychain is said as such, not as a missing key"
+        );
         let named = SetupEdit::Input {
             device: InputDevice::Named {
                 name: "Studio Display Microphone".to_owned(),
             },
         };
         let current = defaults();
-        assert!(settings_edit(&named, known(&current, &unreachable, false, &[])).is_err());
+        assert!(
+            settings_edit(
+                &named,
+                known(&current, &unreachable, KeyState::NotNeeded, &[])
+            )
+            .is_err()
+        );
         let devices = [
             "MacBook Pro Microphone".to_owned(),
             "Studio Display Microphone".to_owned(),
         ];
         assert_eq!(
-            settings_edit(&named, known(&current, &unreachable, false, &devices)),
+            settings_edit(
+                &named,
+                known(&current, &unreachable, KeyState::NotNeeded, &devices)
+            ),
             Ok(SettingsEdit::Input(InputChoice::Named(
                 "Studio Display Microphone".to_owned()
             )))
@@ -528,15 +582,20 @@ mod tests {
         };
         let claude = defaults();
         assert!(
-            settings_edit(&qwen, known(&claude, &unreachable, false, &[])).is_err(),
+            settings_edit(
+                &qwen,
+                known(&claude, &unreachable, KeyState::NotNeeded, &[])
+            )
+            .is_err(),
             "Claude's digests stay on Claude Haiku"
         );
         let mut open_router = defaults();
         open_router.talker.kind = LlmKind::OpenAiCompatible;
         open_router.talker.base_url = Some(OPENROUTER_BASE_URL.to_owned());
-        let Ok(SettingsEdit::Scribe(preset)) =
-            settings_edit(&qwen, known(&open_router, &unreachable, false, &[]))
-        else {
+        let Ok(SettingsEdit::Scribe(preset)) = settings_edit(
+            &qwen,
+            known(&open_router, &unreachable, KeyState::NotNeeded, &[]),
+        ) else {
             panic!("a scribe on OpenRouter");
         };
         assert_eq!(preset.route, QWEN_3_8_27B.route());
@@ -553,7 +612,7 @@ mod tests {
             preset: false,
             route: Vec::new(),
         };
-        let mut context = known(&open_router, &unreachable, false, &[]);
+        let mut context = known(&open_router, &unreachable, KeyState::NotNeeded, &[]);
         context.open_router_model = Some(&listed);
         let Ok(SettingsEdit::Scribe(plain)) = settings_edit(&other, context) else {
             panic!("a listed model");
@@ -565,7 +624,13 @@ mod tests {
             let edit = SetupEdit::Scribe {
                 model: bad.to_owned(),
             };
-            assert!(settings_edit(&edit, known(&open_router, &unreachable, false, &[])).is_err());
+            assert!(
+                settings_edit(
+                    &edit,
+                    known(&open_router, &unreachable, KeyState::NotNeeded, &[])
+                )
+                .is_err()
+            );
         }
         let mut local = defaults();
         local.talker.kind = LlmKind::OpenAiCompatible;
@@ -573,9 +638,10 @@ mod tests {
         let small = SetupEdit::Scribe {
             model: "qwen3.5:2b".to_owned(),
         };
-        let Ok(SettingsEdit::Scribe(ollama)) =
-            settings_edit(&small, known(&local, &unreachable, false, &[]))
-        else {
+        let Ok(SettingsEdit::Scribe(ollama)) = settings_edit(
+            &small,
+            known(&local, &unreachable, KeyState::NotNeeded, &[]),
+        ) else {
             panic!("an Ollama scribe");
         };
         assert_eq!(ollama.model.as_deref(), Some("qwen3.5:2b"));
@@ -592,10 +658,19 @@ mod tests {
         ];
         let second = SetupEdit::RemoveCodeFolder { index: 1 };
         assert_eq!(
-            settings_edit(&second, known(&current, &unreachable, false, &[])),
+            settings_edit(
+                &second,
+                known(&current, &unreachable, KeyState::NotNeeded, &[])
+            ),
             Ok(SettingsEdit::RemoveCodeRoot(1))
         );
         let gone = SetupEdit::RemoveCodeFolder { index: 2 };
-        assert!(settings_edit(&gone, known(&current, &unreachable, false, &[])).is_err());
+        assert!(
+            settings_edit(
+                &gone,
+                known(&current, &unreachable, KeyState::NotNeeded, &[])
+            )
+            .is_err()
+        );
     }
 }

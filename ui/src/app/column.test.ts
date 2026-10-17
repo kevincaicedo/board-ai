@@ -7,7 +7,13 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
-import { columnTops, SURFACES_VISIBLE_MAX, surfaceMotion } from "./layout.ts";
+import {
+  ColumnTopsCache,
+  columnTops,
+  type Placed,
+  SURFACES_VISIBLE_MAX,
+  surfaceMotion,
+} from "./layout.ts";
 import { type ColumnItem, DETOUR_CARDS_MAX, SessionStore } from "./session.ts";
 
 const tokens = readTokens(
@@ -136,4 +142,34 @@ test("a lone card taller than the column's middle allows starts at the column's 
     tokens.surfaceCenter - tokens.detourCardHeight / 2,
     "frame 4's card stays centered",
   );
+});
+
+// Review 2 (CLAUDE.md, per-frame allocation): the column copied every item to set a detour
+// card's grown height, and laid the column out again, on every frame. The height is now looked
+// up, and once the column has settled the same tops are handed back until something changes.
+test("a settled column hands back the same tops each frame; a change lays it out again", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 1000);
+  store.apply({ type: "SurfaceShow", surface: code }, 2000);
+  const items = store.column.value;
+  const grown = new Map<string, number>([["layer-1", 500]]);
+  const height = (item: Placed): number => grown.get(item.key) ?? item.height;
+  const cache = new ColumnTopsCache();
+  const settled = 2000 + tokens.durationSceneMs + 100;
+  const first = cache.tops(items, settled, tokens, height);
+  assert.deepEqual(first, columnTops(items, settled, tokens, height));
+  assert.equal(cache.tops(items, settled + 16, tokens, height), first, "the same map: no work");
+  assert.equal(first.get("surface-0"), tokens.surfaceTop + 500 + tokens.surfaceGap);
+  // While cards move, every frame is laid out.
+  const moving = 2000 + tokens.durationSceneMs / 2;
+  assert.notEqual(cache.tops(items, moving, tokens, height), first);
+  // The detour's drawing grew its card: laid out again with the new height.
+  grown.set("layer-1", 640);
+  const taller = cache.tops(items, settled + 32, tokens, height);
+  assert.notEqual(taller, first);
+  assert.equal(taller.get("surface-0"), tokens.surfaceTop + 640 + tokens.surfaceGap);
+  // A new item list (a card arrived) too.
+  store.apply({ type: "SurfaceShow", surface: compare }, 9000);
+  const more = cache.tops(store.column.value, 9000 + tokens.durationSceneMs, tokens, height);
+  assert.equal(more.has("surface-1"), true);
 });

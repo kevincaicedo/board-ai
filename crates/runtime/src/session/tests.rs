@@ -163,6 +163,8 @@ struct Recorder {
     lifecycle: Mutex<Vec<&'static str>>,
     /// After this many session starts, a start never answers (a wedged vault volume).
     starts_answered_max: Mutex<Option<usize>>,
+    /// The library never answers (an index locked by a long rebuild).
+    library_stalls: Mutex<bool>,
 }
 
 impl Recorder {
@@ -263,6 +265,10 @@ impl StoreSink for Recorder {
     }
 
     fn read(&self, read: StoreRead) -> BoxFuture<'static, ToolOutput> {
+        let stalls = self.library_stalls.lock().is_ok_and(|stalls| *stalls);
+        if stalls && matches!(read, StoreRead::Library) {
+            return Box::pin(std::future::pending());
+        }
         self.memory.read(read)
     }
 

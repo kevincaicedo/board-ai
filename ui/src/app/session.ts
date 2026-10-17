@@ -170,6 +170,11 @@ export class SessionStore {
    * one; a replay never does. Not reset with the stage: a request is a one-shot.
    */
   readonly settingsRequests = signal(0);
+  /**
+   * The settings page is over the stage (UI-local, like a scroll position): the stage's keys
+   * wait while it is open. Set by `installSettings`; not reset with the stage.
+   */
+  readonly settingsOpen = signal(false);
   readonly #tokens: SessionTokens;
   #chipSerial = 0;
 

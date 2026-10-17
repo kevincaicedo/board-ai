@@ -49,6 +49,13 @@ impl KeyLedger {
     }
 }
 
+/// The screen's key a settings secret name is, if it is one (not a hand-written name).
+pub fn listed(secret: &SecretName) -> Option<KeyName> {
+    KEY_NAMES
+        .into_iter()
+        .find(|key| key.secret_name() == secret.as_str())
+}
+
 /// Asks the Keychain whether `name` holds a value (it may prompt; blocks) and records it.
 pub fn read(secrets: &dyn SecretStore, ledger: &KeyLedger, name: KeyName) -> KeyState {
     let Some(secret) = secret_name(name) else {
@@ -57,6 +64,24 @@ pub fn read(secrets: &dyn SecretStore, ledger: &KeyLedger, name: KeyName) -> Key
     let state = presence(secrets, &secret);
     ledger.record(name, state);
     state
+}
+
+/// The key a choice needs (ElevenLabs as the voice): while a session runs, as this run last saw
+/// it; read now (and recorded) before one runs, or when this run never saw it.
+pub fn for_choice(
+    secrets: &dyn SecretStore,
+    ledger: &KeyLedger,
+    name: KeyName,
+    session_runs: bool,
+) -> KeyState {
+    match ledger.seen(name) {
+        seen @ (KeyState::Saved | KeyState::Missing | KeyState::Unreadable) if session_runs => seen,
+        KeyState::Saved
+        | KeyState::Missing
+        | KeyState::Unreadable
+        | KeyState::NotChecked
+        | KeyState::NotNeeded => read(secrets, ledger, name),
+    }
 }
 
 /// Every key's state: read from the Keychain now, or as this run last saw it.

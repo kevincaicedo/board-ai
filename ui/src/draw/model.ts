@@ -40,8 +40,14 @@ export class DrawModel {
   readonly hint = signal<LabelHint | null>(null);
   /** The tool the pointer draws with (UI-local). */
   readonly tool = signal<Tool>("pen");
-  /** Bumped by every echo of a shape (new, changed or undone), so a preview knows to go. */
-  readonly echoes = signal(0);
+  /**
+   * Shapes the core took from the pointer: bumped when a shape is new on its layer, or a pen
+   * shape gained a stroke (one joined it, D-164). Each shape sent is at most one of these, so a
+   * preview waits for its own; a label, a note, an arrow reconnecting or an undo re-sends a shape
+   * without taking one, and must not take a preview away early. Never reset: previews compare
+   * against it across sessions.
+   */
+  readonly accepted = signal(0);
   /** Your shapes by layer, then by id, in the order they were first drawn. */
   readonly layers = new Map<number, Map<string, Yours>>();
   readonly counters: DrawCounters = { dropped: 0 };
@@ -80,7 +86,6 @@ export class DrawModel {
         if (this.layers.get(event.layer)?.delete(event.id) === true) {
           this.version += 1;
         }
-        this.echoes.value += 1;
         break;
     }
   }
@@ -110,12 +115,20 @@ export class DrawModel {
       shapes = new Map();
       this.layers.set(layer, shapes);
     }
-    if (!shapes.has(shape.id) && shapes.size >= USER_SHAPES_PER_LAYER_MAX) {
+    const before = shapes.get(shape.id);
+    if (before === undefined && shapes.size >= USER_SHAPES_PER_LAYER_MAX) {
       this.counters.dropped += 1;
       return;
     }
     shapes.set(shape.id, { layer, shape, at });
     this.version += 1;
-    this.echoes.value += 1;
+    if (before === undefined || strokeCount(shape) > strokeCount(before.shape)) {
+      this.accepted.value += 1;
+    }
   }
+}
+
+/** A pen shape's strokes; other shapes take none after the first. */
+function strokeCount(shape: UserShape): number {
+  return shape.kind.kind === "Ink" ? shape.kind.strokes.length : 0;
 }

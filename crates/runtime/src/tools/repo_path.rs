@@ -1,7 +1,9 @@
 //! Paths the talker names are parsed once, here, into a [`RepoPath`] that is canonical and sits
 //! under a folder the user opened (LLD §9). Nothing outside those folders is read, and nothing
-//! outside is even probed for existence.
+//! outside is even probed for existence. Inside them, credential folders and files
+//! ([`CREDENTIAL_PATHS`]) are never read, searched or listed.
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
@@ -23,6 +25,79 @@ impl ToolError {
             message: message.into(),
         }
     }
+}
+
+/// Where credentials live, as one or two path components matched anywhere in a canonical path:
+/// the repo tools never read, search or list them, whatever folder is open (a home folder
+/// opened by hand in `settings.toml`, a dotfiles repo). A symlink into one is refused by where
+/// it leads. `.docker` and `.kube` themselves hold ordinary project files, so only their
+/// credential files are listed.
+pub const CREDENTIAL_PATHS: [&[&str]; 12] = [
+    &[".ssh"],
+    &[".aws"],
+    &[".gnupg"],
+    &[".azure"],
+    &[".password-store"],
+    &[".config", "gh"],
+    &[".config", "gcloud"],
+    &[".kube", "config"],
+    &[".docker", "config.json"],
+    &["Library", "Keychains"],
+    &[".netrc"],
+    &[".git-credentials"],
+];
+
+/// `path` is, or is inside, one of [`CREDENTIAL_PATHS`].
+pub(crate) fn is_credential(path: &Path) -> bool {
+    let parts: Vec<&OsStr> = path
+        .components()
+        .filter_map(|part| match part {
+            Component::Normal(name) => Some(name),
+            Component::Prefix(_)
+            | Component::RootDir
+            | Component::CurDir
+            | Component::ParentDir => None,
+        })
+        .collect();
+    CREDENTIAL_PATHS.iter().any(|pattern| {
+        parts.windows(pattern.len()).any(|window| {
+            window
+                .iter()
+                .zip(pattern.iter())
+                .all(|(part, wanted)| *part == OsStr::new(wanted))
+        })
+    })
+}
+
+/// Why a folder can't be opened for the repo tools: it would put far more than code in reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TooBroad {
+    /// The disk's root, the home folder, or a folder above it (`/Users`): every file of yours.
+    HomeOrAbove,
+    /// `~/Library` or inside it, where apps keep their data, keychains and caches.
+    AppData,
+}
+
+/// Whether `folder` is too broad to open as a code folder, compared canonically where both
+/// exist (a symlink to `~` is `~`). The settings page refuses it, and a session skips one a
+/// hand-edited `settings.toml` names.
+#[must_use]
+pub fn too_broad(folder: &Path, home: &Path) -> Option<TooBroad> {
+    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let (folder, home) = (canonical(folder), canonical(home));
+    if home.starts_with(&folder) {
+        return Some(TooBroad::HomeOrAbove);
+    }
+    folder
+        .starts_with(home.join("Library"))
+        .then_some(TooBroad::AppData)
+}
+
+fn credential_refused() -> ToolError {
+    ToolError::new(
+        ToolFailure::OutsideRepo,
+        "credential folders and files are never read",
+    )
 }
 
 /// The folders the user opened, canonicalized when opened.
@@ -133,6 +208,10 @@ impl RepoRoots {
         }
         let mut not_found = true;
         for candidate in self.candidates(path) {
+            if is_credential(&candidate) {
+                // Refused before the file system is asked whether it exists.
+                return Err(credential_refused());
+            }
             match std::fs::canonicalize(&candidate) {
                 Ok(canonical) => return self.contain(canonical),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -188,6 +267,9 @@ impl RepoRoots {
                 "the path leads outside the open folders",
             ));
         };
+        if is_credential(&canonical) {
+            return Err(credential_refused());
+        }
         let display = self.display_in(root, &canonical);
         Ok(RepoPath {
             absolute: canonical,

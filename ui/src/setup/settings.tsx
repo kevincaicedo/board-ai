@@ -2,7 +2,7 @@
 // the core) shows the settings page (artboard 12, SettingsPage.tsx) through the first run's
 // entry point, which picks the page from the status. Closing it (Esc, ⌘, or "Back to talking")
 // finishes setup again: the app closes the page, and restarts the session when something was
-// saved. The stage keeps running underneath until then.
+// saved. The stage keeps running underneath until then, but its keys wait (`settingsOpen`).
 
 import { effect } from "@preact/signals";
 import { render } from "preact";
@@ -25,10 +25,12 @@ export function installSettings(
     const element = document.createElement("div");
     document.body.append(element);
     host = element;
+    store.settingsOpen.value = true;
     showFirstRun(element, transport, null, view, () => {
       render(null, element);
       element.remove();
       host = null;
+      store.settingsOpen.value = false;
     });
   };
   const keydown = (event: KeyboardEvent): void => {

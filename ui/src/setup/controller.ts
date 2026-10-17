@@ -1,5 +1,6 @@
 // Drives the first-run screen: every action goes to the app through the SetupTransport, and
-// every answer goes through the reducer into one signal the components read. Downloads start
+// every answer goes through the reducer into one signal the components read. Once "Start
+// talking" or leaving the settings page is on its way, nothing else is sent. Downloads start
 // on their own for the files the session needs; a status that says a file is downloading
 // without a channel here (after a reload) is asked for again until it isn't.
 
@@ -16,6 +17,7 @@ import {
   canStart,
   filesToFetch,
   initialState,
+  leaving,
   needsPolling,
   reduce,
   type SetupAction,
@@ -165,6 +167,9 @@ export class SetupController {
   }
 
   async openVault(): Promise<void> {
+    if (leaving(this.state.value)) {
+      return;
+    }
     try {
       await this.#transport.openVault();
     } catch (error) {
@@ -173,7 +178,7 @@ export class SetupController {
   }
 
   async rebuildIndex(): Promise<void> {
-    if (this.state.value.busy.has("memory")) {
+    if (this.state.value.busy.has("memory") || leaving(this.state.value)) {
       return;
     }
     this.#dispatch({ type: "busy", card: "memory" });
@@ -199,6 +204,9 @@ export class SetupController {
 
   /** "Open Microphone settings": a failure is said on the microphone card. */
   async openMicrophoneSettings(): Promise<void> {
+    if (leaving(this.state.value)) {
+      return;
+    }
     try {
       await this.#transport.openMicrophoneSettings();
     } catch (error) {
@@ -258,6 +266,11 @@ export class SetupController {
   }
 
   async #request(card: Card, run: () => Promise<SetupStatus>): Promise<void> {
+    // The app is starting a session from the settings as they are: a change now would be lost
+    // or would skip the start rule.
+    if (leaving(this.state.value)) {
+      return;
+    }
     this.#dispatch({ type: "busy", card });
     const ticket = ++this.#issued;
     try {

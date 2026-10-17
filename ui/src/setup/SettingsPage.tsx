@@ -60,6 +60,27 @@ export function SettingsPage({
     page.current?.focus();
   }, []);
 
+  // Esc and ⌘, leave from anywhere while the page is open, even with focus back on the body
+  // after a focused control went away: a listener on the page's own element missed those. The
+  // stage's keys don't need stopping here; they wait on `settingsOpen` (keys.ts).
+  useEffect(() => {
+    const leave = (event: KeyboardEvent): void => {
+      const shortcut = opensSettings({
+        code: event.code,
+        meta: event.metaKey,
+        repeat: event.repeat,
+      });
+      if ((event.code === "Escape" && !event.repeat) || shortcut) {
+        event.preventDefault();
+        // ⌘, would otherwise reach installSettings' listener, which only opens.
+        event.stopPropagation();
+        void controller.leave();
+      }
+    };
+    window.addEventListener("keydown", leave, { capture: true });
+    return () => window.removeEventListener("keydown", leave, { capture: true });
+  }, [controller]);
+
   useLayoutEffect(() => {
     const host = orbHost.current;
     // The host's size is the token (--settings-orb); the orb draws to it.
@@ -112,25 +133,7 @@ export function SettingsPage({
 
   const waiting = state.problems.start === null || status === null ? null : startHint(status);
   return (
-    <main
-      class="settings"
-      aria-label="Settings"
-      ref={page}
-      tabIndex={-1}
-      onKeyDown={(event) => {
-        // The stage's keys (Space, M, Esc) wait while settings are open.
-        event.stopPropagation();
-        const shortcut = opensSettings({
-          code: event.code,
-          meta: event.metaKey,
-          repeat: event.repeat,
-        });
-        if (event.code === "Escape" || shortcut) {
-          event.preventDefault();
-          void controller.leave();
-        }
-      }}
-    >
+    <main class="settings" aria-label="Settings" ref={page} tabIndex={-1}>
       <nav class="settings-nav" aria-label="Settings sections">
         <div class="settings-brand">
           <div class="settings-orb" ref={orbHost} />

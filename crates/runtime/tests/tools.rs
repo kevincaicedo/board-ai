@@ -280,3 +280,92 @@ async fn tools_run_on_the_blocking_pool_and_refuse_other_tools() {
     assert_eq!(kind, ToolFailure::OutsideRepo);
     assert!(!message.contains("secret }"));
 }
+
+/// A home folder opened by hand, with the usual credentials in it and a symlink into `.ssh`.
+fn credential_home() -> (TempFolder, PathBuf, RepoRoots) {
+    let folder = TempFolder::new("tools-credentials");
+    let planted = b"fn route() { PLANTED-CREDENTIAL }\n";
+    for credential in [
+        "home/.ssh/id_ed25519",
+        "home/.aws/credentials",
+        "home/.gnupg/private-keys-v1.d/key",
+        "home/.config/gh/hosts.yml",
+        "home/.config/gcloud/credentials.db",
+        "home/.azure/accessTokens.json",
+        "home/.password-store/mail.gpg",
+        "home/.kube/config",
+        "home/.docker/config.json",
+        "home/Library/Keychains/login.keychain-db",
+        "home/.netrc",
+        "home/.git-credentials",
+    ] {
+        folder.write(credential, planted);
+    }
+    folder.write("home/code/app.rs", b"fn route() {}\n");
+    folder.write("home/.docker/compose.yml", b"fn route compose\n");
+    folder.write("home/.config/nvim/init.lua", b"fn route nvim\n");
+    let home = folder.path.join("home");
+    symlink(home.join(".ssh"), home.join("code/keys")).expect("symlink to .ssh");
+    let roots = RepoRoots::open(std::slice::from_ref(&home)).expect("open home");
+    (folder, home, roots)
+}
+
+/// Review 2, finding 10: an opened folder can hold credentials (a home folder opened by hand
+/// in `settings.toml`, a dotfiles repo). The repo tools never read, search or list them, and
+/// a symlink into one is refused the same way.
+#[test]
+fn credential_folders_inside_an_opened_folder_are_never_read() {
+    let (_folder, home, roots) = credential_home();
+    for path in [
+        ".ssh/id_ed25519",
+        ".aws/credentials",
+        ".config/gh/hosts.yml",
+        ".kube/config",
+        ".docker/config.json",
+        "Library/Keychains/login.keychain-db",
+        ".netrc",
+        ".git-credentials",
+        "code/keys/id_ed25519",
+    ] {
+        assert_eq!(
+            failure(read(&roots, path, None, None)),
+            ToolFailure::OutsideRepo,
+            "{path} was read"
+        );
+    }
+    let absolute = home.join(".ssh/id_ed25519");
+    let absolute = absolute.to_string_lossy();
+    assert_eq!(
+        failure(read(&roots, &absolute, None, None)),
+        ToolFailure::OutsideRepo
+    );
+    let (hits, _) = hit_paths(search(&roots, "fn route", None));
+    assert_eq!(
+        hits,
+        [
+            ".config/nvim/init.lua:1",
+            ".docker/compose.yml:1",
+            "code/app.rs:1"
+        ],
+        "a search never opens a credential file"
+    );
+    let listing = run_blocking(&roots, &ToolCall::ListDir { path: ".".into() });
+    let Ok(ToolOutput::Listing { entries, .. }) = listing else {
+        panic!("expected a listing, got {listing:?}");
+    };
+    let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+    assert_eq!(
+        names,
+        [".config", ".docker", ".kube", "Library", "code"],
+        "a folder that only holds a credential file is listed; the file is not"
+    );
+    assert_eq!(
+        failure(run_blocking(
+            &roots,
+            &ToolCall::ListDir {
+                path: ".ssh".into()
+            }
+        )),
+        ToolFailure::OutsideRepo
+    );
+}

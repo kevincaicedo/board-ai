@@ -119,3 +119,41 @@ test("while you draw, Enter is Done, Esc leaves drawing and ⌘Z undoes", () => 
     action: "TalkDown",
   });
 });
+
+// Review 2: ⌘⇧Z is redo on macOS. KeyPress carried no Shift, so it read as ⌘Z and undid
+// another shape.
+test("⌘⇧Z (redo on macOS) undoes nothing while you draw", () => {
+  const redo = press("KeyZ", { modified: true, shortcut: true, shift: true });
+  assert.equal(keyDownCommand(redo, drawingNow), null);
+});
+
+// Review 2: Done is disabled while muted (the core drops a muted Done, D-163), but Enter sent it.
+test("Enter while muted and drawing sends no Done, as the disabled button doesn't", () => {
+  assert.equal(keyDownCommand(press("Enter"), { ...drawingNow, muted: true }), null);
+});
+
+// Review 2: the settings page listened on its own <main>; once the focused control went away,
+// keys reached the stage behind it (Esc stopped BoardAI, Space talked, M muted, D drew).
+test("no key reaches the stage while settings are open", () => {
+  const settings = { ...live, settings: true } as const;
+  const keys: KeyPress[] = [
+    press("Escape"),
+    press("Space"),
+    press("KeyM"),
+    press("KeyD"),
+    press("Enter"),
+    press("KeyZ", { modified: true, shortcut: true }),
+  ];
+  for (const key of keys) {
+    assert.equal(keyDownCommand(key, settings), null, key.code);
+    assert.equal(keyDownCommand(key, { ...settings, drawing: true }), null, `${key.code} drawing`);
+    assert.equal(
+      keyDownCommand(key, { ...settings, escape: "close-view" }),
+      null,
+      `${key.code} view`,
+    );
+  }
+  const talk = new PushToTalk();
+  assert.equal(talk.down(press("Space"), settings), null);
+  assert.equal(talk.held, false, "no hold starts behind settings");
+});

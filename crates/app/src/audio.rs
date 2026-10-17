@@ -41,6 +41,11 @@ pub struct RunningAudio {
 }
 
 impl RunningAudio {
+    /// Speech in runs: the session hears the microphone.
+    pub fn hears(&self) -> bool {
+        self.listener.is_some()
+    }
+
     /// Stops speech in's threads, then the unit (which ends the device captions).
     pub async fn stop(self) {
         if let Some(listener) = self.listener {

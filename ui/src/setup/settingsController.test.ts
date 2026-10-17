@@ -148,3 +148,42 @@ test("leaving waits for a save, then finishes; a blocker keeps the page open", a
   await controller.leave();
   assert.equal(controller.value.finished, true);
 });
+
+// Review 2: a model picked while "Back to talking" was finishing reached the app, which then
+// restarted from the settings it read before the save landed (or saved it without the start
+// rule). Once leaving has started the page sends nothing more; the app refuses too.
+test("once leaving has started, nothing more is sent", async () => {
+  const { transport, controller } = open();
+  let release: () => void = () => {};
+  // The app ends the session (its digest, up to seconds) before setup_finish answers.
+  transport.finish = () => {
+    transport.calls.push({ kind: "finish" });
+    return new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  };
+  const leaving = controller.leave();
+  assert.equal(controller.value.busy.has("start"), true, "leaving is in flight");
+  // The page is still on screen, and the model table only disables while "thinking" is busy.
+  assert.equal(controller.value.busy.has("thinking"), false);
+  await controller.pickModel("OpenRouter", "qwen/qwen3.8-27b");
+  await controller.pickScribe("qwen/qwen3.8-27b");
+  await controller.useVoice("System");
+  await controller.pickMode("PushToTalk");
+  await controller.replaceKey("OpenRouter", KEY);
+  await controller.removeKey("Anthropic");
+  await controller.checkKeys();
+  await controller.addCodeFolder();
+  await controller.removeCodeFolder(0);
+  await controller.allowMicrophone();
+  await controller.openMicrophoneSettings();
+  await controller.openVault();
+  await controller.rebuildIndex();
+  release();
+  await leaving;
+  assert.deepEqual(sent(transport), [{ kind: "finish" }], "only the finish went out");
+  assert.equal(controller.value.finished, true);
+  // Finished, the page is going away: still nothing.
+  await controller.pickModel("OpenRouter", "qwen/qwen3.8-27b");
+  assert.deepEqual(sent(transport), [{ kind: "finish" }]);
+});

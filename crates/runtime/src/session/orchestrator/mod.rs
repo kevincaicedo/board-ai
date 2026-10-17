@@ -26,10 +26,13 @@ use boardai_core::{Core, CoreConfig};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+mod resting;
+
+use self::resting::RestingLibrary;
 use super::deadlines::Deadlines;
 use super::inbox::{Envelope, Inbox};
 use super::listening::{Listening, ListeningPublisher};
-use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreRead, StoreSink};
+use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreSink};
 use super::talker::Talker;
 use super::work::Work;
 use crate::bridge::BridgeHandle;
@@ -38,10 +41,9 @@ use crate::clock::{Clock, TokioClock};
 use crate::limits::{
     SCRIBE_DIGEST_DEADLINE_MS, SESSION_FINISH_CANCEL_WAIT_MS, SESSION_FINISH_WRITE_MS,
     SESSION_FLUSH_TIMEOUT_MS, SESSION_IDLE_TIMEOUT_MS, SESSION_QUIT_DIGEST_MS,
-    SESSION_START_TIMEOUT_MS, SESSION_TOOL_TIMEOUT_MS,
+    SESSION_START_TIMEOUT_MS,
 };
 use crate::llm::LlmProvider;
-use boardai_core::tools::ToolOutput;
 
 /// Counters the session reports when it closes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -69,8 +71,7 @@ enum Phase {
     Resting {
         muted: bool,
         finishing: Option<Finishing>,
-        /// The library shows on the resting stage, so Esc can close it.
-        library: bool,
+        library: RestingLibrary,
     },
 }
 
@@ -190,8 +191,8 @@ impl Orchestrator {
                     }
                 }
                 () = sleep_until(idle_at), if idle_at.is_some() => self.on_idle().await,
-                () = digest_written(&mut self.phase), if self.is_finishing() => {
-                    self.show_resting_library().await;
+                done = resting::work_done(&mut self.phase), if self.resting_work() => {
+                    self.on_resting_work(done).await;
                 }
                 Some(()) = self.work.reap() => {}
             }
@@ -510,64 +511,9 @@ impl Orchestrator {
         self.phase = Phase::Resting {
             muted,
             finishing,
-            library: false,
+            library: RestingLibrary::Hidden,
         };
         self.send_resting(vec![UiEvent::SessionEnd]).await;
-    }
-
-    fn is_finishing(&self) -> bool {
-        matches!(
-            self.phase,
-            Phase::Resting {
-                finishing: Some(_),
-                ..
-            }
-        )
-    }
-
-    /// The ended session's digest is written: the resting stage shows the library, the session
-    /// just ended first (D-145). A store that doesn't answer within `SESSION_TOOL_TIMEOUT_MS`,
-    /// or fails, leaves the stage clear.
-    async fn show_resting_library(&mut self) {
-        let Phase::Resting { finishing, .. } = &mut self.phase else {
-            return;
-        };
-        *finishing = None;
-        let closing = self.closing.clone();
-        let bound = Duration::from_millis(SESSION_TOOL_TIMEOUT_MS);
-        let read = tokio::select! {
-            biased;
-            () = closing.cancelled() => return,
-            read = tokio::time::timeout(bound, self.store.read(StoreRead::Library)) => read,
-        };
-        let Ok(ToolOutput::View { view, today }) = read else {
-            tracing::warn!("the library could not be read for the resting stage");
-            return;
-        };
-        if let Phase::Resting { library, .. } = &mut self.phase {
-            *library = true;
-        }
-        let view = *view;
-        self.send_resting(vec![UiEvent::ViewShow { view, today }])
-            .await;
-    }
-
-    /// Esc on the resting library closes it.
-    async fn close_resting_library(&mut self) {
-        let Phase::Resting { library, .. } = &mut self.phase else {
-            return;
-        };
-        if std::mem::take(library) {
-            self.send_resting(vec![UiEvent::ViewDismiss]).await;
-        }
-    }
-
-    /// Events for the resting stage: straight to the UI, never to the ended session's log.
-    async fn send_resting(&mut self, events: Vec<UiEvent>) {
-        let now = self.clock.now();
-        if self.bridge.send(now, events).await.is_err() {
-            tracing::error!("the UI bridge has stopped; UI events are lost");
-        }
     }
 
     /// The first words after resting: the last digest gets a moment (its scribe is cancelled,
@@ -602,7 +548,7 @@ impl Orchestrator {
         let resting = Phase::Resting {
             muted: false,
             finishing: None,
-            library: false,
+            library: RestingLibrary::Hidden,
         };
         let deadline = Duration::from_millis(SESSION_QUIT_DIGEST_MS);
         let bound = deadline + Duration::from_millis(SESSION_FINISH_WRITE_MS);
@@ -730,22 +676,6 @@ pub(crate) struct OrchestratorParts {
     pub(crate) bridge: BridgeHandle,
     pub(crate) listening: Arc<watch::Sender<Listening>>,
     pub(crate) closing: CancelToken,
-}
-
-/// Resolves when the digest being written while resting is done; never otherwise. The handle is
-/// taken out of the phase right after, so it is never awaited again.
-async fn digest_written(phase: &mut Phase) {
-    if let Phase::Resting {
-        finishing: Some(finishing),
-        ..
-    } = phase
-    {
-        if let Err(error) = (&mut finishing.task).await {
-            tracing::warn!(%error, "the session's digest task ended abnormally");
-        }
-    } else {
-        std::future::pending::<()>().await;
-    }
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

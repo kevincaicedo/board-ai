@@ -214,6 +214,15 @@ export function savesInFlight(state: SetupState): boolean {
   return [...state.busy].some((card) => card !== "memory");
 }
 
+/**
+ * "Start talking" or leaving the settings page is on its way to the app, or done: the app is
+ * checking the start rule and starting a session from the settings as they are, so nothing may
+ * change them now (the app refuses too).
+ */
+export function leaving(state: SetupState): boolean {
+  return state.finished || state.busy.has("start");
+}
+
 /** "Start talking" is enabled: the app names no blocker and nothing is in flight. */
 export function canStart(state: SetupState): boolean {
   return (

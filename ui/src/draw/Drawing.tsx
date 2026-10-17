@@ -7,13 +7,11 @@ import type { TargetedPointerEvent } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
 import type { DrawAction } from "../protocol/generated/DrawAction.ts";
+import { DrawingInput, type SentShape } from "./gesture.ts";
 import { hintPlacement, hintWords } from "./hint.ts";
 import { shapeBounds } from "./ink.ts";
-import { drawnShape, previewPath, StrokeSampler } from "./input.ts";
 import { TOOLS, type Tool } from "./model.ts";
-
-/** Previews waiting for the core's echo; past this the oldest goes at once. */
-export const PENDING_PREVIEWS_MAX = 8;
+import { echoed, expired, nextExpiry, type Preview, sent } from "./previews.ts";
 
 const TOOL_LABELS: { readonly [K in Tool]: string } = {
   pen: "Pen",
@@ -184,42 +182,43 @@ function Hint() {
   );
 }
 
-interface Pending {
-  readonly serial: number;
-  readonly d: string;
-  readonly echoes: number;
-  readonly sentAt: number;
-}
-
 /**
  * The pointer surface over the board while you draw: preview while down, a shape when up. It is
  * mounted right over the board, under every control, so the mic, the cards and the chips stay
- * usable while you draw.
+ * usable while you draw. The gestures live in `DrawingInput` (gesture.ts).
  */
 export function DrawingSurface() {
   const runtime = useRuntime();
   const draw = runtime.scene.draw;
-  const sampler = useMemo(() => new StrokeSampler(), []);
+  const input = useMemo(
+    () =>
+      new DrawingInput({
+        draw,
+        send: (command) => runtime.send(command),
+        transform: () => runtime.board?.mainTransform ?? null,
+      }),
+    [draw, runtime],
+  );
   const liveRef = useRef<SVGPathElement>(null);
-  const active = useRef<{ pointer: number; tool: Tool } | null>(null);
   const serial = useRef(0);
-  const [pending, setPending] = useState<readonly Pending[]>([]);
-  const echoes = draw.echoes.value;
+  const [pending, setPending] = useState<readonly Preview[]>([]);
+  const accepted = draw.accepted.value;
   const holdMs = runtime.tokens.durationDrawPreviewHoldMs;
 
-  // An echo (or the hold running out: the core refused it) takes the oldest preview away.
+  // Drawing can end with the pen down (the core heard "done"); the gesture is sent then.
+  useEffect(() => input.watch(), [input]);
+  // Its own shape on the board (or the hold running out: the core refused it) takes a preview
+  // away; a label landing on another shape doesn't.
   useEffect(() => {
-    setPending((previews) => previews.filter((preview) => preview.echoes > echoes));
-  }, [echoes]);
+    setPending((previews) => echoed(previews, accepted));
+  }, [accepted]);
   useEffect(() => {
-    if (pending.length === 0) {
+    const wait = nextExpiry(pending, performance.now(), holdMs);
+    if (wait === null) {
       return;
     }
-    const oldest = pending[0];
-    const wait = oldest === undefined ? 0 : Math.max(0, oldest.sentAt + holdMs - performance.now());
     const timer = setTimeout(() => {
-      const now = performance.now();
-      setPending((previews) => previews.filter((preview) => now - preview.sentAt < holdMs));
+      setPending((previews) => expired(previews, performance.now(), holdMs));
     }, wait);
     return () => clearTimeout(timer);
   }, [pending, holdMs]);
@@ -227,61 +226,43 @@ export function DrawingSurface() {
   if (!draw.drawing.value || runtime.replay !== null) {
     return null;
   }
-  const local = (event: PointerEvent): [number, number] => {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    return [event.clientX - rect.left, event.clientY - rect.top];
-  };
+  const origin = (event: PointerEvent): DOMRect =>
+    (event.currentTarget as HTMLElement).getBoundingClientRect();
   const showLive = (): void => {
-    const tool = active.current?.tool ?? draw.tool.peek();
-    liveRef.current?.setAttribute("d", previewPath(tool, sampler));
+    liveRef.current?.setAttribute("d", input.preview());
+  };
+  const ended = (shape: SentShape | null): void => {
+    liveRef.current?.setAttribute("d", "");
+    if (shape === null) {
+      return;
+    }
+    serial.current += 1;
+    const id = serial.current;
+    setPending((previews) => sent(previews, id, shape.d, draw.accepted.peek(), performance.now()));
   };
   const down = (event: TargetedPointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || active.current !== null) {
-      return;
+    if (input.down(event, origin(event))) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+      showLive();
     }
-    event.currentTarget.setPointerCapture(event.pointerId);
-    active.current = { pointer: event.pointerId, tool: draw.tool.peek() };
-    const [x, y] = local(event);
-    sampler.begin(x, y);
-    showLive();
   };
   const move = (event: TargetedPointerEvent<HTMLDivElement>): void => {
-    if (active.current?.pointer !== event.pointerId) {
-      return;
-    }
-    const [x, y] = local(event);
-    if (sampler.add(x, y)) {
+    if (input.move(event)) {
       showLive();
     }
   };
   const up = (event: TargetedPointerEvent<HTMLDivElement>): void => {
-    const gesture = active.current;
-    if (gesture === null || gesture.pointer !== event.pointerId) {
-      return;
+    if (input.active) {
+      ended(input.up(event));
     }
-    active.current = null;
-    const [x, y] = local(event);
-    sampler.finish(x, y);
-    const d = previewPath(gesture.tool, sampler);
-    liveRef.current?.setAttribute("d", "");
-    const board = runtime.board;
-    const shape = board === null ? null : drawnShape(gesture.tool, sampler, board.mainTransform);
-    if (shape === null) {
-      return;
+  };
+  const lost = (event: TargetedPointerEvent<HTMLDivElement>): void => {
+    if (input.active) {
+      ended(input.lost(event));
     }
-    runtime.send({ type: "Draw", action: { kind: "Shape", layer: 0, drawn: shape } });
-    serial.current += 1;
-    const preview = {
-      serial: serial.current,
-      d,
-      echoes: draw.echoes.peek() + 1,
-      sentAt: performance.now(),
-    };
-    setPending((previews) => [...previews, preview].slice(-PENDING_PREVIEWS_MAX));
   };
   const cancel = (event: TargetedPointerEvent<HTMLDivElement>): void => {
-    if (active.current?.pointer === event.pointerId) {
-      active.current = null;
+    if (input.cancel(event)) {
       liveRef.current?.setAttribute("d", "");
     }
   };
@@ -292,6 +273,7 @@ export function DrawingSurface() {
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={cancel}
+      onLostPointerCapture={lost}
     >
       <svg class="draw-preview" aria-hidden="true">
         {pending.map((preview) => (

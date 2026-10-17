@@ -362,3 +362,38 @@ async fn an_idle_rest_clears_the_stage() {
             .any(|event| matches!(event, UiEvent::SessionEnd))
     );
 }
+
+/// Review 2, finding 9: the resting library was read on the orchestrator's loop, so a store
+/// slow to answer held the next session's words for up to `SESSION_TOOL_TIMEOUT_MS`.
+#[tokio::test(start_paused = true)]
+async fn a_stalled_library_read_never_holds_the_next_session() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    talker.says("Welcome back.");
+    let harness = start(Arc::clone(&talker), false);
+    if let Ok(mut stalls) = harness.recorder.library_stalls.lock() {
+        *stalls = true;
+    }
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    assert!(say_typed(&link, "I think we can stop here.").await.is_ok());
+    assert!(run_until(20_000, || recorder.lifecycle() == vec!["start", "digest"]).await);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(say_typed(&link, "where were we").await.is_ok());
+    assert!(
+        run_until(1_000, || recorder.lifecycle()
+            == vec!["start", "digest", "start"])
+        .await,
+        "the next session waited on the library read: {:?}",
+        recorder.lifecycle()
+    );
+    assert!(run_until(20_000, || talker.requests().len() == 2).await);
+    assert!(
+        !recorder.events().iter().any(is_library),
+        "a library that never answered is never shown"
+    );
+    let (stats, _, _) = close(harness).await;
+    assert_eq!(stats.sessions, 2);
+}

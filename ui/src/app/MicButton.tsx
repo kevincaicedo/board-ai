@@ -61,6 +61,7 @@ export function MicButton() {
         modified: event.metaKey || event.ctrlKey || event.altKey,
         editable: editable(event.target) || pressing,
         shortcut: (event.metaKey || event.ctrlKey) && !event.altKey,
+        shift: event.shiftKey,
       };
       // Read at the key press, so a mute never re-binds these handlers mid-hold.
       const muted = runtime.scene.store.orb.peek().state === "Muted";
@@ -69,7 +70,12 @@ export function MicButton() {
         replay: runtime.replay !== null,
         escape: closing,
         drawing: runtime.scene.draw.drawing.peek(),
+        settings: runtime.scene.store.settingsOpen.peek(),
       };
+      if (context.settings) {
+        // The settings page owns the keyboard, wherever the focus is.
+        return;
+      }
       if (event.code === "Escape" && closing === "close-replay") {
         if (!key.repeat && !key.modified && !key.editable) {
           event.preventDefault();

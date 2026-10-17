@@ -8,7 +8,7 @@ import { useMemo, useRef } from "preact/hooks";
 import { round1, round2 } from "../canvas/math.ts";
 import { CodeCard, CompareCard, DetourCard, RecapCard } from "../surfaces/Cards.tsx";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
-import { columnTops, surfaceMotion } from "./layout.ts";
+import { ColumnTopsCache, surfaceMotion } from "./layout.ts";
 import type { ColumnItem } from "./session.ts";
 
 function CardBody({ item }: { item: ColumnItem }) {
@@ -32,14 +32,20 @@ export function Column() {
   const items = runtime.scene.store.column.value;
   const cardRefs = useRef(new Map<string, HTMLElement>());
   const write = useMemo(styleWriter, []);
+  // A detour card's height comes from its drawing (runtime.detourCards, sized once per frame);
+  // looked up rather than copied into the items, and laid out only while something moves.
+  const layout = useMemo(() => {
+    const cache = new ColumnTopsCache<ColumnItem>();
+    const height = (item: ColumnItem): number =>
+      item.kind === "detour"
+        ? (runtime.detourCards.get(item.layer)?.height ?? item.height)
+        : item.height;
+    return { cache, height };
+  }, [runtime]);
 
   useFrame((at) => {
     const cards = runtime.detourCards;
-    const sized = items.map((item) => {
-      const height = item.kind === "detour" ? cards.get(item.layer)?.height : undefined;
-      return height === undefined ? item : { ...item, height };
-    });
-    const tops = columnTops(sized, at, tokens);
+    const tops = layout.cache.tops(items, at, tokens, layout.height);
     const column = runtime.columnWidth;
     for (const item of items) {
       const card = cardRefs.current.get(item.key) ?? null;
