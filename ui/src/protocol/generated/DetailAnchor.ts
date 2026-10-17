@@ -9,4 +9,11 @@ import type { Rect } from "./Rect.ts";
  * box there, in world units, which the camera moves into as the detail layer opens; its
  * category tones the detail card's edge (artboard 15b), and none gives the plain edge.
  */
-export type DetailAnchor = { layer: LayerId, element: ElementId, rect: Rect, category: Category | null, };
+export type DetailAnchor = { layer: LayerId, element: ElementId, rect: Rect, category: Category | null, 
+/**
+ * What the breadcrumbs show for the layer when its title names the part by id: a part of a
+ * source's diagram, whose label is the source's words, as plain text (D-290). The UI shows
+ * it; BoardAI's context names the part by id and never carries it (I18, D-265). `None` when
+ * the title is already what the breadcrumbs show, and in logs written before it.
+ */
+display: string | null, };

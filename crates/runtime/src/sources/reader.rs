@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use boardai_core::sources::DocumentFormat;
+use boardai_core::sources::{DocumentFormat, PagesUnread};
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 
@@ -40,38 +40,13 @@ pub enum ReaderEvent {
 pub type ReaderStream = BoxStream<'static, ReaderEvent>;
 
 /// Pages a reader read for the talker: `(page, text)` for each with text, in order, and the
-/// document's length when known. A page left out has no text: a scan, or past the end.
+/// document's length when known. A page left out has no text: a scan, or past the end. Pages it
+/// couldn't read are the core's `PagesUnread` (D-274), never this with the pages left out, so
+/// the talker isn't told an unread page is empty.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PagesRead {
     pub pages: Vec<(u32, String)>,
     pub page_count: Option<u32>,
-}
-
-/// Why pages weren't read: never "no text" (that is [`PagesRead`] with the pages left out), so
-/// the talker isn't told an unread page is empty.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PagesUnread {
-    /// Not read within the page read's bound (`SOURCE_JOB_TIMEOUT_MS`).
-    TimedOut,
-    /// As many source jobs run as may (`SOURCE_JOBS_MAX`).
-    Busy,
-    /// No reader takes it, or it isn't shared any more.
-    NoReader,
-    /// The reader couldn't read them: what the tray would say ("It is locked with a password").
-    Failed { reason: String },
-}
-
-impl PagesUnread {
-    /// In words the talker can pass on.
-    #[must_use]
-    pub fn reason(&self) -> String {
-        match self {
-            Self::TimedOut => "its pages weren't read in time".to_owned(),
-            Self::Busy => "BoardAI was busy reading other sources".to_owned(),
-            Self::NoReader => "no reader reads it".to_owned(),
-            Self::Failed { reason } => reason.clone(),
-        }
-    }
 }
 
 pub trait SourceReader: Send + Sync {

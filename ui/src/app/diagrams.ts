@@ -26,6 +26,7 @@ export interface DiagramHeader {
 
 export interface DetailView {
   readonly layer: number;
+  /** What the breadcrumbs show (`detailTitle`). */
   readonly title: string;
   readonly anchor: DetailAnchor;
   readonly openAt: number;
@@ -54,6 +55,15 @@ export type HeaderView =
 
 /** The root of a drill-down's path when the main board has no staged diagram. */
 export const MAIN_BOARD_CRUMB = "Main board";
+
+/**
+ * What the breadcrumbs call a detail layer: the part's own label when the core sent one (a part
+ * of a source's diagram, whose layer title is its id because the title reaches the talker's
+ * context, D-265, D-290), else the layer's title.
+ */
+export function detailTitle(title: string, anchor: DetailAnchor): string {
+  return anchor.display ?? title;
+}
 
 /**
  * The chip's words: who read the code, and how much (D-242). A brief from the cache was read in
@@ -142,7 +152,7 @@ export class DiagramStore {
             ...kept,
             {
               layer: event.layer,
-              title: event.title,
+              title: detailTitle(event.title, event.anchor),
               anchor: event.anchor,
               openAt: at,
               closedAt: null,

@@ -9,7 +9,7 @@ use std::time::UNIX_EPOCH;
 
 use boardai_core::harness::HarnessEvent;
 use boardai_core::sources::digest::{self, Digest, DigestScope, request_prompt};
-use boardai_core::sources::{DocumentFormat, SourceState};
+use boardai_core::sources::{DocumentFormat, PagesUnread, SourceState};
 use futures_util::future::BoxFuture;
 use futures_util::stream::{self, StreamExt};
 use tokio::sync::OnceCell;
@@ -26,7 +26,7 @@ use crate::limits::{
     DOCUMENT_LAYERS_CACHED_MAX, DOCUMENT_PAGE_READ_PAGES_MAX, DOCUMENT_PAGES_MAX,
     MARKDOWN_IMAGES_MAX,
 };
-use crate::sources::{PagesRead, PagesUnread, ReaderEvent, ReaderStream, SourceReader};
+use crate::sources::{PagesRead, ReaderEvent, ReaderStream, SourceReader};
 
 /// The reader's name as the tray says it, while it reads the text itself.
 pub const DOCUMENT_READER_NAME: &str = "BoardAI";

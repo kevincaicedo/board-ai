@@ -175,7 +175,7 @@ impl SourceDesk {
             shown_path: valid.shown.clone(),
             files_estimate: valid.files_estimate,
         }
-        .bounded();
+        .parsed();
         self.entries.insert(
             id,
             Entry {
@@ -207,7 +207,7 @@ impl SourceDesk {
             shown_path: line.path.clone(),
             files_estimate: None,
         }
-        .bounded();
+        .parsed();
         self.entries.insert(
             id,
             Entry {

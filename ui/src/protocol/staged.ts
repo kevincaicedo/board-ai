@@ -10,6 +10,7 @@ import {
   list,
   nullable,
   oneOf,
+  optional,
   point,
   rect,
   type Tagged,
@@ -156,7 +157,13 @@ export function detailAnchor(value: unknown): DetailAnchor | null {
   const element = elementId(f?.element);
   const r = rect(f?.rect);
   const tone = nullable(f?.category, category);
-  return layer === null || element === null || r === null || tone === undefined
+  // D-290: a log from before the breadcrumbs' own label reads as none, so the title shows.
+  const display = optional(f?.display, text);
+  return layer === null ||
+    element === null ||
+    r === null ||
+    tone === undefined ||
+    display === undefined
     ? null
-    : { layer, element, rect: r, category: tone };
+    : { layer, element, rect: r, category: tone, display };
 }

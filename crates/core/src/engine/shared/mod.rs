@@ -92,17 +92,30 @@ impl Core {
                 }
                 return;
             }
-            SourceInput::Shared { source, keep } => self.on_shared(now, source, keep, effects),
+            // A source's names are parsed where they enter, before anything says them (D-291).
+            SourceInput::Shared { source, keep } => {
+                self.on_shared(now, source.parsed(), keep, effects);
+            }
             SourceInput::Resolved {
                 request,
                 candidates,
                 ..
-            } => self.on_resolved(now, request, candidates, effects),
+            } => {
+                let candidates = candidates.into_iter().map(SourceInfo::parsed).collect();
+                self.on_resolved(now, request, candidates, effects);
+            }
             SourceInput::ProjectLoaded {
                 project,
                 kept,
                 left_out,
             } => {
+                let kept = kept
+                    .into_iter()
+                    .map(|kept| KeptSource {
+                        source: kept.source.parsed(),
+                        ..kept
+                    })
+                    .collect();
                 self.on_project_loaded(&project, kept, left_out, effects);
             }
             SourceInput::BriefCached { task, markdown } => {

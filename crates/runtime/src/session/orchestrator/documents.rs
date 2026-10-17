@@ -4,23 +4,23 @@
 //! cached (in the project's vault folder when the document is kept there); the talker's page
 //! reads come from the reader, answered within the source job's bound.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use boardai_core::input::Input;
 use boardai_core::sources::digest;
 use boardai_core::sources::{
-    DocumentPage, PagesAnswer, PagesUnread as CorePagesUnread, SourceId, SourceInput, SourceKind,
-    SourceState,
+    DocumentPage, PagesAnswer, PagesUnread, SourceId, SourceInput, SourceKind, SourceState,
 };
 use futures_util::FutureExt;
 
 use super::Orchestrator;
 use super::sources::SourceMessage;
-use crate::limits::{DOCUMENTS_WAITING_MAX, SOURCE_JOB_TIMEOUT_MS};
+use crate::limits::{DOCUMENTS_WAITING_MAX, PAGE_READ_TIMEOUT_MS};
 use crate::session::inbox::Envelope;
 use crate::session::work::ReaderRoom;
-use crate::sources::{PagesRead, PagesUnread, SourceReader, stamp};
+use crate::sources::{PagesRead, SourceReader, stamp};
 
 /// The cache's topic for a document's digest, beside a code source's briefs (D-259).
 pub(crate) const DIGEST_TOPIC: &str = "digest";
@@ -173,11 +173,7 @@ impl Orchestrator {
             return;
         };
         let job = async move {
-            // Inside the job's own bound, so the reader's answer, not the fallback, says why.
-            let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS.saturating_sub(500));
-            let read = tokio::time::timeout(bound, reader.pages(path, first, last))
-                .await
-                .unwrap_or(Err(PagesUnread::TimedOut));
+            let read = pages_in_time(reader, path, first, last).await;
             Some(Envelope::Input(document_pages(request, read)))
         };
         let timed_out = Envelope::Input(document_pages(request, Err(PagesUnread::TimedOut)));
@@ -191,8 +187,23 @@ impl Orchestrator {
     }
 }
 
-/// The answer to `ReadDocument` as the core takes it: the pages read, or why they weren't
-/// (review 3, finding 8), never an unread read passed off as pages with no text.
+/// The reader's pages within `PAGE_READ_TIMEOUT_MS`: inside the source job's own bound, so the
+/// job answers itself (the reader's reason, or out of time) before its fallback would.
+async fn pages_in_time(
+    reader: Arc<dyn SourceReader>,
+    path: PathBuf,
+    first: u32,
+    last: u32,
+) -> Result<PagesRead, PagesUnread> {
+    let bound = Duration::from_millis(PAGE_READ_TIMEOUT_MS);
+    tokio::time::timeout(bound, reader.pages(path, first, last))
+        .await
+        .unwrap_or(Err(PagesUnread::TimedOut))
+}
+
+/// The answer to `ReadDocument` as the core takes it: the pages read, or why they weren't, in
+/// the core's own words (D-274; review 3, finding 8), never an unread read passed off as pages
+/// with no text.
 fn document_pages(request: u32, read: Result<PagesRead, PagesUnread>) -> Input {
     let answer = match read {
         Ok(read) => PagesAnswer::Read {
@@ -203,18 +214,121 @@ fn document_pages(request: u32, read: Result<PagesRead, PagesUnread>) -> Input {
                 .collect(),
             page_count: read.page_count,
         },
-        Err(unread) => {
-            tracing::warn!(reason = %unread.reason(), "a page read was answered without its pages");
-            let reason = match unread {
-                PagesUnread::TimedOut => CorePagesUnread::TimedOut,
-                PagesUnread::Busy => CorePagesUnread::Busy,
-                PagesUnread::NoReader => CorePagesUnread::NoReader,
-                PagesUnread::Failed { reason } => CorePagesUnread::Failed { reason },
-            };
+        Err(reason) => {
+            tracing::warn!(reason = %reason.reason(), "a page read was answered without its pages");
             PagesAnswer::Unread { reason }
         }
     };
     Input::Source {
         source: SourceInput::DocumentPages { request, answer },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use boardai_core::input::Input;
+    use boardai_core::sources::{
+        DocumentFormat, DocumentPage, PagesAnswer, PagesUnread, SourceInput,
+    };
+    use futures_util::future::BoxFuture;
+
+    use super::{document_pages, pages_in_time};
+    use crate::cancel::CancelToken;
+    use crate::limits::{PAGE_READ_TIMEOUT_MS, SOURCE_JOB_TIMEOUT_MS};
+    use crate::sources::{PagesRead, ReaderStream, SourceReader};
+
+    /// A reader whose page reads answer `answer`, or never when it is `None`.
+    struct PageReader(Option<Result<PagesRead, PagesUnread>>);
+
+    impl SourceReader for PageReader {
+        fn name(&self) -> &str {
+            "BoardAI"
+        }
+
+        fn reads(&self, format: DocumentFormat) -> bool {
+            format == DocumentFormat::Pdf
+        }
+
+        fn read(&self, _path: PathBuf, _cancel: CancelToken) -> ReaderStream {
+            Box::pin(futures_util::stream::empty())
+        }
+
+        fn pages(
+            &self,
+            _path: PathBuf,
+            _first: u32,
+            _last: u32,
+        ) -> BoxFuture<'static, Result<PagesRead, PagesUnread>> {
+            match self.0.clone() {
+                Some(answer) => Box::pin(std::future::ready(answer)),
+                None => Box::pin(std::future::pending()),
+            }
+        }
+    }
+
+    fn answer(input: Input) -> Option<PagesAnswer> {
+        let Input::Source {
+            source: SourceInput::DocumentPages { request: 3, answer },
+        } = input
+        else {
+            return None;
+        };
+        Some(answer)
+    }
+
+    /// D-274: the reader's reason is the core's type, so it reaches the core as it is, and pages
+    /// read keep their numbers and the document's length.
+    #[test]
+    fn a_page_reads_answer_reaches_the_core_as_the_reader_gave_it() {
+        let reasons = [
+            PagesUnread::TimedOut,
+            PagesUnread::Busy,
+            PagesUnread::NoReader,
+            PagesUnread::Failed {
+                reason: "It is locked with a password".into(),
+            },
+        ];
+        for reason in reasons {
+            assert_eq!(
+                answer(document_pages(3, Err(reason.clone()))),
+                Some(PagesAnswer::Unread { reason })
+            );
+        }
+        let read = PagesRead {
+            pages: vec![(2, "The log.".into())],
+            page_count: Some(7),
+        };
+        assert_eq!(
+            answer(document_pages(3, Ok(read))),
+            Some(PagesAnswer::Read {
+                pages: vec![DocumentPage {
+                    page: 2,
+                    text: "The log.".into(),
+                }],
+                page_count: Some(7),
+            })
+        );
+    }
+
+    /// A reader that never answers is out of time at `PAGE_READ_TIMEOUT_MS`, inside the source
+    /// job's bound, so the job answers before its fallback; one that fails in time says why.
+    #[tokio::test(start_paused = true)]
+    async fn a_page_read_answers_itself_inside_its_jobs_bound() {
+        let started = tokio::time::Instant::now();
+        let stuck: Arc<dyn SourceReader> = Arc::new(PageReader(None));
+        let read = pages_in_time(stuck, PathBuf::from("paper.pdf"), 1, 1).await;
+        assert_eq!(read, Err(PagesUnread::TimedOut));
+        let waited = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        assert_eq!(waited, PAGE_READ_TIMEOUT_MS);
+        assert!(waited < SOURCE_JOB_TIMEOUT_MS);
+        let locked = PagesUnread::Failed {
+            reason: "It is locked with a password".into(),
+        };
+        let failing: Arc<dyn SourceReader> = Arc::new(PageReader(Some(Err(locked.clone()))));
+        let read = pages_in_time(failing, PathBuf::from("paper.pdf"), 1, 1).await;
+        assert_eq!(read, Err(locked));
     }
 }

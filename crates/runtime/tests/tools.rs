@@ -382,3 +382,24 @@ fn the_repo_reads_are_offered_once_a_folder_is_open() {
         RepoReads::Offered
     );
 }
+
+/// D-291: BoardAI names a single shared file to the talker as plain text (square brackets made
+/// round, fence markers broken up), so the file answers to that name as well as its own; a
+/// file beside it still answers to nothing.
+#[test]
+fn a_single_shared_file_answers_to_the_name_the_talker_was_given() {
+    let folder = TempFolder::new("plain-name");
+    folder.write("docs/notes [draft].md", b"# Notes\nThe log first.\n");
+    folder.write("docs/beside.md", b"# Beside\n");
+    let shared = folder.path.join("docs/notes [draft].md");
+    let roots =
+        RepoRoots::open_with_files(&[], std::slice::from_ref(&shared)).expect("open the file");
+    for name in ["notes [draft].md", "notes (draft).md"] {
+        let (_, first, lines, _) = file(read(&roots, name, None, None));
+        assert_eq!((first, lines.len()), (1, 2), "{name}");
+    }
+    assert_eq!(
+        failure(read(&roots, "beside.md", None, None)),
+        ToolFailure::NotFound
+    );
+}

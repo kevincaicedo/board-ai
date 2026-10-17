@@ -166,7 +166,7 @@
 {"v":1,"t":56500,"k":"ui","event":{"type":"Caption","who":"User","text":"More","is_final":false}}
 {"v":1,"t":57000,"k":"ui","event":{"type":"Caption","who":"User","text":"More detail on","is_final":false}}
 {"v":1,"t":57520,"k":"ui","event":{"type":"Caption","who":"User","text":"More detail on the arena.","is_final":true}}
-{"v":1,"t":57650,"k":"ui","event":{"type":"LayerPush","layer":1,"title":"Arena","question":null,"anchor":{"layer":0,"element":"arena","rect":{"x":0,"y":46,"w":401,"h":628},"category":"Slate"}}}
+{"v":1,"t":57650,"k":"ui","event":{"type":"LayerPush","layer":1,"title":"Arena","question":null,"anchor":{"layer":0,"element":"arena","rect":{"x":0,"y":46,"w":401,"h":628},"category":"Slate","display":null}}}
 {"v":1,"t":57650,"k":"ui","event":{"type":"Thread","steps":[],"current":null,"detours":["Arena"]}}
 {"v":1,"t":57650,"k":"ui","event":{"type":"Orb","state":"Thinking","level_percent":0}}
 {"v":1,"t":61110,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":0}}

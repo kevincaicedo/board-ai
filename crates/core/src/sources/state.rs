@@ -173,7 +173,8 @@ impl SharedSources {
         self.entries.iter_mut().find(|entry| entry.info.id == id)
     }
 
-    /// Adds a source, kept or for this session only, within its scope's bound.
+    /// Adds a source, kept or for this session only, within its scope's bound. `info` was parsed
+    /// where it entered the core (`SourceInfo::parsed`).
     pub fn add(
         &mut self,
         info: SourceInfo,
@@ -196,7 +197,7 @@ impl SharedSources {
         if in_scope >= bound {
             return Err(AddRefused::Full);
         }
-        self.entries.push(Entry::new(info.bounded(), kept, settled));
+        self.entries.push(Entry::new(info, kept, settled));
         let index = self.entries.len() - 1;
         Ok(&mut self.entries[index])
     }

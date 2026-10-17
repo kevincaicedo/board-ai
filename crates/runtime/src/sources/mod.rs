@@ -15,7 +15,7 @@ mod validate;
 pub use citations::{Checked, check_citations};
 pub use desk::{CachedBrief, SourceDesk, Written};
 pub use reach::reach;
-pub use reader::{PagesRead, PagesUnread, ReaderEvent, ReaderStream, SourceReader};
+pub use reader::{PagesRead, ReaderEvent, ReaderStream, SourceReader};
 pub use resolve::{Found, resolve};
 pub use stamp::{Stamp, stamp};
 pub use validate::{Refusal, ValidSource, expanded_path, shown_path, validate, written_path};

@@ -24,6 +24,7 @@ use crate::limits::{
     SPOKEN_SOURCE_NAME_MAX_BYTES,
 };
 use crate::narration::tags::bounded;
+use crate::untrusted::PlainText;
 
 pub use brief::{Brief, BriefTopic, Citation};
 
@@ -205,15 +206,27 @@ pub struct SourceInfo {
 }
 
 impl SourceInfo {
-    /// The same, held to the core's bounds: it came from the runtime.
+    /// The same as the core keeps it, parsed where it enters (D-291): a file or folder name can
+    /// hold anything a file system allows, fence markers and square brackets too, and BoardAI's
+    /// own words name a source by its title and path, so both are plain text within the core's
+    /// bounds.
     #[must_use]
-    pub fn bounded(self) -> Self {
+    pub fn parsed(self) -> Self {
         Self {
-            title: bounded(&self.title, SOURCE_TITLE_MAX_BYTES),
-            shown_path: bounded(&self.shown_path, SOURCE_SHOWN_PATH_MAX_BYTES),
+            title: source_title(&self.title).into_string(),
+            shown_path: PlainText::parse(&self.shown_path, SOURCE_SHOWN_PATH_MAX_BYTES)
+                .into_string(),
             ..self
         }
     }
+}
+
+/// A file or folder name as BoardAI names it (D-291): plain text held to
+/// `SOURCE_TITLE_MAX_BYTES`. The runtime's repo tools answer to it too, so a single file shared
+/// on its own is read by the name the talker was given.
+#[must_use]
+pub fn source_title(name: &str) -> PlainText {
+    PlainText::parse(name, SOURCE_TITLE_MAX_BYTES)
 }
 
 /// A source kept in a project, as the runtime read it from the project's vault folder.

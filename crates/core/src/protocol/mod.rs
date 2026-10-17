@@ -209,7 +209,7 @@ pub enum UiEvent {
     /// top-level part the narration is revealing, from 1, of `parts` ("part 3 of 4"); `part` is
     /// 0 when it is laid out and nothing of it is drawn yet. Sent when it is staged and when the
     /// narration moves to another part. A detail layer's diagram names its own parts; its title
-    /// in the breadcrumbs is the layer's (`LayerPush.title`).
+    /// in the breadcrumbs is the layer's (`LayerPush.title`, or its anchor's `display`).
     ///
     /// `provenance`: a research brief's diagram names its reader (D-242), for the chip above it;
     /// `None` for the talker's own, and in logs written before it.
@@ -242,6 +242,11 @@ pub struct DetailAnchor {
     pub element: ElementId,
     pub rect: Rect,
     pub category: Option<Category>,
+    /// What the breadcrumbs show for the layer when its title names the part by id: a part of a
+    /// source's diagram, whose label is the source's words, as plain text (D-290). The UI shows
+    /// it; BoardAI's context names the part by id and never carries it (I18, D-265). `None` when
+    /// the title is already what the breadcrumbs show, and in logs written before it.
+    pub display: Option<String>,
 }
 
 /// A line of a staged diagram's handwriting where the core placed it: `at` is on the line's centre
@@ -702,7 +707,7 @@ pub enum MicAction {
 
 #[cfg(test)]
 mod tests {
-    use super::{DrawOp, NodeShape, UiBatch, UiEvent};
+    use super::{DetailAnchor, DrawOp, NodeShape, UiBatch, UiEvent};
     use crate::geometry::Rect;
     use crate::ids::{ElementId, LayerId, OpId};
     use crate::time::SessionTime;
@@ -738,5 +743,15 @@ mod tests {
         ));
         let back: UiBatch = serde_json::from_str(&json).expect("round trips");
         assert_eq!(back, batch);
+    }
+
+    /// §3.7, evolving it: a detail layer logged before the breadcrumbs' own label (D-290) reads
+    /// as having none, so it replays with its title.
+    #[test]
+    fn an_anchor_logged_before_its_display_label_reads_as_none() {
+        let json =
+            r#"{"layer":0,"element":"arena","rect":{"x":0,"y":0,"w":10,"h":10},"category":null}"#;
+        let anchor: DetailAnchor = serde_json::from_str(json).expect("reads");
+        assert_eq!(anchor.display, None);
     }
 }

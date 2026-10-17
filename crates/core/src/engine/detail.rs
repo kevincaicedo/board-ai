@@ -20,10 +20,11 @@ use crate::effect::Effect;
 use crate::engine::Core;
 use crate::geometry::Rect;
 use crate::ids::{ElementId, LayerId, OpId};
-use crate::limits::DETOUR_DEPTH_MAX;
+use crate::limits::{DETOUR_DEPTH_MAX, LABEL_MAX_BYTES};
 use crate::narration::diagram::DiagramSpec;
 use crate::protocol::{Category, DetailAnchor, UiEvent};
 use crate::time::SessionTime;
+use crate::untrusted::PlainText;
 
 impl Core {
     /// `<detail of="…">`, as its words play: the layer opens anchored to `of`, with the diagram
@@ -60,15 +61,26 @@ impl Core {
     ) -> Option<LayerId> {
         let under = self.thread.active_layer();
         let (anchor, label) = self.detail_anchor(under, of);
-        let title = title.map_or(label, str::to_owned);
+        let (title, anchor) = match title {
+            // The talker's own title is what the breadcrumbs show too.
+            Some(title) => (
+                title.to_owned(),
+                DetailAnchor {
+                    display: None,
+                    ..anchor
+                },
+            ),
+            None => (label, anchor),
+        };
         let mut events = Vec::new();
         let layer = self.push_detour_layer(&title, Some(anchor), &mut events, effects);
         effects.extend(events.into_iter().map(Effect::Ui));
         layer
     }
 
-    /// Where a detail on `of` drills in, and the part's label. A name that isn't on the layer
-    /// drills into the whole drawing, so the explanation is never lost.
+    /// Where a detail on `of` drills in, and the layer's title: the part's label, or its id. A
+    /// name that isn't on the layer drills into the whole drawing, so the explanation is never
+    /// lost.
     fn detail_anchor(&self, layer: LayerId, of: &ElementId) -> (DetailAnchor, String) {
         let board_layer = self.board.layer(layer);
         let element = board_layer
@@ -79,15 +91,23 @@ impl Core {
             crate::board::Element::area,
         );
         // A source's part is named by its id: its label is the source's words, and the layer's
-        // title reaches the talker's context (D-265).
+        // title reaches the talker's context (D-265). Its label goes to the breadcrumbs alone,
+        // as plain text (D-290).
+        let from_source = self.board.is_from_source(layer, of);
         let label = element
-            .filter(|_| !self.board.is_from_source(layer, of))
+            .filter(|_| !from_source)
             .map_or_else(|| of.as_str().to_owned(), |element| element.label.clone());
+        let display = element
+            .filter(|_| from_source)
+            .map(|element| PlainText::parse(&element.label, LABEL_MAX_BYTES))
+            .filter(|display| !display.is_empty())
+            .map(PlainText::into_string);
         let anchor = DetailAnchor {
             layer,
             element: of.clone(),
             rect,
             category: self.tone_of(layer, of),
+            display,
         };
         (anchor, label)
     }

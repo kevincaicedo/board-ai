@@ -29,6 +29,16 @@ pub const RESOLVE_DEPTH_MAX: usize = 6;
 /// what was found so far (nothing, for a load: the project is reported unreadable).
 pub const SOURCE_JOB_TIMEOUT_MS: u64 = 5_000;
 
+/// A page read's wait for its reader, inside its source job's bound with half a second to spare,
+/// so the job itself answers (`PagesUnread::TimedOut`, or the reader's reason) and its fallback
+/// never has to; past it the talker hears the pages weren't read in time.
+pub const PAGE_READ_TIMEOUT_MS: u64 = 4_500;
+
+const _: () = assert!(
+    PAGE_READ_TIMEOUT_MS < SOURCE_JOB_TIMEOUT_MS,
+    "a page read answers inside its source job's bound"
+);
+
 /// Source jobs (resolves, loads, citation checks, freshness stamps) running at once; past it
 /// the job's answer is given at once as empty, and logged.
 pub const SOURCE_JOBS_MAX: usize = 8;

@@ -14,6 +14,7 @@ import {
   creditLine,
   DETAIL_LEVELS_MAX,
   DiagramStore,
+  detailTitle,
   headerView,
   MAIN_BOARD_CRUMB,
 } from "./diagrams.ts";
@@ -28,6 +29,7 @@ const anchor: DetailAnchor = {
   element: "arena",
   rect: { x: 22, y: 14, w: 336, h: 640 },
   category: "Slate",
+  display: null,
 };
 const push = (layer: number, title: string, on = 0): UiEvent => ({
   type: "LayerPush",
@@ -107,6 +109,35 @@ test("the header names the diagram and its part, then the path while drilling do
     store.apply({ type: "LayerPop", layer }, layer * 100 + 50);
   }
   assert.ok(store.details.value.length <= DETAIL_LEVELS_MAX + 1);
+});
+
+test("a detail layer on a source's part shows its label in the crumbs, its title being its id", () => {
+  // D-290: the core titles the layer by the part's id (the title reaches the talker's context,
+  // I18) and sends the part's label for the breadcrumbs alone.
+  const onPart = (layer: number, id: string, display: string | null, on = 0): UiEvent => ({
+    type: "LayerPush",
+    layer,
+    title: id,
+    question: null,
+    anchor: { ...anchor, layer: on, element: id, display },
+  });
+  assert.equal(detailTitle("inf_alloc_arena", { ...anchor, display: "Arena" }), "Arena");
+  assert.equal(detailTitle("Arena", anchor), "Arena", "no label: the title");
+  const store = new DiagramStore();
+  store.apply(header(0, 2, fromBrief), 0);
+  store.apply(onPart(1, "inf_alloc_arena", "Arena allocator"), 100);
+  store.apply(onPart(2, "free_list", null, 1), 200);
+  assert.deepEqual(headerView(store.headers.value, store.details.value), {
+    kind: "detail",
+    crumbs: ["inf-alloc · memory allocation", "Arena allocator", "free_list"],
+    depth: `depth 3 of ${DETAIL_LEVELS_MAX}`,
+    credit: null,
+  });
+  assert.deepEqual(
+    store.details.value.map((detail) => detail.title),
+    ["Arena allocator", "free_list"],
+    "the detail stage names it the same way",
+  );
 });
 
 test("a brief's diagram names who read the code, on the board and on its detail layer", () => {

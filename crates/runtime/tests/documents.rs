@@ -26,7 +26,7 @@ use boardai_runtime::documents::{DocumentReader, ReaderConfig};
 use boardai_runtime::harness::{
     CodingHarness, HarnessPool, HarnessStream, HarnessTimeouts, Workspace,
 };
-use boardai_runtime::limits::SOURCE_JOB_TIMEOUT_MS;
+use boardai_runtime::limits::PAGE_READ_TIMEOUT_MS;
 use boardai_runtime::llm::Effort;
 use boardai_runtime::settings::Secret;
 use boardai_runtime::sources::{ReaderEvent, SourceReader};
@@ -531,7 +531,7 @@ async fn a_page_read_never_waits_on_the_whole_text() {
         home: home(),
         pdfkit,
     });
-    let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS.saturating_sub(500));
+    let bound = Duration::from_millis(PAGE_READ_TIMEOUT_MS);
     let read = tokio::time::timeout(bound, reader.pages(document("small-text.pdf"), 2, 9))
         .await
         .expect("within the page read's bound")
@@ -550,7 +550,7 @@ async fn a_page_of_a_long_pdf_is_read_within_the_page_read_bound() {
         return;
     };
     let reader = reader(Vec::new(), None);
-    let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS.saturating_sub(500));
+    let bound = Duration::from_millis(PAGE_READ_TIMEOUT_MS);
     let started = std::time::Instant::now();
     let read = tokio::time::timeout(bound, reader.pages(path.into(), 40, 40))
         .await

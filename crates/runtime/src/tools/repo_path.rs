@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use boardai_core::sources::source_title;
 use boardai_core::tools::ToolFailure;
 
 use crate::limits::TOOL_PATH_MAX_BYTES;
@@ -277,11 +278,18 @@ impl RepoRoots {
             return vec![path.to_path_buf()];
         }
         let mut candidates = Vec::new();
-        // A single shared file answers to its own name only.
+        // A single shared file answers to its own name only: as it is, then as BoardAI named it
+        // to the talker (plain text, D-291: "notes [draft].md" is "notes (draft).md" there).
         candidates.extend(
             self.roots
                 .iter()
                 .filter(|root| root.file && path == Path::new(&root.name))
+                .map(|root| root.canonical.clone()),
+        );
+        candidates.extend(
+            self.roots
+                .iter()
+                .filter(|root| root.file && path == Path::new(source_title(&root.name).as_str()))
                 .map(|root| root.canonical.clone()),
         );
         for root in self.roots.iter().filter(|root| !root.file) {

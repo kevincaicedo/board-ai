@@ -107,7 +107,11 @@ test("a detail layer's anchor, a close-up and a diagram header parse; bad ones d
       category: "Slate",
     },
   };
-  assert.deepEqual(parseUiEvent(push), push);
+  // A log from before the breadcrumbs' own label reads it as none (D-290).
+  assert.deepEqual(parseUiEvent(push), { ...push, anchor: { ...push.anchor, display: null } });
+  const labelled = { ...push, title: "arena", anchor: { ...push.anchor, display: "Arena" } };
+  assert.deepEqual(parseUiEvent(labelled), labelled);
+  assert.equal(parseUiEvent({ ...push, anchor: { ...push.anchor, display: 7 } }), null);
   assert.equal(parseUiEvent({ ...push, anchor: { layer: 0, element: "a b" } }), null);
   const camera = {
     type: "Camera",

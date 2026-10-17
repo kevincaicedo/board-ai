@@ -113,6 +113,8 @@ impl Thread {
         &self.detours
     }
 
+    /// For the UI: a detail layer on a source's part shows its label, which `describe` (the
+    /// talker's) never carries (I18, D-290).
     #[must_use]
     pub fn event(&self) -> UiEvent {
         UiEvent::Thread {
@@ -122,7 +124,13 @@ impl Thread {
                 .detours
                 .items()
                 .iter()
-                .map(|detour| detour.title.clone())
+                .map(|detour| {
+                    detour
+                        .anchor
+                        .as_ref()
+                        .and_then(|anchor| anchor.display.clone())
+                        .unwrap_or_else(|| detour.title.clone())
+                })
                 .collect(),
         }
     }
