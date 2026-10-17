@@ -21,7 +21,7 @@ use clauses::ClauseCutter;
 use ops::NarrationOp;
 use parser::{Piece, TagParser};
 use speakable::Speakable;
-use spoken_calls::{SpokenCall, SpokenCalls};
+use spoken_calls::{SpokenCall, SpokenCalls, without_stray_tokens};
 
 /// Spoken when the talker opens a fourth nested detour (LLD §2.6).
 pub const DETOUR_REFUSAL_LINE: &str = "Let's finish this one first.";
@@ -150,6 +150,13 @@ impl NarrationStream {
         self.calls.calls()
     }
 
+    /// Repo reads the talker's speech announced ("I'll list the files"), each tool once, in
+    /// the order announced (D-232).
+    #[must_use]
+    pub fn announced_reads(&self) -> &[&'static str] {
+        self.calls.announced()
+    }
+
     /// Everything the talker wrote, tags included.
     #[must_use]
     pub fn written(&self) -> &str {
@@ -255,14 +262,18 @@ impl NarrationStream {
         }
     }
 
-    /// The word ended (whitespace, a tag, the end of the stream). A tool call written as words
-    /// is kept out of speech; a citation becomes an op anchored on the word's first character;
-    /// then the word goes to the clause cutter.
+    /// The word ended (whitespace, a tag, the end of the stream). gemma4's stray channel tokens
+    /// are taken out of it, a tool call written as words is kept out of speech, a citation
+    /// becomes an op anchored on the word's first character, then the word goes to the clause
+    /// cutter.
     fn end_word(&mut self, out: &mut Vec<NarrationOutput>) {
         let word = match std::mem::replace(&mut self.word, Word::Held(String::new())) {
-            Word::Held(word) if !word.is_empty() => word,
+            Word::Held(word) if !word.is_empty() => without_stray_tokens(word),
             Word::Held(_) | Word::Overflowed => return,
         };
+        if word.is_empty() {
+            return;
+        }
         let fate = self.calls.word(&word);
         self.say(&fate.released, out);
         if !fate.speak {

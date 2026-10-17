@@ -6,7 +6,7 @@ use boardai_core::history::{AssistantPart, Message, UserPart};
 use boardai_core::protocol::{OrbState, UiEvent};
 use boardai_core::sim::Sim;
 use boardai_core::time::SessionTime;
-use boardai_core::{CoreConfig, MicMode};
+use boardai_core::{CoreConfig, MicMode, RepoReads};
 
 /// The demo from PRODUCT §5, as the talker would narrate it.
 pub const DEMO: &str = concat!(
@@ -24,6 +24,7 @@ pub fn config() -> CoreConfig {
         mic: MicMode::OpenMic,
         session_context: None,
         suggestion: None,
+        repo_reads: RepoReads::NotOffered,
     }
 }
 

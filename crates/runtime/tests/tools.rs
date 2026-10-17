@@ -6,6 +6,7 @@ mod support;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
+use boardai_core::RepoReads;
 use boardai_core::tools::{DirEntry, ToolCall, ToolFailure, ToolOutput};
 use boardai_runtime::limits::{SEARCH_HITS_MAX, TOOL_RESULT_MAX_BYTES, TOOL_RESULT_MAX_LINES};
 use boardai_runtime::tools::{RepoRoots, RepoTools, ToolError, run_blocking};
@@ -367,5 +368,17 @@ fn credential_folders_inside_an_opened_folder_are_never_read() {
             }
         )),
         ToolFailure::OutsideRepo
+    );
+}
+
+/// The core asks for an announced read only when one could have been made (D-232): the tools
+/// tell it so once a folder is open.
+#[test]
+fn the_repo_reads_are_offered_once_a_folder_is_open() {
+    let fixture = fixture();
+    assert_eq!(RepoTools::default().repo_reads(), RepoReads::NotOffered);
+    assert_eq!(
+        RepoTools::new(fixture.roots).repo_reads(),
+        RepoReads::Offered
     );
 }

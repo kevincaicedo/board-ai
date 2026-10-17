@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use boardai_core::history::{Conversation, Message, UserPart};
 use boardai_core::time::SessionTime;
-use boardai_core::{CoreConfig, MicMode};
+use boardai_core::{CoreConfig, MicMode, RepoReads};
 use boardai_runtime::audio::{
     AudioConfig, AudioIo, ClipPlayed, FileMic, MIC_RING_FRAMES, NullOutput, VOICE_RING_FRAMES,
     VoiceOutput, mic_ring, voice_ring,
@@ -278,6 +278,8 @@ fn core_config(model: &str) -> CoreConfig {
         mic: MicMode::OpenMic,
         session_context: None,
         suggestion: None,
+        // The e2e opens no repo (`RepoTools::default()`).
+        repo_reads: RepoReads::NotOffered,
     }
 }
 

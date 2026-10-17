@@ -14,7 +14,7 @@ use boardai_core::memory::MemoryWrite;
 use boardai_core::protocol::{OrbState, UiBatch, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
-use boardai_core::{CoreConfig, MicMode};
+use boardai_core::{CoreConfig, MicMode, RepoReads};
 use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, stream};
 
@@ -363,6 +363,7 @@ fn start_with_store(
             mic: MicMode::OpenMic,
             session_context: None,
             suggestion: None,
+            repo_reads: RepoReads::NotOffered,
         },
         clock: TokioClock::start(),
         talker: Arc::clone(&talker) as Arc<dyn LlmProvider>,

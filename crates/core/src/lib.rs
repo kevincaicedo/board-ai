@@ -33,4 +33,4 @@ pub mod tools;
 pub mod views;
 pub mod voice;
 
-pub use engine::{Core, CoreConfig, MicMode};
+pub use engine::{Core, CoreConfig, MicMode, RepoReads};

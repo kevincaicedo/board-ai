@@ -9,6 +9,7 @@ mod text;
 
 use std::sync::Arc;
 
+use boardai_core::RepoReads;
 use boardai_core::tools::{ToolCall, ToolFailure, ToolOutput};
 
 pub use repo_path::{CREDENTIAL_PATHS, RepoPath, RepoRoots, TooBroad, ToolError, too_broad};
@@ -30,6 +31,17 @@ impl RepoTools {
     #[must_use]
     pub fn roots(&self) -> &RepoRoots {
         &self.roots
+    }
+
+    /// What the core is told about the repo reads (D-232): offered once a folder is open, since
+    /// every talker request carries BoardAI's full tool set (`session::talker_config`).
+    #[must_use]
+    pub fn repo_reads(&self) -> RepoReads {
+        if self.roots.is_empty() {
+            RepoReads::NotOffered
+        } else {
+            RepoReads::Offered
+        }
     }
 
     /// Runs a repo tool. Every failure is a `ToolOutput::Failed` the talker can read. If this

@@ -50,6 +50,8 @@ use ops::OpQueue;
 use reply::{ContextTracker, Reply};
 use stop::PendingStop;
 
+pub use nudge::RepoReads;
+
 /// How the microphone is used (D-011).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MicMode {
@@ -71,6 +73,8 @@ pub struct CoreConfig {
     /// The idle line under the orb ("Pick up Raft log compaction where we left off?"), from the
     /// last session's recap. Shown at start, cleared when the user first speaks.
     pub suggestion: Option<String>,
+    /// Whether the talker's requests offer the repo reads over an open repo (D-232).
+    pub repo_reads: RepoReads,
 }
 
 impl Default for CoreConfig {
@@ -80,6 +84,7 @@ impl Default for CoreConfig {
             mic: MicMode::OpenMic,
             session_context: None,
             suggestion: None,
+            repo_reads: RepoReads::NotOffered,
         }
     }
 }

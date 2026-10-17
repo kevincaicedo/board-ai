@@ -169,6 +169,7 @@ async fn run(args: &Args) -> Result<Vec<Answer>, String> {
             mic: MicMode::OpenMic,
             session_context: None,
             suggestion: None,
+            repo_reads: tools.repo_reads(),
         },
         clock: TokioClock::start(),
         talker,

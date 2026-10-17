@@ -329,6 +329,7 @@ async fn parts(
             },
             session_context: None,
             suggestion: None,
+            repo_reads: opened.tools.repo_reads(),
         },
         clock: TokioClock::start(),
         talker,

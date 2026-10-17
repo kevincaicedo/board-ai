@@ -1,0 +1,33 @@
+clause 0 [talker@0]
+  caption: "Okay."
+  speech:  "Okay."
+clause 1 [talker@6]
+  caption: "I will start by listing the root directory to understand the repository structure."
+  speech:  "I will start by listing the root directory to understand the repository structure."
+clause 2 [talker@89]
+  caption: "Then I'll read the entry point."
+  speech:  "Then I'll read the entry point."
+clause 3 [talker@122]
+  caption: "Let me see the top level of the repository."
+  speech:  "Let me see the top level of the repository."
+clause 4 [talker@168]
+  caption: "The tool_code field and this word stay speech,"
+  speech:  "The tool code field and this word stay speech,"
+clause 5 [talker@215]
+  caption: "as does end_tool_code alone."
+  speech:  "as does end tool code alone."
+clause 6 [talker@244]
+  caption: "and the core crate."
+  speech:  "and the core crate."
+op 0 at clause 6 byte 4: Node { id: ElementId("core"), label: "crates/core", shape: None, placement: Auto, stack: 1, fill: None }
+clause 7 [talker@264]
+  caption: "Then I'll search the code for the parser,"
+  speech:  "Then I'll search the code for the parser,"
+clause 8 [talker@306]
+  caption: "but I'll draw it and let me explain the rest."
+  speech:  "but I'll draw it and let me explain the rest."
+spoken call list_dir: "tool_code:list_dir{path:<|\"|>.<|\"|>}"
+spoken call list_dir: "list_dir{path:<|\"|>crates<|\"|>}"
+spoken call list_dir: "print(list_dir(path=\".\"))"
+spoken call read_file: "call:read_file{path:<|\"|>src/a b.rs<|\"|>}"
+announced list_dir, search_code

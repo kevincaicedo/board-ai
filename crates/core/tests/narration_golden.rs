@@ -9,7 +9,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use boardai_core::limits::{CLAUSE_MAX_BYTES, OPS_PER_RESPONSE_MAX};
+use boardai_core::limits::{
+    CITATION_TOKEN_MAX_BYTES, CLAUSE_MAX_BYTES, OPS_PER_RESPONSE_MAX, SPOKEN_CALL_MAX_BYTES,
+    TOOL_CALLS_PER_RESPONSE_MAX,
+};
+use boardai_core::narration::spoken_calls::SpokenCall;
 use boardai_core::narration::{ClauseOrigin, NarrationOutput, NarrationStream, StreamAnchor};
 
 fn golden_inputs() -> Vec<PathBuf> {
@@ -29,20 +33,33 @@ fn golden_inputs() -> Vec<PathBuf> {
     inputs
 }
 
+/// What a stream gave: its outputs, then the tool calls it kept out of speech (D-179) and the
+/// repo reads its speech announced (D-232).
+#[derive(Debug, PartialEq, Eq)]
+struct Run {
+    outputs: Vec<NarrationOutput>,
+    spoken_calls: Vec<SpokenCall>,
+    announced: Vec<&'static str>,
+}
+
 /// Feeds `chunks` in order, then finishes.
-fn run(chunks: &[&str]) -> Vec<NarrationOutput> {
+fn run(chunks: &[&str]) -> Run {
     let mut stream = NarrationStream::new(0);
     let mut out = Vec::new();
     for chunk in chunks {
         stream.push(chunk, &mut out);
     }
     stream.finish(&mut out);
-    out
+    Run {
+        outputs: out,
+        spoken_calls: stream.spoken_calls().to_vec(),
+        announced: stream.announced_reads().to_vec(),
+    }
 }
 
-fn render(outputs: &[NarrationOutput]) -> String {
+fn render(run: &Run) -> String {
     let mut text = String::new();
-    for output in outputs {
+    for output in &run.outputs {
         let _ = match output {
             NarrationOutput::Clause(clause) => {
                 let origin = match clause.origin {
@@ -69,6 +86,12 @@ fn render(outputs: &[NarrationOutput]) -> String {
             }
             NarrationOutput::Dropped(what) => writeln!(text, "dropped {what:?}"),
         };
+    }
+    for call in &run.spoken_calls {
+        let _ = writeln!(text, "spoken call {}: {:?}", call.tool, call.written);
+    }
+    if !run.announced.is_empty() {
+        let _ = writeln!(text, "announced {}", run.announced.join(", "));
     }
     text
 }
@@ -170,6 +193,26 @@ const PIECES: &[&str] = &[
     ")",
     "`",
     "<page/>",
+    // gemma4's forms (D-233) and announced reads (D-232), whole and in parts.
+    "tool_code",
+    "tool_code:",
+    "end_tool_code",
+    "[tool_code]",
+    "[/tool_code]",
+    "print(",
+    "list_dir{path:<|\"|>.<|\"|>}",
+    "<|\"|>",
+    "<channel|>",
+    "<|channel>",
+    "<|",
+    "|>",
+    "I'll ",
+    "let me ",
+    "look at the ",
+    "listing ",
+    "files",
+    "I'll list the files. ",
+    "Let me search for ",
 ];
 
 /// Random input never panics, keeps every clause within its cap, keeps the op cap, and stays
@@ -184,7 +227,7 @@ fn random_input_never_panics_and_stays_bounded() {
         }
         let whole = run(&[&input]);
         let mut ops = 0;
-        for output in &whole {
+        for output in &whole.outputs {
             match output {
                 NarrationOutput::Clause(clause) => {
                     assert!(clause.caption.len() <= CLAUSE_MAX_BYTES, "{input:?}");
@@ -194,6 +237,19 @@ fn random_input_never_panics_and_stays_bounded() {
             }
         }
         assert!(ops <= OPS_PER_RESPONSE_MAX);
+        assert!(whole.spoken_calls.len() <= TOOL_CALLS_PER_RESPONSE_MAX);
+        // A held name and its whitespace, then one word past the bound.
+        let written_max = SPOKEN_CALL_MAX_BYTES + 2 * CITATION_TOKEN_MAX_BYTES;
+        assert!(
+            whole
+                .spoken_calls
+                .iter()
+                .all(|call| call.written.len() <= written_max),
+            "{input:?}"
+        );
+        let mut announced = whole.announced.clone();
+        announced.dedup();
+        assert!(announced.len() == whole.announced.len() && announced.len() <= 3);
         let mut cut = rng.below(input.len() + 1);
         while !input.is_char_boundary(cut) {
             cut -= 1;

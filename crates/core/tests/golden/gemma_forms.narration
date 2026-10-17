@@ -1,0 +1,15 @@
+Okay. I will start by listing the root directory to understand the repository structure.<channel|>
+tool_code:list_dir{path:<|"|>.<|"|>} Then I'll read the entry point.
+tool_code
+list_dir{path:<|"|>crates<|"|>}
+end_tool_code
+Let me see the top level of the repository.
+[tool_code]
+print(list_dir(path="."))
+[/tool_code]
+tool_code
+
+end_tool_code
+The tool_code field and <|channel>this word stay speech, as does end_tool_code alone.
+call:read_file{path:<|"|>src/a b.rs<|"|>} and <node id="core" label="crates/core"/>the core crate.
+Then I'll search the code for the parser, but I'll draw it and let me explain the rest.

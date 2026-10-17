@@ -28,3 +28,9 @@ clause 8 [talker@340]
   speech:  "list dir ui holds the interface, as ui slash src slash main dot tsx, line 3 shows."
 op 1 at clause 8 byte 9: Node { id: ElementId("ui"), label: "ui/", shape: None, placement: Auto, stack: 1, fill: None }
 op 2 at clause 8 byte 36: Cite { path: "ui/src/main.tsx", line: 3 }
+spoken call list_dir: "list_dir path \".\""
+spoken call read_file: "read_file(\"crates/core/src/lib.rs\")"
+spoken call search_code: "`search_code query=\"TODO\" glob=\"*.rs\"`"
+spoken call research: "research(question=\"why so slow\", depth=\"quick\")"
+spoken call read_file: "read_file(path=\"crates/app/src/main.rs\","
+announced list_dir

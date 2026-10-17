@@ -1,6 +1,7 @@
 //! Simulator scenarios for asking the talker once more (D-178): a drawing was asked for and the
-//! reply drew nothing, or a repo read was written as words instead of called (D-179). One retry
-//! a turn, never more, and only when the reply really missed.
+//! reply drew nothing, or a repo read was written as words instead of called (D-179), or
+//! announced and not made (D-232, `sim_announced_reads`). One retry a turn, never more, and only
+//! when the reply really missed.
 #![allow(clippy::expect_used, reason = "a broken scenario should fail loudly")]
 
 mod common;
