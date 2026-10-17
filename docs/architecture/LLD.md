@@ -1,8 +1,23 @@
 # BoardAI · Low-level design
 
-> Status: **draft for review** · 2026-10-15 · Diagrams: [`lld.excalidraw`](lld.excalidraw), panels A–F (open at [excalidraw.com](https://excalidraw.com) → menu → Open) · High level: [HLD.md](HLD.md)
+> Status: **draft for review** · 2026-10-17 · Diagrams: [`lld.excalidraw`](lld.excalidraw), panels A–K (open at [excalidraw.com](https://excalidraw.com) → menu → Open) · High level: [HLD.md](HLD.md)
 
 This document gives the types, algorithms, limits and invariants behind the [HLD](HLD.md). The Rust signatures are sketches: names and shapes are intended, details settle in code. When the code and this document disagree, the code is fixed or the document is updated in the same change.
+
+**Reviewing it.** Each topic has one section that gathers it, with the real types and the files that hold them:
+
+| To review | Section | Panel |
+|---|---|---|
+| Crates and dependency rules | §1 | A |
+| Every thread, task, subprocess and channel, who owns what, with capacities | §3.10 | G |
+| The core's state machines (conversation, drawing, speculative start, change gate, session end, sources, briefs, digests, elements) | §2.2, §2.11 | E, H |
+| One turn from mic to stroke, barge-in and resume, with timings | §12.1, §12.2 | C, D |
+| A research brief's lifecycle and a PDF's digest pipeline | §12.3, §12.4 | I |
+| A staged diagram's layout and reveal, and drill-down | §12.5, §12.6 | J |
+| The event log, the vault, `settings.toml` and the protocol's shapes | §13 | F |
+| Trust boundaries | §9.1 | K |
+| Invariants I1–I18 | §2.9 | |
+| Limits | §5 | |
 
 ## 1. Repository and dependency rules (panel A)
 
@@ -13,7 +28,7 @@ boardai/
 │  ├─ runtime/   boardai-runtime  all I/O adapters, actors, the session driver; no Tauri
 │  └─ app/       boardai-app      Tauri 2 shell: window, permissions, keychain, transport
 ├─ ui/           Preact + TypeScript (Vite); the canvas and orb renderers are imperative TS
-├─ docs/         PRODUCT, PLAN, DECISIONS, architecture/
+├─ docs/         PRODUCT, architecture/ (the decision log and the plan are kept outside the repository)
 └─ justfile      `just check` is the one entry point for every check
 ```
 
@@ -45,8 +60,9 @@ pub struct Core { /* conversation, thread, board, schedule, cameras, memory cand
 /// The talker's name for failure lines, the mic mode, context for the first request, the idle
 /// suggestion (from the last session's recap; shown at start, cleared when you first speak), and
 /// whether the talker's requests offer the repo reads over an open folder (`RepoReads`, D-232;
-/// the runtime sets it from the folders it opened).
-pub struct CoreConfig { talker_name, mic, session_context, suggestion, repo_reads }
+/// the runtime sets it from the folders it opened), and when a turn's request may leave
+/// (`RequestStart::AtTurnEnd` or `OnEarlyFinal`, D-262).
+pub struct CoreConfig { talker_name, mic, session_context, suggestion, repo_reads, request_start }
 
 impl Core {
     pub fn new(config: CoreConfig) -> Self;
@@ -70,25 +86,28 @@ The runtime must not deliver talker inputs from a stream after it applied that s
 | `VoiceStart`, `VoiceEnd { voiced_ms, silence_ms }` | speech in (VAD) | `silence_ms`: the silence the detector heard before it could call the end (its hangover), so the core counts the turn's silence once, from the last voiced moment |
 | `VoiceOnset` | speech in (VAD) | The first window above the speech threshold after silence, ~160 ms before `VoiceStart` can confirm speech; the voice ducks on it (§2.2) |
 | `Transcript { text, is_final }` | speech in (STT) | |
-| `Pointer { target, at }` | UI | A board element, a code line, or nothing |
+| `EarlyFinal { text }`, `VoiceResumed` | speech in (STT) | The final decoded after 96 ms of quiet inside speech, and its withdrawal when speech comes back before `VoiceEnd` (§3.4); they drive the speculative start (§2.2, D-262) and never end a turn |
 | `TalkerDelta { text }` | talker | Streamed narration text |
-| `TalkerToolCall { id, call }` | talker | A validated tool call |
-| `TalkerDone { stop }` | talker | `EndTurn`, `ToolUse`, `MaxTokens`, `Refusal`, `Error` |
-| `ClauseReady { clause, timings }` | speech out | Word timings; exact or estimated |
+| `TalkerToolCall { invocation }` | talker | A `ToolInvocation { id, name, input_json, call }`, parsed at the provider boundary (`ToolCall::parse`); a call that failed to parse carries `call: Err` and is answered with an error result |
+| `TalkerDone { stop, raw }` | talker | `StopReason`: `EndTurn`, `ToolUse`, `MaxTokens`, `Refusal`, `Failed { failure: TalkerFailure }`; `raw` is the provider's whole assistant content when the stream completed |
+| `ClauseReady { clause, timings }` | speech out | `WordTimings { source: Exact \| Estimated, words: [WordTiming { byte_offset, start_ms }], duration_ms }` |
 | `SynthesisFailed { clause }` | speech out | Answers `Synthesize` instead of `ClauseReady`. The clause is skipped: its ops are never drawn, its text shows as a `Problem`, and the reply goes on |
-| `PlaybackAt { clause, offset_ms }` | speech out | Coalesced; at most one per 20 ms |
+| `PlaybackAt { position }` | speech out | `PlaybackPosition { clause, offset_ms }`, on a `watch`: latest wins, at most one per 20 ms |
 | `PlaybackDrained` | speech out | |
-| `ToolResult { id, result }`, `HarnessEvent { task, event }` | runtime | |
-| `Command(UiCommand)` | UI | Pointer, mute, push-to-talk, `Stop` (Esc), open library, drawing (§2.2 "You draw")… |
+| `VoiceStopped { last }` | speech out | The answer to `StopVoice`: the last `PlaybackPosition` that played, `None` when nothing was playing. It defines the heard prefix (§2.7) |
+| `ToolResult { id, output }`, `Harness { task, event }` | runtime | `ToolOutput`; `HarnessEvent` (§3.5) |
+| `Command(UiCommand)` | UI | `Pointer { target }` (a board element, a code line, or nothing), mute, push-to-talk, `Stop` (Esc), `CloseView`, `OpenSource`, drawing (§2.2 "You draw"), the tray's `Sources { action }` |
 | `Tick` | runtime | A deadline the core asked for |
 | `MemoryFailed { change, detail }` | store | A `Remember`, forget or keep the store could not make (§2.8). The core shows a `Problem` and tells the talker; its captures don't change |
 | `Source { source }` | runtime, app | Sources (§2.10, D-184): the session's harness and last project (`Opened`), a path shared natively (`Shared`), a spoken name's matches (`Resolved`), a project's kept sources (`ProjectLoaded`), a brief from the cache or the harness started (`BriefCached`, `BriefStarted`), cited lines read (`CitationsChecked`), a drag over the window (`Dragging`), a document reader's report (`DocumentRead`), a document's pages read for the talker, or why they weren't (`DocumentPages { answer: PagesAnswer }`, D-256), and what the runtime couldn't do (`Failed`) |
 
-**Effects** (core → runtime): `Duck { gain }`, `StopVoice`, `Synthesize { clause }`, `Talk { request }`, `CancelTalk`, `RunTool { id, call }`, `RunHarness { task }`, `CancelHarness { task }`, `Ui(UiEvent)`, `Log(Record)`, `Remember(MemoryWrite)`, `WakeAt(SessionTime)`, `Source { source }` (§2.10: `Resolve`, `Share`, `Discard`, `SetProject`, `Keep`, `Unkeep`, `Brief`, `CacheBrief`, `CheckCitations`, `ReadDocument`).
+**Effects** (core → runtime, `core::effect::Effect`): `Duck { gain }` (`Gain`, clamped to `[0, 1]`; `Gain::DUCKED` is 0.25), `StopVoice`, `Synthesize { clause, text }` (the clause's speakable text), `Talk { request }` (`TalkRequest { messages }`, the whole append-only history), `CancelTalk`, `RunTool { id, call }`, `RunHarness { task, spec }` (`HarnessTask { kind, brief }`), `CancelHarness { task }`, `Ui(UiEvent)`, `Log(LogRecord)` (`Milestone { milestone }` or `Dropped { what, count }`), `Remember(MemoryWrite)`, `WakeAt { at }`, `Forget { scope }` (`ForgetScope::Last` or `Session`), `AcceptProposal { capture }`, `Source { source }` (`SourceEffect`, §2.10: `Resolve`, `Share`, `Discard`, `SetProject`, `Keep`, `Unkeep`, `Brief`, `CacheBrief`, `CheckCitations`, `ReadDocument`).
 
 The runtime applies effects in order. The core never waits: anything slow is an effect now and an input later.
 
 ### 2.2 Conversation state machine (panel E)
+
+The other state machines beside this one (drawing, the speculative start, the change gate, the session's end, sources, briefs, digests and board elements) are in §2.11 (panel H).
 
 Detours are not states. They are a stack inside the thread (§2.6), and speaking inside a detour is still `Speaking`.
 
@@ -266,7 +285,7 @@ Then it reaches the <node id="lb" label="Load balancer" kind="service" near="cdn
 ### 2.5 Board model and layout
 
 - A board is a stack of **layers**: the main layer, plus one per open detour.
-- Each **element** has a stable id, scoped to its layer, plus a kind, a label, geometry, and a state: `Pending` (laid out, waiting for its drawing slot), `Drawing`, `Drawn`, `Frozen { progress }` or `Struck`. An interruption removes `Pending` elements; the user never saw them.
+- Each **element** has a stable id, scoped to its layer, plus a kind, a label, geometry, and a state (`board::element::ElementState`): `Pending` (laid out, waiting for its drawing slot), `Drawing { started_at, budget_ms }`, `Drawn`, `Frozen { progress_percent, remaining_ms }`, `Struck` or `Planned` (a staged diagram's part, below). An interruption removes `Pending` elements, since the user never saw them, and leaves `Planned` ones for a later reveal (§2.11).
 - A repeated id updates the element (a relabel or a strike); it never duplicates it.
 - **Layout** turns meaning into geometry on a grid of cells sized per kind.
   - `near X dir right` takes the first free cell to the right of X in the same row. A collision nudges further along the same direction.
@@ -397,20 +416,20 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 
 | # | Invariant | Enforced by |
 |---|---|---|
-| I1 | An op never starts before its anchor word's audio has played | Simulator property |
-| I2 | Committed assistant text is exactly the heard prefix | Type (`HeardPrefix`) |
-| I3 | The LLM conversation is append-only | Type (`Conversation` has `push` and no edit or remove) |
-| I4 | Detour depth ≤ 3, and pushes and pops balance by session end | Type (bounded stack) + simulator |
-| I5 | At most one talker stream in flight | State owns `Option<TalkerTurn>`; `CancelTalk` precedes `Talk` (simulator) |
+| I1 | An op never starts before its anchor word's audio has played | Simulator property on every step (`sim::check`, from `Core::op_anchor`); `just e2e` checks it against the real voice's positions |
+| I2 | Committed assistant text is exactly the heard prefix | Type (`heard::HeardPrefix`, built only from a playback position) + simulator property (committed text that was never said) |
+| I3 | The LLM conversation is append-only | Type (`history::Conversation` has `push` and no edit or remove) + simulator property (an earlier message changed) |
+| I4 | Detour depth ≤ 3 (`DETOUR_DEPTH_MAX`), and pushes and pops balance by session end | Type (bounded stack in `thread::Thread`) + simulator property (open layers equal the thread's detours) |
+| I5 | At most one talker stream in flight | The core's `reply.in_flight` and `CancelTalk` before every `Talk` (the speculative start inserts its `CancelTalk` ahead of a step's own `Talk`); the runtime's `Talker` holds one `Option<Run>` and drops stale generations (D-034); simulator property |
 | I6 | Existing board elements never move (a group's box only grows); the user's shapes keep their geometry (a pen shape only gains or loses its last strokes, an arrow's loose end may connect, and an end comes loose only when you undo the shape it joined), and nothing BoardAI starts lands on one or reuses its id | Layout API places only new ids (test) + simulator (`sim::check::drawing`) |
 | I7 | A backchannel never stops the voice, even with a pointer target set | Table test over the lexicon, with and without a pointer, and at the longest measured length (960 ms of voice) + simulator |
 | I8 | A secret never reaches the store | Boundary redaction + planted-secret test |
 | I9 | A code change never runs without your spoken yes to BoardAI's own question naming it | Deterministic gate in core (§3.5) + simulator property: the yes began after the question with that branch and instruction played to its end |
 | I10 | A "don't remember this session" leaves nothing in the vault | Store test + simulator property for the core's half (`sim::check::off_record`: no `Keep` and no `CacheBrief` after it, D-272), with a planted violation |
 | I11 | A stroke starts inside its layer's camera frame | Simulator property (the fuzzer found the strike-under-focus case) |
-| I12 | The history is always a request the providers accept: it starts with the user, every `tool_use` is answered in the very next message, and every tool result answers the message before | Simulator property on every step + planted unit test (review findings 1 and 11) |
+| I12 | The history is always a request the providers accept: it starts with the user, every `tool_use` is answered in the very next message, and every tool result answers the message before | Simulator property on every step (`sim::check::history_shape`) + planted unit test (review findings 1 and 11) |
 | I13 | A session ends only when BoardAI is quiet: `SessionEnd` is never emitted while a voice, a talker stream or a clause is in flight, nor while a harness task runs that the core didn't cancel at your second "end the session" | Simulator property on every step + planted violations (D-144; `sim::check::tasks`) |
-| I14 | While the user draws, no talker stream is in flight: none was left running when drawing began, and none starts until it ends; no view opens over the drawing | `debug_assert` in `request_talk` + simulator property, with planted violations |
+| I14 | While the user draws, no talker stream is in flight: none was left running when drawing began, and none starts until it ends; no view opens over the drawing; no speculative request starts or survives | `debug_assert` in `request_talk` + simulator property (`sim::check::drawing`), with planted violations; `speculate` refuses and cancels while drawing |
 | I15 | A source chip opens only a line this session read: from a repo tool, or a brief's citation the runtime read natively (§2.10) | Simulator property (`sim::check::sources`) + planted unit test |
 | I16 | A staged diagram's part is drawn only by a reveal, at most once, exactly where it was laid out when its diagram was staged; a reveal holds nothing that wasn't staged (D-187) | Layout before the first stroke (`Board::stage`) + simulator property (`sim::check::staged`), with planted violations |
 | I17 | A Doc card's chip names only what the session read of that document: a page whose extracted text a document read returned, or a page, a figure or a table its digest holds (D-257), and never a page past the document's end (D-273) | Checked when the voice reaches the citation (`engine::shared::documents::cites`) + simulator property (`sim::check::documents`, which knows each document's page count), with planted violations |
@@ -430,9 +449,160 @@ One yes can't answer two questions: a proposal made while a code change awaits i
 - **The tray** is sent whole (`UiEvent::Sources`) on each change: it opens on its own while something is read and closes once nothing is, unless you opened or closed it meanwhile; the ghost names are the harness's last `READING_GHOSTS_MAX` (4) files. A drag is `SourceDrop` (the half under the pointer, the right half's project, or why nothing can be shared).
 - **Documents** (D-186, D-254 to D-257; `sources::digest`, `sources::pages`, `engine::shared::documents`). Sharing one tells the talker it is being read and how to read and cite it, and BoardAI says "Reading {title}." when nobody holds the floor. A reader's reports drive the tray (`Reading` names who reads now: "BoardAI", then "Gemini 3.8 Flash"). Its digest is parsed by `digest::parse` (line-based, bounded, drops counted; its title, sections' titles, captions and figures' reader as plain text, D-266; the canonical form parses back to itself; a figure's `<diagram>` block is kept whole or dropped, never cut, so D-234's parser stages it) and the digest itself says what the tray shows (`Digest::tray_state`: "6 pages · text, 2 tables and 3 of 3 figures read · figures by Gemini 3.8 Flash", or partial: "Text read · 3 figures need a model that reads files"; every figure the text names is counted, read or not). It goes to the talker quietly with the next request, fenced as untrusted data (D-107), with how to read more and how to cite. **Reads:** `read_file` whose path names a shared PDF (its file name, with or without the extension, or its digest's title) is the core's: pages as `start_line`/`end_line`, at most `DOCUMENT_READ_PAGES_MAX` (4), become `ReadDocument` and the held call gets `DocumentPages` (`PagesAnswer`): pages read come fenced (a page read with no text is said to be past the end or scanned); pages the runtime couldn't read (`PagesUnread`: out of time, busy, no reader, or the reader's reason) are said not to have been read, and why, never to hold no text (review 3, finding 8). Past `DOCUMENT_READS_WAITING_MAX` reads waiting, the oldest's call is answered at once as not read (busy), so its round never waits for it; `#Figure 2`, `#Table 1` or `#<section words>` answers from the digest at once (an unread figure only its caption, said to be unread). A figure read with a diagram has its `<diagram>` staged with that reply's next request through the briefs' path (`diagrams::wait_to_stage_figure`, on the layer in front, titled by its caption, no provenance chip: its Doc card says who read it); the talker is told not to copy it and hears its ids, and what its reply leaves planned is revealed as the reply ends. A figure written without an id (the digest's shape writes none) is `figure-<n>`; one already staged on that layer, by its document and number, isn't staged again (D-269: every figure was `diagram`, so Figure 2 never staged after Figure 1). A Markdown or text document's lines are the repo tools' (a single-file root, D-231), though it offers no repo reads (D-232: the desk's `changed_reads` counts code folders and code sources only); its `#` parts are the digest's. `research` is answered from a document's digest, and no harness runs, only when its words point at that document (`sources::routing::research_target`, D-267): its file's name or its digest's title written out word for word ("the layered store paper", at least `DOCUMENT_NAME_MIN_CHARS` letters), or "the/this/that paper, PDF, document, doc, article" (the document last read first); or when they cite a figure, table or page while no code source is shared. Words that name the code ("code", "codebase", "repo", "repository", "crate"), a source file's name or path, or a shared code source's title send it to the code whatever else they say. A digest a request carried answers "its digest is in this conversation"; one still waiting for the next turn is taken out and given to the call (D-271). BoardAI's own words name a document by its file's name, never its digest's title, and the notes around a document's text pass through plain text (`PlainText::note`, D-266). No new tool: the prompt's budget is spent (D-240). **Citations:** each talker clause sent to speech is scanned (`pages::find_cites`: "p. 3", "pp. 3–4", "page 3", "pages 3 to 4", "Figure 1", "Fig. 1", "Table 2", one to twenty in words, a figure and its page joined by "on"/"(…)"), and each citation waits for the voice to reach it (`DOCUMENT_CUES_WAITING_MAX`); a clause that never plays fires nothing. When reached it is checked against the document last read or cited, then the others (I17): a figure or table its digest holds, pages read this session (`DOCUMENT_PAGES_KEPT_MAX` kept) or covered by the digest. A digest's locator past the document's own length (its `Read:` line) is dropped where the digest is parsed (`DigestDropped.locators`, D-273): a model's "(p. 40)" in a seven-page paper opened a card on a page that doesn't exist. A citation that checks out opens the **Doc card** (`Surfaces::open_doc`, one at a time, a column slot like the code card): the chip ("p. 3 · Figure 1"), the figure's caption, the passage (the figure's description, the table's rows, or the window of `DOC_CARD_SENTENCES_MAX` sentences of the page around the one the clause explains, `pages::passage`), and a note on who read it. At most `PAGE_CITES_PER_REPLY_MAX` cards a reply. One that doesn't check out shows nothing and the talker is told once a reply. **Follow:** while a Doc card is open, each talker clause that starts moves its highlight (`SurfaceUpdate::Sentence`) to the sentence sharing the most words of four letters or more with it (at least `DOC_SENTENCE_OVERLAP_MIN`). A digest that arrives while you draw goes quietly with the first request after (I14); once the session ended nothing of it shows.
 
+### 2.11 State machines (panel H)
+
+The core is one `Core` value (`engine/mod.rs`). Who has the floor is `ConversationState`; the other machines are fields of `Core` beside it, each an enum or an `Option` of a struct, so a state that can't happen can't be written. All of them change only inside `Core::step`, in one order: the input's handler, then `settle_speculation` (for every input but `EarlyFinal`), then `after_step` (`advance_ops`, the document cues, captions, `arm_change_gate`, `maybe_finish_reply`, `maybe_report`, the label hint, the orb), then `yield_view`.
+
+| Machine | Type (field of `Core`) | States | Where |
+|---|---|---|---|
+| Who has the floor | `ConversationState` (`state`) | `Idle`, `Listening(Utterance)`, `Thinking`, `Speaking`, `Ducked(BargeIn)`, `Muted` | `conversation/mod.rs`; transitions in `engine::listen`, `engine::stop` (§2.2) |
+| A stop settling | `Option<PendingStop>` (`stop`) | none, or `{ deadline, stopped_voice, abandon_question }` | `engine/stop.rs` (§2.7) |
+| A tentative duck | `Option<SessionTime>` (`onset_duck_until`) | none, or when the 300 ms hold ends | `engine/listen.rs` |
+| The reply | `Option<Reply>` (`reply`) | none, or `{ streams, in_flight, tools, rounds, done, … }` | `engine/reply/mod.rs` |
+| The user drawing | `Drawing` (`drawing`) | `Off`, `On(Watch)` | `engine/draw.rs` (§2.11.2) |
+| The speculative start | `Option<Box<Speculation>>` (`speculation`) | none, or `{ request, held, deadline }` | `engine/speculate.rs` (§2.11.3) |
+| The change gate | `ChangeGate` (`gate`) | `Closed`, `Proposed`, `Asking`, `Open` | `engine/gate.rs` (§2.11.4) |
+| The memory proposal gate | `Option<Proposal>` in `Memory` (`memory`) | none, or `{ capture, text, opened_at }` | `engine/memory.rs` (§2.8) |
+| The session's end | `SessionEnding` (`ending`) | `Continuing`, `Confirming`, `AfterReply`, `AfterWords`, `Ended` | `engine/stage.rs` (§2.11.5) |
+| Sources, briefs, digests | `shared::SourceDesk` (`sources`) | per source, brief task and document (§2.11.6) | `engine/shared/` |
+| Each board element | `ElementState` (in `Board`) | `Pending`, `Drawing`, `Drawn`, `Frozen`, `Struck`, `Planned` | `board/element.rs`, `board/lifecycle.rs` (§2.11.7) |
+
+#### 2.11.1 Who has the floor
+
+The transitions are §2.2's table. What each state carries, and what holds while the core is in it:
+
+| State | Carries | Holds while in it |
+|---|---|---|
+| `Idle` | nothing | Nobody holds the floor. The voice is at full gain: every stop restores it (`Core.gain`). A drawing may be on (the orb then shows Listening). |
+| `Listening(Utterance)` | `Utterance { started_at, finals, partial, voice_started_at, voiced_ms, last_voice_end, final_after_voice_end, released }` | The user holds the floor. The turn's silence counts from `last_voice_end` (`VoiceEnd` minus its `silence_ms`); the utterance ends by `UTTERANCE_MAX_MS` (30 s). Nothing of a speculative request is shown. |
+| `Thinking` | nothing (the request is `reply`) | A request is out and nothing is audible. The first `ClauseReady` moves to `Speaking`. New voice cancels the request and joins its words to the turn when nothing was heard (§2.2). |
+| `Speaking` | nothing | Audio plays; ops fire on `PlaybackAt` (I1). A `VoiceOnset` may hold a tentative duck (`onset_duck_until`). |
+| `Ducked(BargeIn)` | `BargeIn { onset, utterance }` | The voice is at `Gain::DUCKED` and a `WakeAt` is set for `onset + BARGE_IN_DECISION_MS`; `evaluate_barge_in` runs on every input. Ends as backchannel (back to `Speaking`, I7) or interruption (`Listening`, §2.7). |
+| `Muted` | nothing | The mic is closed (`runtime::session::mic_open` is false), no stream runs, a change waiting for a yes is cancelled. Only `Unmute` leaves it. |
+
+#### 2.11.2 Drawing mode (artboard 13)
+
+`Drawing::Off | On(Watch)`; `Watch { shapes, bare, words, full, hinting }`: the shapes of this drawing (newest last, which a label lands on and undo takes), the shape labelled bare, the words kept for the talker (`DRAWING_WORDS_MAX_BYTES`, `full` once past it), and whether the label hint shows.
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| `Off` | "let me draw", the pen button or `D` (`Draw { Start }`) | `On` | A waiting change closes (`GateClosed::Drawing`), a proposed memory closes, a speculation is cancelled; if BoardAI speaks or thinks, it stops as for an interruption with no words; `DRAW_GO_AHEAD_LINE` unless the user talks or is muted; `DrawMode { drawing: true }` |
+| `On` | `Draw { Shape }`, a label, `Draw { Undo }` | `On` | `UserShape` / `UserShapeRemove`; shapes are also accepted while `Off` |
+| `On` | "done", a question, Done, Enter | `Off` | `DrawMode { drawing: false }`, then one talker request whose user message carries `UserContext.drawing` |
+| `On` | Esc (`Draw { Cancel }`), "never mind" | `Off` | `DrawMode { drawing: false }`; no request; the shapes stay |
+| `On` | the session ends | `Off` | The UI leaves drawing on `SessionEnd` |
+
+Invariants: I14 (no stream while `On`: `request_talk` asserts it, `speculate` refuses and cancels) and I6 for the user's shapes.
+
+#### 2.11.3 The speculative start (D-262)
+
+`speculation: Option<Box<Speculation { request: TalkRequest, held: Vec<TalkerInput>, deadline }>>`.
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| none | `EarlyFinal { text }` while `request_start == OnEarlyFinal`, the mic is open mic, nobody draws, the state is `Listening` with the voice active, and a clone of the core that ends the turn on `text` (`request_if_ended`) finds it `Finished` and asks for exactly one `Talk` | pending | That `Talk`, `Milestone::SpeculativeRequest`, `WakeAt(now + SPECULATION_MAX_MS)` |
+| pending | a talker input | pending | Held, at most `SPECULATION_HELD_INPUTS_MAX`; past it, cancelled as below |
+| pending | `VoiceResumed`, or a new `EarlyFinal` | none | `CancelTalk` (the new early final may start another) |
+| pending | after a step that left the core in `Listening`, not drawing, with no `Talk` | pending, or none at the deadline | `CancelTalk` once `now >= deadline` |
+| pending | after a step whose effects hold exactly one `Talk` equal to `request` | none (confirmed) | That `Talk` is removed (the stream already runs) and the held inputs are stepped in order |
+| pending | after any other step: no `Talk` but the state left `Listening` (a mute, a control the core answered), a different request, two of them, drawing began | none | `CancelTalk`, inserted before this step's own effects so it precedes any new `Talk` (I5) |
+
+Invariant (`sim::check::speculation`, with planted violations): while pending nothing is spoken, captioned or drawn, the orb shows Listening, and the state is `Listening`. The runtime half is the talker's generation (§3.10): a cancelled stream's inputs never reach the core.
+
+#### 2.11.4 The change gate (I9)
+
+`ChangeGate::Closed | Proposed { change, stream } | Asking { change, stream, clause } | Open { change, opened_at }`, with `Change { instruction, branch }`.
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| `Closed` | `propose_change` with an instruction that is non-empty and at most `CHANGE_INSTRUCTION_MAX_BYTES` once whitespace is collapsed | `Proposed` | The call's result says it will be asked about; the branch is `branch_for(instruction)` |
+| not `Closed` | `propose_change` | unchanged | An error result: one proposal at a time |
+| `Proposed` | the reply ends normally (`EndTurn` or `MaxTokens`) | `Asking` | The core speaks `change_question(branch, instruction)` as the reply's last clause |
+| `Asking` | that clause played to its end, no stop settling (`arm_change_gate`) | `Open` | `opened_at = now` |
+| `Asking` | the voice skipped that clause | `Closed` | A notice: nothing was changed |
+| `Proposed`, `Asking` | the reply stopped first: an interruption, Esc, mute, new words while thinking, a refusal, a failure, the tool-round limit (`drop_unasked_change`) | `Closed` | The talker is told when its call is in the history |
+| `Open` | the next utterance is an affirmative (`cues::is_affirmative`) begun at or after `opened_at` (`resolve_gate`) | `Closed` | `RunHarness { spec: HarnessTask { kind: Change { branch }, brief: instruction } }` and a notice |
+| `Open` | anything else: other words or a yes begun earlier (`NotYes`), Esc (`Stop`), mute (`Mute`), a harness report turn (`Report`), the pen (`Drawing`) | `Closed` | `GateClosed`'s notice to the talker |
+
+A tool result, a brief, a digest or repo text never reaches `resolve_gate`: only the user's final words do.
+
+#### 2.11.5 The session's end (D-144, D-145)
+
+The core decides the end; the orchestrator carries it out.
+
+**In the core** (`SessionEnding`):
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| `Continuing` | "end the session" (`stage_cues::is_end_session`) with no harness task running | `AfterReply` | The core says "Session saved." ("Session ended." off the record) |
+| `Continuing` | the same while a harness task runs | `Confirming` | "A change is still running; ending now stops it partway. Say “end the session” again to stop it." |
+| `Confirming` | the next utterance asks to end again (`asks_to_end`) | `AfterReply` | `CancelHarness` for every running task; the line names what stopped |
+| `Confirming` | anything else | `Continuing` | The words go on as usual |
+| `AfterReply` | the line played to its end and the floor is free (`maybe_end_session`) | `Ended` | `UiEvent::SessionEnd` |
+| `AfterReply` | the line was cut off: a stop, an interruption, mute (`keep_session`) | `Continuing` | |
+| `AfterReply` | the line drained while the user was already talking (`end_after_words`) | `AfterWords` | |
+| `AfterWords` | their words are a farewell (`stage_cues::is_farewell`) | `Ended` | `UiEvent::SessionEnd` |
+| `AfterWords` | anything else | `Continuing` | The words go to the talker |
+| `Ended` | anything | `Ended` | Nothing new starts: source inputs are ignored and no turn begins |
+
+**In the orchestrator** (`runtime::session::orchestrator`, `Phase`):
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| `Active { spoke, last_activity, store }` | the core's `SessionEnd` (`end_requested`), or `SESSION_IDLE_TIMEOUT_MS` since `last_activity` while `Idle` or `Muted` (`on_idle`) | `Resting { muted, finishing, library: Hidden }` | `quiet_down` (talker cancelled, `Work::shutdown`, deadlines cleared, voice reset), the loop's own answers dropped, `finish_session` spawned with the scribe's deadline when `store == StoreSession::Opened`, `UiEvent::SessionEnd` sent and never logged |
+| `Resting` | the digest written (`RestingLibrary::Hidden → Reading → Shown`) | `Resting` | The library is read beside the loop within `SESSION_TOOL_TIMEOUT_MS` and shown as a `ViewShow`; Esc (`CloseView`) hides it |
+| `Resting` | an input that opens a session (`opens_a_session`: `VoiceStart`, a transcript, `TalkDown` or the pen, not muted; `Unmute`, muted; a drop) | `Active` | `wake`: the finishing scribe is cancelled and given `SESSION_FINISH_CANCEL_WAIT_MS`; `open_session`: the store's start within `SESSION_START_TIMEOUT_MS` (else `StoreSession::Unanswered`, never ended in the store), a fresh `Core`, session time from zero, the talker's warm-up |
+| `Resting` | any other input | `Resting` | Dropped and counted (`SessionStats.resting_inputs`) |
+| either | `SessionHandle::close` | gone | `end_for_good` within `SESSION_QUIT_DIGEST_MS + SESSION_FINISH_WRITE_MS`, the bridge closed, the store flushed; the whole close within `SESSION_CLOSE_TIMEOUT_MS` |
+
+Invariant I13: `SessionEnd` never goes out while a voice, a stream, a clause or an uncancelled harness task is in flight.
+
+#### 2.11.6 Sources, briefs and digests
+
+**A source** (`sources::state::Entry { info, kept, settled, reading, reader, components, delivered }`). Its tray row shows `SourceState::Reading { reader, files_read, files_estimate }` while `reading` is `Some`, else `settled`. A shared code source starts `Ready { "Shared" }` with a harness and `Waiting` without one (`first_state`); a document starts `Waiting { "Waiting for the document reader" }`, reads (`Reading`, by "BoardAI", then by the model or harness reading its figures) and settles on what its digest says (`Digest::tray_state`: `Ready`, `Partial`) or `Failed`. `delivered` lists the brief topics the talker already has, at most `BRIEF_TOPICS_PER_SOURCE_MAX`.
+
+**A brief task** (`engine::shared::briefs::BriefTask { source, topic, waiting, phase, note, files_read }`, in `SourceDesk.briefs` by `TaskId`):
+
+| From | Event | To | Effects |
+|---|---|---|---|
+| none | a shared code source (overview prefetch), a `research` call about it, "more detail on X" naming a component (`request_brief`) | `Asked` | `SourceEffect::Brief { task, source, topic, prompt }` |
+| `Asked` | `BriefStarted` (no fresh cache: the harness runs) | `Running` | Held calls hear "still reading"; the tray reads `Reading` |
+| `Running` | `Harness { FileTouched }`, `Progress` | `Running` | `files_read`, the ghost names (`READING_GHOSTS_MAX`), `note` |
+| `Asked` | `BriefCached { markdown }` | `Checking { brief, cached: true }` | `brief::parse`; `CheckCitations` |
+| `Running` | `Harness { Finished { summary } }` | `Checking { brief, cached: false }` | `brief::parse`; `CheckCitations` |
+| `Checking` | `CitationsChecked { read, unverified }` | done (removed) | Unread citations leave the brief (I15); the read lines count as read this session; the diagram is read (`WrittenDiagram::read`) and waits to stage; the brief goes to whoever `waiting` names; `CacheBrief` when it is fresh and the session is on the record (I10) |
+| `Asked`, `Running` | `Harness { Failed }` | done | Whoever waits hears why (`brief_failed`); an overview's failure settles the tray on `Failed` |
+| `Asked`, `Running` | a spoken cancel (the task is no longer the context's) | done | Whatever it reports later is ignored |
+| any | the source let go, the project left (`let_go`) | done | Every held call is answered (D-268); a brief the talker was promised is said not to be coming |
+
+`waiting` is `Nobody` (a prefetch: quietly with the next request), `Calls(Vec<ToolCallId>)` (held `research` calls; the first gets the brief, the rest point at its result) or `Talker` (a report turn once the floor is free). The talker "has" a brief only once a request carried it (`Entry::deliver`, D-271).
+
+**A source's diagram** (`engine::shared::diagrams::WaitingDiagram { source, topic, name, spec, dropped, provenance, carried, read, figure }`, at most `BRIEF_DIAGRAMS_WAITING_MAX`): `carried` is `ThisReply` (the tool round that carries a held call's result), `NextRequest` (it rides with a report) or `OnUse` (a prefetch's, staged when a `research` call uses the brief). A reply that stops before its round sends a brief's `ThisReply` back to `OnUse` and forgets a figure's (`release_reply_diagrams`). A staging that would open a layer or turn the page under ops the reply queued earlier becomes `Deferred { waiting, op, after, detail }` and stages once every op before `after` ran (D-270).
+
+**A document** (`engine::shared::documents::DocumentDesk { digests, pages, reads, cues, last, delivered }`): a digest arrives with `DocumentRead` and is parsed once (`digest::parse`); it is "delivered" once a request carried it; a page read waits in `reads` (at most `DOCUMENT_READS_WAITING_MAX`) until `DocumentPages` answers `PagesAnswer::Read { pages, page_count }` (kept, at most `DOCUMENT_PAGES_KEPT_MAX`) or `Unread { reason: PagesUnread }` (`TimedOut`, `Busy`, `NoReader`, `Failed { reason }`); a page citation waits in `cues` until the voice reaches it. In the runtime, BoardAI's reader is its own machine (`documents::reader::Step`: `Start → Extract → Calls | Harness | End`), reporting `ReaderEvent::Reading` until exactly one of `Ready`, `Partial` or `Failed` (§12.4).
+
+#### 2.11.7 Board elements
+
+| From | Event | To |
+|---|---|---|
+| (laid out) | a sketch op is queued | `Pending` |
+| (staged) | a `<diagram>` block or a brief's diagram is staged (`Board::stage`) | `Planned` |
+| `Pending` | `OpStart` (`Board::start`) | `Drawing { started_at, budget_ms }` |
+| `Planned` | a reveal names it (`Board::start_reveal`) | `Drawing { started_at, budget_ms }` |
+| `Drawing` | its budget has passed (`Board::settle`) | `Drawn` |
+| `Drawing` | an interruption (`Board::freeze`: the newest op within its budget, every element it made) | `Frozen { progress_percent, remaining_ms }` |
+| `Frozen` | `<resume>`, "back to the main board", a detour's close (`Board::resume_frozen`) | `Drawing` with the remaining budget |
+| `Pending` | an interruption (`Board::remove_pending`) | removed: the user never saw it |
+| `Drawn` | `strike` | `Struck` |
+| `Planned` | an interruption | `Planned`, for a later reveal |
+
+The user's shapes are always `Drawn` with no op (`Element.op` is `None` for them alone). Invariants I6, I11 and I16.
+
 ## 3. Runtime
 
 ### 3.1 Actors and channels (panel B)
+
+The actors at a glance; every thread, task and process with its owner, and every channel with its capacity, are in §3.10 (panel G).
 
 | Actor | Runs on | Talks through | Notes |
 |---|---|---|---|
@@ -506,7 +676,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 - **Request shape:** `thinking: {type: "adaptive"}` and `output_config.effort` on models that take them (thinking can't be disabled on Opus 5.5; effort `none` becomes `low` there). A cache breakpoint on the system prompt (tools render before it, so both cache) plus top-level automatic caching for the conversation tail. On models with server-side refusal fallbacks (Opus 5.5, Opus 5, Fable 5.1, Sonnet 5.5) the request carries `fallbacks: "default"` with the `server-side-fallback-2026-07-01` beta; after a mid-stream switch, the echoed content keeps only text before the last `fallback` block, as the API requires.
 - **Tool calls** are held until `message_stop`, when the stop reason is known. In a turn that stopped on `max_tokens` or `refusal`, every call is delivered as invalid and never runs; a call whose eager-streamed input is cut off or not valid JSON is delivered invalid too, so the core answers it with an error result.
 - **Retries and deadlines:** at most 2 jittered retries, only while nothing has been delivered (a partly delivered stream is never replayed). The first-token deadline covers the retries: 10 s for the talker, 60 s for the scribe. After the first token, 30 s of silence is a timeout. Anthropic pings while the model thinks. Jitter comes from the clock mixed by splitmix64, with no RNG.
-- **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5` at effort `medium` (set explicitly, since the model's default could change). Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in DECISIONS. OpenRouter's presets are below.
+- **Defaults:** talker `claude-opus-5-5` at effort `low`; scribe `claude-haiku-5-5` at effort `medium` (set explicitly, since the model's default could change). Spike S3 measures time to first token and may change the recommended talker. That is a product decision recorded in the decision log. OpenRouter's presets are below.
 
 **Ollama, native** (`/api/chat`, newline-delimited JSON): used instead of the OpenAI-compatible endpoint whenever the server is Ollama. Ollama as installed (`localhost`, `127.0.0.1` or `::1`, port 11434) gets it without asking; any other OpenAI-compatible base URL that isn't OpenRouter is asked, on first use, whether it is Ollama (`GET {root}/api/version` answering a version, within `OLLAMA_PROBE_TIMEOUT_MS`, with the configured key; `MaybeOllama`, D-156): Ollama on another host or port gets the native API, anything else (LM Studio, vLLM, a proxy) the OpenAI-compatible one. The session's warm-up is that first use, so the first request finds the answer ready. Only a definite answer is kept (D-192; `OllamaProbe`: a version, or a body or status that isn't one); a probe that got none (silence past the deadline, a dropped connection, a 5xx or 429: a busy or restarting Ollama) sends that one use to the compatible API, and the next use asks again, at most `OLLAMA_PROBES_MAX` (3) times, after which the compatible API is kept with a warning. A key configured for the base URL goes to the native API too (D-193; `Authorization: Bearer`, on the probe, the warm-up and every request), as it would to `/v1` on the same host: Ollama behind a proxy that checks one. Until the probe answers, `capabilities()` is the compatible adapter's. The OpenAI-compatible endpoint ignores `options.num_ctx`, and Ollama loads a model with 4,096 tokens: the system prompt and tools take ~3,600, so the answer stopped at the window (26 of 49 `just e2e` answers; in a ten-turn `converse` script, from the third turn on, with no drawing after the fourth) or Ollama cut the prompt's front. Every native request carries `options.num_ctx` (`OLLAMA_CONTEXT_TOKENS`, 16,384), `options.num_predict` (the output budget), `keep_alive` (`OLLAMA_KEEP_ALIVE_SECONDS`, the session's 30 min idle limit: a reload costs ~5 s and the prompt's prefill ~5 s more, past the talker's first-token deadline) and, at effort `none`, `think: false` (other efforts leave the model's default: a model that cannot think rejects `true`). The context is one value for every request, since changing it reloads the model; past it, Ollama drops the oldest messages and keeps the system prompt. Tool calls arrive whole, with ids and object arguments, and are delivered at `done` (`stop` after calls is a tool round); a tool result goes back as a `tool` message naming its tool. `thinking` is never spoken, an `error` line fails the stream as a server error, and a body that ends without `done` is a network failure. Assistant turns are stored as Ollama's own message (`ProviderFamily::Ollama`) and echoed unchanged, with one exception in how they are sent:
 
@@ -599,7 +769,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
 | **Change** | `--permission-mode acceptEdits`, on branch `boardai/<slug>`; `--model` from `[harness] model` when set | Default tools, on branch `boardai/<slug>` |
 | **Output we read** | init, assistant text and tool use, tool results, final result | The RPC event stream |
 
-- **Common output.** Both map to `HarnessEvent`: `Progress(text)`, `FileTouched(path)`, `Finished { summary, citations }` or `Failed`.
+- **Common output.** Both map to `HarnessEvent`: `Progress { text }`, `FileTouched { path }`, `Finished { summary, citations }` (`path:line` strings) or `Failed { reason, detail }`, with `HarnessFailure` one of `NotInstalled`, `TimedOut`, `Cancelled`, `Crashed`, `BadOutput` or `QueueFull`. A task is a `HarnessTask { kind, brief }` with `HarnessKind` `Research`, `Review` or `Change { branch }`.
 - **Confirmation gate (I9).** The yes must confirm something you actually heard, and exactly that runs (`core::engine::gate`):
   - **Proposed.** `propose_change` is checked and held, never armed. The instruction is whitespace-collapsed and at most `CHANGE_INSTRUCTION_MAX_BYTES` (200), since it is read out word for word; an empty or longer one, or a second proposal while one is pending, gets an error result and never replaces the first.
   - **Asking.** When the talker's reply ends normally (end of turn, or `max_tokens`), the core itself speaks and captions a fixed line built from the instruction and its branch: "I'd change this on boardai/add-jitter: Add jitter to the retry backoff. Should I go ahead?" It is the reply's last clause, sent as speakable text with word timings like any clause.
@@ -703,7 +873,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - `Cells { id, op, label, cells, vertical }` with `CellBox { id, rect, value, index }`: the label, the outline, the dividers, the values, then the index labels.
   - `Write { op, target, label, rect }`: a value written into an empty cell.
   - `Reveal { id, op, parts }` (D-187): a staged diagram's parts, drawn one after another in a hand's order within one budget, freezing and resuming as one stroke. `StagedPart` is `Frame { id, rect, label, note, category, dashed }` (a container; `label` and `note` are `TextAt { text, at }`, written left-aligned from `at` on their centre line), `Node { id, shape, rect, label, note, step, category, dashed }`, `Note { id, rect, lines }`, `Record { id, label, fields }`, `Cells { id, label, cells, vertical }`, `Edge { id, from, to, path, label, style }` (its label centred on its `at`) or `Legend { id, rect, category, label }`, in the canvas 15 sizes (`board::staged::metrics`, the UI's `--diagram-*` tokens). `Category` is `Slate`, `Violet`, `Blue` or `Green`. `NodeShape::Pill` is new, for states, in sketches too.
-- **Surfaces** (`protocol::surfaces`): `Code { path, first_line, lines, highlight }`; `Compare { options, criteria, title }`, whose options are columns and criteria rows; `Recap { bullets }`; `Doc { title, chip, figure, sentences, highlight, note }` (D-257, artboard 14b), a cited passage or figure of a shared document with its checked chip ("p. 3 · Figure 1"), `figure` a `DocFigure { label, caption, read }` (never its image, D-260). Updates: `Highlight { line }`; `Cell { row, col, mark }` with `row` indexing criteria and `col` options; `Mark { line, columns, mark }`, a pen mark on a code line, with `columns` the `[begin, end)` characters (Unicode scalar values) it covers; `Sentence { index }`, the Doc card's highlight.
+- **Surfaces** (`protocol::surfaces`), each with its `id: SurfaceId`: `Code { path, first_line, lines, highlight }`; `Compare { options, criteria, title }`, whose options are columns and criteria rows; `Recap { bullets }`; `Doc { title, chip, figure, sentences, highlight, note }` (D-257, artboard 14b), a cited passage or figure of a shared document with its checked chip ("p. 3 · Figure 1"), `figure` a `DocFigure { label, caption, read }` (never its image, D-260). Updates: `Highlight { line }`; `Cell { row, col, mark }` with `row` indexing criteria and `col` options; `Mark { line, columns, mark }`, a pen mark on a code line, with `columns` the `[begin, end)` characters (Unicode scalar values) it covers; `Sentence { index }`, the Doc card's highlight.
 - **Commands (UI → core):** `Draw { action }` (artboard 13): `Start`, `Shape { layer, drawn }` with `drawn` one of `Pen { points }`, `Box { rect }`, `Arrow { start, end }` in the layer's world units, `Undo`, `Done`, `Cancel` (§2.2 "You draw"). `Pointer { target }` (a cell is pointed at as its own element, `arr.3`), `Mic { mute | unmute | talk_down | talk_up }`, `Stop` (Esc, §2.2), `CloseView` (Esc while a view is open, §3.7 views), `OpenSource { path, line }` (a source chip was clicked: the core opens the code card on that line, four read lines above it and up to fourteen in all, highlighted, and tells the talker; a path or line not read this session is dropped and counted, law 6). To come: `ReplaySeek { ms }`, `SaveSettings { … }`.
 - **Evolving it.** Variants and fields are only ever added at the end. A field added later is an `Option`, and a log line written before it (no such key) reads as `None` on both sides, so old sessions still replay.
 - **Views by voice.** One view is open at a time; a new one replaces it.
@@ -780,6 +950,85 @@ BoardAI's own `SourceReader`, given to every session by the app (`app::session::
 - **Pages.** `SourceReader::pages(path, first, last)` answers from the kept layer when the document's whole text was extracted; otherwise it extracts those pages alone (`pdfkit pages`, at most `DOCUMENT_PAGE_READ_PAGES_MAX`), so a page read never waits on a long document's whole text and stays well inside its source job's bound. It answers `Result<PagesRead, PagesUnread>`, with the core's own `PagesUnread` (D-274, D-292): pages it couldn't read (`TimedOut`, `Busy`, `NoReader`, `Failed`) are never pages with no text. The orchestrator waits `PAGE_READ_TIMEOUT_MS` for it, inside the source job's bound, and `orchestrator::documents::document_pages` turns it into the core's `DocumentPages { request, answer: PagesAnswer }`: `Read { pages, page_count }`, or `Unread { reason }` with the reason as the reader gave it, which the talker hears (§2.10); the reason is logged too.
 - **Cancelled.** A document's read, the harness's included (Claude Code takes ~46 s), is not a code change: ending the session, idle or by voice, cancels it without a word. It leaves nothing half-written: the harness's process group is killed, its private folder removed, and no digest is cached or saved, since only whole digests are (D-283); a kept document is read again in the next session that loads it.
 - **Measured** (2026-10-17, the generated 6-page paper `tests/fixtures/documents/paper.pdf`): Gemini 3.8 Flash through OpenRouter, one call, 16.1 s, 3,681 + 2,108 tokens, $0.0107: 3 of 3 figures read with diagrams, 2 tables, 11 claims. Claude Code (Sonnet) 46.1 s, $0.141: 3 of 3 figures with diagrams, 2 tables, 18 claims.
+
+### 3.10 Concurrency and ownership map (panel G)
+
+One process. Work runs in three kinds of place: OS threads for real-time audio and inference (never on tokio, AGENTS.md), tokio tasks on the app's async runtime, and subprocesses. Each has one owner that starts it and a defined way to stop. State that two of them share is either a channel, a `watch` (latest wins), atomics, or a `Mutex` held only to read or swap a value, never across an `.await`.
+
+**Threads, tasks and processes.**
+
+| What | Runs on | Started and owned by | Owns | Stops |
+|---|---|---|---|---|
+| Audio IO callbacks (capture and render) | CoreAudio's real-time thread (VoiceProcessingIO) | The device supervisor, through the unit it builds | `MicWriter` (the mic ring's writer), `PlaybackRenderer` (the voice ring's consumer), the polyphase converters | When the supervisor stops or rebuilds the unit (the ring ends move to the new unit). Never allocates, locks, logs or blocks (law 7) |
+| Device supervisor `boardai-audio-devices` | OS thread | `AudioIo::start` (the app's `RunningAudio`) | The `AUVoiceIO` unit, the current `Route`, the stall watchdog | `Signal::Shutdown` when `AudioIo` drops, after its CoreAudio listeners stop signalling |
+| `speech-in-vad` | OS thread | `SpeechIn::spawn`, held by `LiveListener` | `MicReader`, the `VoiceDetector` (Silero on `ort`), `VadMachine`, the pre-roll (`SPEECH_PREROLL_MS`) | `SpeechIn::shutdown` sets the stop flag and joins it. It polls the mic ring every `VAD_POLL_INTERVAL_MS` (8 ms) |
+| `speech-in-stt` | OS thread | `SpeechIn::spawn` | The `SpeechToText` engine (whisper.cpp on Metal), the utterance's audio; one decode at a time | Joined with the VAD thread (waits for at most one decode) |
+| `kokoro` | OS thread | `KokoroVoice::new` | The ONNX session, the lexicon | Dropping the engine closes its request channel; the clause in progress finishes |
+| `system-voice` | OS thread, with callbacks on the main dispatch queue | `SystemSynthesizer::spawn` | `AVSpeechSynthesizer` | Dropping it. The app's main thread runs the event loop the callbacks need (headless binaries: `audio::run_main_loop_until`) |
+| Orchestrator | tokio task (`session::spawn`) | `SessionHandle`, kept in the app's `AppState.session` | `Core` (law 3), `Phase`, `Deadlines`, the runtime's `SourceDesk` (every path, the in-memory brief cache), `Talker`, `Work`, the `SpeechOut` port, `BridgeHandle`, `ListeningPublisher`, the documents waiting for a reader, the shelf's write order | `SessionHandle::close` cancels it and waits `SESSION_CLOSE_TIMEOUT_MS`, then aborts it |
+| Bridge | tokio task | `BridgeHandle::spawn`, by the orchestrator | The frame being batched (`bridge::frame::Frame`) | Its handle closed or dropped: it sends what it holds and ends |
+| Talker stream | tokio task, at most one | `Talker::talk` | The provider's `ChatStream`, its `CancelToken` and its generation | `CancelTalk` (cancel, then abort), the next `Talk`, `quiet_down`; inputs it already queued are dropped by generation (D-034) |
+| Talker warm-up | tokio task | `Talker::warm_up`, when a session opens | The provider's warm-up request | A real request, `CancelTalk`, or `TALKER_WARM_UP_TIMEOUT_MS` |
+| Tool calls, harness forwarders, source jobs, document readers | tasks in one `JoinSet` (`session::work::Work`) | The orchestrator, which reaps them in its loop | Each its own future; `Work.running` says which is which | Reaped as they end; `Work::shutdown` cancels harness tasks and readers, then aborts the rest. Bounded by `SESSION_TOOL_TASKS_MAX` (32), `SESSION_HARNESS_TASKS_MAX` (16), `SOURCE_JOBS_MAX` (8), `SOURCE_READERS_RUNNING_MAX` (2) |
+| Blocking work: repo reads, stamps, name resolves, citation reads, vault and SQLite writes, store reads | tokio's blocking pool (`spawn_blocking`) | The task that awaits it | What the closure was given (the store's state moves in and back, so it never has two owners) | When the closure returns; a read past its bound ends there, unused |
+| Harness | `claude` or `pi`, in its own process group | `HarnessPool` (semaphores: 2 read-only, 1 change, 4 waiting), streamed into a `Work` task | The child and its pipes | SIGINT to the group, SIGKILL after `HARNESS_CANCEL_GRACE_MS` (3 s), through `/bin/kill`; dropping the stream kills the group; the terminal event comes after the reap |
+| Speech-out actor | tokio task | `SpeechOut::spawn`, inside `LiveVoice::spawn` (the app's audio) | The clause queue, one `Synthesis` at a time, `ReadyClause`s, the `Timeline`, the `HeardClock`, the voice ring's producer | Its command channel closes (`LiveVoice` dropped). It ticks every `PLAYBACK_REPORT_INTERVAL_MS` (20 ms) |
+| `LiveVoice` forwarder | tokio task | `LiveVoice::spawn` | Nothing | Aborted when `LiveVoice` drops |
+| `LiveListener` follower | tokio task | `LiveListener::spawn` (the app's audio) | The `SpeechIn` handle: its mute flag and vocabulary | `LiveListener::shutdown`, then speech in's threads join on the blocking pool |
+| ElevenLabs realtime connection | tokio task per voice, and a reader task per WebSocket | `ElevenLabsRealtime` | The WebSocket and its contexts (at most 5) | After 170 s without a clause, or when dropped |
+| Store actor | tokio task | `Store::open` (the app's `OpenStore` and `StoreTask`) | `StoreState`: the session being recorded, the writer connection, the log buffer | A `Shutdown` message or every handle dropped: flushes and closes the log durably, within `STORE_SHUTDOWN_TIMEOUT_MS` |
+| Store reads | blocking-pool tasks in the actor's `JoinSet` | The store actor | A read-only SQLite connection (WAL) | Awaited at shutdown |
+| `VaultSink` writer (`apply_writes`) | tokio task | `VaultSink::new` | The ordered memory writes | Its queue closes |
+| Finishing digest | tokio task | `Orchestrator::rest` (`Finishing`) | The scribe's request and the digest's write | `Finishing.cancel` on the next words (then the minimal digest), or quitting's deadline |
+| Resting library read | tokio task | `RestingLibrary::Reading` | The library read | Aborted when the phase changes |
+| App lifecycle | tokio task (`lifecycle::serve`) | The app's setup | Nothing but the order: start, restart and close are served one at a time | Every sender gone |
+| Helper processes | `/bin/ps`, `/usr/bin/open`, `/usr/bin/osascript` (choosers), `<harness> --version`; a `helper-pipe` thread per output | `app::helper` | The child and its pipes | `HELPER_PROCESS_TIMEOUT_MS`, `FOLDER_DIALOG_WAIT_MS`, `HARNESS_VERSION_TIMEOUT_MS`; killed with its process group |
+| PDFKit | `/usr/bin/osascript -l JavaScript pdfkit.js` | `documents::pdfkit::PdfKit`, inside a reader or a page read | The child | `PDFKIT_TIMEOUT_MS`, or killed when dropped |
+| Model catalog | no task: futures on the caller, a cache in `ModelCatalog` (`Mutex<Lists>`) | The app's `SetupState` | The cached lists | Lives as long as the setup state |
+| UI | the webview's main thread | The page | `SessionStore` signals, each stroke's progress, the animation clock (`SessionClock`) | The page closes; a reload reconnects and starts from an empty board |
+
+Development only: `file-mic` and `null-output` threads stand in for the microphone and the speakers in `just e2e`; `VirtualVoice` (a tokio task) stands in for speech out when audio cannot start.
+
+**Channels between them.**
+
+| From → to | Kind | Capacity | When it is full |
+|---|---|---|---|
+| Capture callback → `speech-in-vad` | The mic ring: a seqlock over atomics (`audio::mic`) | `MIC_RING_MS` (2 s at 16 kHz) | The oldest frames are overwritten and counted |
+| Speech-out actor → render callback | The voice ring, `rtrb` single-producer single-consumer | `VOICE_RING_MS` (4 s at 24 kHz) | The actor keeps the rest of the clause (`ReadyClause.written`) and writes it as room frees |
+| Orchestrator → render callback | Atomics on the voice output: `target_gain_bits` (`LiveVoice::duck` sets it directly, never queued), the stop request and acknowledgement, `played_frames`, `output_latency_frames` | — | Never waits |
+| `speech-in-vad` → `speech-in-stt` | `std::sync::mpsc::sync_channel` of `SttMessage` (32 ms windows, quiet marks, the vocabulary) | `STT_QUEUE_MESSAGES` (1,024, ~32 s) | A window is dropped and counted (`try_send`) |
+| Speech-in threads → `LiveListener` | tokio `mpsc` of `Input` | `SPEECH_IN_EVENT_QUEUE` (64) | Partials and early finals are dropped and counted; onset, start, end, finals and `VoiceResumed` wait (`blocking_send`) |
+| `LiveListener`, `LiveVoice` forwarder, the talker stream, `Work` tasks, `StoreLink`, `ProblemLink`, the app → orchestrator | The inbox: tokio `mpsc` of `Envelope` (`Input`, `Talker { generation, input }`, `Problem`, `Source`) | `SESSION_INBOX_CAPACITY` (1,024) | Actors on tasks wait for room; UI commands, drops, drags, problems and store failures never wait: they are dropped and counted or logged |
+| Speech-out actor → orchestrator | `watch<Option<PlaybackPosition>>`, through the forwarder into the session's own `watch` | Latest wins | Never waits; the loop steps only the newest position |
+| Orchestrator → speech-out actor | tokio `mpsc` of `SpeechOutCommand` (`Synthesize`, `Duck`, `StopVoice`, `Reset`) | `SPEECH_OUT_COMMAND_QUEUE` (64) | `LiveVoice` sends with `try_send`: a refused `Synthesize` is answered `SynthesisFailed`, a refused `StopVoice` `VoiceStopped { last: None }`, by the orchestrator itself |
+| Speech-out actor → `LiveVoice` forwarder | tokio `mpsc` of `Input` (`ClauseReady`, `SynthesisFailed`, `PlaybackDrained`, `VoiceStopped`) | `SPEECH_OUT_EVENT_QUEUE` (64) | The actor waits; none is dropped |
+| Speech-out actor → `kokoro`, `system-voice` | `std::sync::mpsc` of requests; an unbounded tokio channel of chunks per clause | One request in flight: the actor synthesizes one clause at a time | Bounded by the clause (300 bytes) and its audio (`TTS_CLAUSE_AUDIO_MAX_MS`) |
+| Orchestrator → speech in | `watch<Listening { open, recent_terms }>`, published after every step (`send_if_modified`) | Latest wins | Never waits |
+| Orchestrator → bridge | tokio `mpsc` of `Step { at, events }` | `BRIDGE_QUEUE_STEPS` (256) | The orchestrator waits: a drawing op is never dropped |
+| Bridge → UI | `UiSink::send` → `TauriSink` → Tauri `Channel<UiBatch>` | Before the UI connects, `WAITING_BATCHES_MAX` (64) wait | The oldest waiting batch is dropped and counted |
+| UI → orchestrator | `invoke("command")` → `SessionHandle::command` → the inbox (`try_send`) | The inbox | Dropped; the UI counts the rejection |
+| Orchestrator → store actor | `StoreSink` (`VaultSink`): inputs, UI events and records `try_send` into the store's inbox; requests `send` and await a `oneshot` | `STORE_INBOX_CAPACITY` (4,096) | Log entries are dropped and counted in a `dropped` line; requests wait |
+| Orchestrator → `VaultSink` writer | tokio `mpsc` of `Write` (remember, forget, keep); "don't remember this session" on a `watch<u64>` the writer serves first | `STORE_WRITES_CAPACITY` (1,024) | The write fails and comes back as `MemoryFailed` |
+| App → lifecycle task | tokio `mpsc` of `Lifecycle` (`Start`, `Restart`, `Close`), each answered on a `oneshot` | `LIFECYCLE_REQUESTS_MAX` (4) | The asker waits |
+| CoreAudio listeners → supervisor | `std::sync::mpsc::sync_channel` of `Signal` | `AUDIO_DEVICE_SIGNALS_QUEUE` (4) | Dropped: the one waiting already causes a full check |
+| Supervisor → app | tokio `mpsc` of `DeviceEvent` | `AUDIO_DEVICE_EVENTS_QUEUE` (16) | Dropped and logged |
+| Speech-out actor → ElevenLabs connection | tokio `mpsc` | `ELEVENLABS_COMMAND_QUEUE` (16) | The clause goes over HTTP |
+| Harness → its `Work` task | The child's stdout, JSON lines | `HARNESS_LINE_MAX_BYTES` (4 MiB) a line; the last `HARNESS_OUTPUT_TAIL_BYTES` (256 KiB) kept | A longer line is skipped and counted; the task goes on |
+
+**Who owns which state.**
+
+| State | Owner | Everyone else sees |
+|---|---|---|
+| The conversation: `Core` and everything in it (history, board, thread, surfaces, sources, gates) | The orchestrator task alone (law 3) | Effects and UI events; `Core::state` after each step (for `Listening`) |
+| Paths of shared sources, the brief and digest cache in memory, the repo tools' roots | The orchestrator's `SourceDesk` | Ids, titles and `~/…` paths (the core and the UI); a `Workspace` for a harness task |
+| Session time | The orchestrator's `TokioClock`, restarted for each session | Every input is stepped at `clock.now()`; the bridge stamps each batch with it |
+| The voice's audio and position | The speech-out actor (timeline, heard clock) and the render callback (played frames) | `PlaybackPosition` on the `watch`; `VoiceStopped` |
+| Vault files, the event log, the SQLite index | The store actor alone (law 3) | Replies to requests; reads on the read-only connection |
+| The core's captures, mirrored for "forget that" | `VaultSink.captures` (a `Mutex`, pushed and popped only as effects apply) | `CaptureId`s |
+| The audio unit and route | The device supervisor | `DeviceEvent`s and a `Problem` caption |
+| Text layers of PDFs, the model that reads files | The document reader's `Shared` (`Mutex<VecDeque<KeptLayer>>`, a `OnceCell` per layer: single-flight) | `ReaderEvent`s and `PagesRead` |
+| Settings and keys | `settings.toml` (written only through `Settings::edit`) and the Keychain (`SecretStore`) | Parsed `Settings` when a session starts; key names, never values |
+| Strokes' progress, the animation clock | The UI | Nothing: the core sends `Freeze` and `Resume` with budgets |
 
 ## 4. UI
 
@@ -940,6 +1189,14 @@ Every bound is a named constant in its crate's `limits` module, documenting what
 | Waiting for a finishing digest | 1 s | runtime::session | Its scribe is cancelled (the minimal digest) and the new session starts |
 | Session start | 3 s | runtime::session | The session opens without its context and unrecorded: it is never ended in the store. A close meanwhile returns at once |
 | Tool call | 10 s | runtime::session | Answered `Unavailable` ("timed out"); a blocked read ends on the blocking pool, unused |
+| Orchestrator inbox | 1,024 (`SESSION_INBOX_CAPACITY`) | runtime::session | Actors on tasks wait for room; UI commands, drops, drags, problems and store failures are dropped and counted (§3.10) |
+| Tool and store queries running at once | 32 (`SESSION_TOOL_TASKS_MAX`) | runtime::session | Answered at once with `Unavailable`, which the talker reads |
+| Harness tasks the session follows | 16 (`SESSION_HARNESS_TASKS_MAX`) | runtime::session | Answered at once with `QueueFull`, said out loud (the pool's own 2 + 1 and 4 waiting come first) |
+| Deadlines held for `WakeAt` | 1,024 (`SESSION_DEADLINES_MAX`) | runtime::session | A broken invariant: the deadline is dropped and logged as an error (debug builds assert) |
+| Steps waiting for the bridge | 256 (`BRIDGE_QUEUE_STEPS`) | runtime::bridge | The orchestrator waits: a drawing op is never dropped |
+| Speech-out commands / reports waiting | 64 / 64 (`SPEECH_OUT_COMMAND_QUEUE`, `SPEECH_OUT_EVENT_QUEUE`) | runtime::speech_out | `LiveVoice` doesn't wait: a refused clause is answered `SynthesisFailed` and a refused stop `VoiceStopped { last: None }` by the orchestrator / the actor waits, so no report is lost |
+| Virtual voice commands | 1,024 (`VIRTUAL_VOICE_COMMANDS_MAX`) | runtime::session | `synthesize` is refused and the orchestrator answers the clause `SynthesisFailed` |
+| UI batches before the UI connects | 64 (`WAITING_BATCHES_MAX`) | app::sink | The oldest is dropped and counted; the UI starts from the same defaults |
 | Closing a session | 13 s (8 + 2 + 2 + 1) | runtime::session | The session task is aborted, so quitting returns |
 | Dropped or chosen path | 1,024 bytes; 16 paths per drop | runtime::sources, app::sources | Refused; later paths of a drop are not looked at (logged) |
 | A shared file | code 4 MiB, Markdown or text 16 MiB, PDF 256 MiB | runtime::sources | Refused: "it's too large to read" |
@@ -1006,7 +1263,7 @@ The core's own limits live in `boardai_core::limits` (the rows above marked core
 | Asking the talker once more | 1 per turn (`NUDGES_PER_TURN_MAX`), plus 1 for the drawing after reads (`READ_DRAW_NUDGES_PER_TURN_MAX`) | core::engine | The reply ends as it is (D-178, D-232, D-249); the simulator checks the sum on every request |
 | Tool call written as words | 240 bytes; a tool-code block, 240 bytes in all | core::narration | The call (or the block) ends and the rest is speech; a line end ends a call outside a block too (D-179, D-233) |
 | Announced repo read | 4 fillers before the verb (`FILLER_WORDS_MAX`); the object within 8 words of the same sentence (`OBJECT_REACH_WORDS`); 4 recent words kept; each tool once | core::narration | Past them the words announce nothing (D-232) |
-| Tool call written in gemma4's syntax (native Ollama) | 4 KiB open (`OLLAMA_NATIVE_CALL_MAX_BYTES`); 16 per response (`OLLAMA_NATIVE_CALLS_PER_RESPONSE_MAX`, the core's `TOOL_CALLS_PER_RESPONSE_MAX`) | runtime::llm::ollama_chat | Past the size the call is malformed: dropped and counted once it showed `call:` or a `<|"|>` string, given back as text otherwise, and what follows is text again; past the count a call is kept out of the text, dropped and counted (D-191) |
+| Tool call written in gemma4's syntax (native Ollama) | 4 KiB open (`OLLAMA_NATIVE_CALL_MAX_BYTES`); 16 per response (`OLLAMA_NATIVE_CALLS_PER_RESPONSE_MAX`, the core's `TOOL_CALLS_PER_RESPONSE_MAX`) | runtime::llm::ollama_chat | Past the size the call is malformed: dropped and counted once it showed `call:` or a `<\|"\|>` string, given back as text otherwise, and what follows is text again; past the count a call is kept out of the text, dropped and counted (D-191) |
 | Repo paths kept for module maps | 2,048 | core::engine | Nothing more is kept and labels are no longer checked (D-180) |
 | A diagram block's text / text between its tags | 16 KiB / 240 bytes (`DIAGRAM_BLOCK_MAX_BYTES`, `DIAGRAM_GAP_TEXT_MAX_BYTES`) | core::narration | Later parts are dropped and counted, the block still ends at its closing tag / the block ends there and the text is speech (D-187) |
 | Parts of one diagram / containers nested / categories | 200 / 6 / 4 (`DIAGRAM_PARTS_MAX`, `DIAGRAM_NESTING_MAX`, `DIAGRAM_CATEGORIES_MAX`) | core::narration, core::board | Dropped and counted, the talker told; what a dropped container held moves up; a part past the palette keeps no colour |
@@ -1084,6 +1341,26 @@ CI runs the same command on macOS.
 - **Webview.** A strict CSP, no remote content, and minimal Tauri capabilities: the event channel, one command, a past session's log by id, the first-run commands, and the Sources chooser (which takes no path: the app shows the system's chooser).
 - **First-run and settings commands** (D-100, D-149, D-153, D-172 to D-175). `setup_status`, `setup_models(query)`, `setup_save(edit)`, `setup_key(name, value)`, `setup_download(model, progress)`, `setup_microphone`, `setup_open_microphone_settings`, `setup_finish`, and for the settings page `setup_remove_key(name)`, `setup_check_keys`, `setup_harness_versions`, `setup_add_code_folder`, `setup_open_vault`, `setup_rebuild_index`. Every argument is parsed at the boundary into a type (`SetupEdit`, `ModelQuery`, `OpenRouterModelId`, `KeyName`, `ModelId`, a bounded key, a folder's index), so the UI can name a provider, a key name, a model or a listed folder but never a path or a URL: a code folder comes from the system's chooser, which the app shows. A test checks that every command `build.rs` declares is registered and allowed, and that the capability allows nothing else. A key goes only to the Keychain; refusals never quote it; `Secret` stays unprintable; a key goes over `https` only, or to this Mac (§3.8). From the start rule's check until the new session has read its settings no change lands (§3.8 Finish). "Open the vault" never hands `open` an option or a package. The setup's Ollama model list goes only to `localhost:11434`; the talker's `GET /api/version` probe (D-156) goes to the configured talker's host, with the key configured for it, the same host and key its chat requests use; the model lists go only to `openrouter.ai`, without a key.
 
+### 9.1 Trust boundaries (panel K)
+
+Everything that enters BoardAI is parsed once, where it enters, into a type with its bounds; inner code takes the type and never re-checks. This is every entry point.
+
+| Entry point | What enters | Parsed into (where) | Bounds | What it can never do |
+|---|---|---|---|---|
+| **The UI** (webview → app) | `invoke("command")`, `session_log(id)`, `sources_choose(what, keep)`, the fourteen `setup_*` commands; debug builds' `dev_say` | `UiCommand` by serde (`app::commands::command`), `SessionId::parse`, `ChooseWhat`, `SetupEdit`, `ModelQuery`, `OpenRouterModelId`, `KeyName`, `ModelId`, `setup::input::parse_key` → `Secret`; in the core, `Drawn::parse` for a shape and `OpenSource` against the lines read | The inbox (`try_send`); `USER_STROKE_POINTS_MAX` (512), `USER_COORDINATE_MAX` (±1,000,000), `USER_SHAPE_SPAN_MAX` (8,000 units); a key at most `SECRET_VALUE_MAX_BYTES` (1 KiB), one word; the capability allows only these commands (a test checks `build.rs` against it) | Name a path or a URL (a folder is removed by its index; a source comes only from a native drop or the app's own chooser); open a line the session didn't read (law 6); read a key back |
+| **The wire into the UI** | `UiBatch`es on the Tauri channel; replay files | `ui/src/protocol/parse.ts` into the generated types; a view's rows one by one (`RowSkips`) | `REPLAY_LINE_BYTES_MAX` (1 MiB), `REPLAY_LINES_MAX` (200,000); the CSP allows no remote content | Crash the UI: a malformed event or row is skipped and counted |
+| **LLM providers** (talker, scribe, a file-reading model) | SSE (Anthropic, OpenAI-compatible), newline-delimited JSON (Ollama's native API), one JSON answer (digest calls) | `ChatEvent` (`TextDelta`, `ToolCall` through `ToolCall::parse` into `ToolInvocation`, `Done`), `ProviderError` with its category; the narration parser on the text; `ollama_chat::native_calls` for gemma4's own syntax; the scribe's fixed JSON shape | `SSE_LINE_MAX_BYTES`, `SSE_EVENT_MAX_BYTES`, `NDJSON_LINE_MAX_BYTES` (1 MiB); a tool input 64 KiB, an id 128 bytes, a string 16 KiB; the response text `RESPONSE_TEXT_MAX_BYTES` (32 KiB), a tag 512 bytes, 200 ops, 16 calls, 8 rounds; the first token 10 s (talker), 30 s of silence | Run a malformed call (it is answered with an error); turn a refusal into "no answer"; approve a change (I9); draw a module the session never read as real (D-180, D-252) |
+| **The coding harness** | stream-json lines (Claude Code), RPC lines (pi) | `HarnessEvent` (`harness::claude` `StreamLine`, `harness::pi` `PiLine`); in the core, `brief::parse` → `Brief`, `WrittenDiagram::read` → `DiagramSpec`, its names through `untrusted::PlainText` (D-266) | `HARNESS_LINE_MAX_BYTES` (4 MiB) a line, the last 256 KiB kept; 10 min (research) or 30 min (a change); a brief 64 KiB with every section and list bounded (§5); its diagram 12 KiB, 200 parts | Read outside its reach (D-226, D-243: `harness::confine`, no setting source loaded, D-285); show a chip for a line nobody read (I15: every citation is read natively first); reach a system message (I18); approve a change (I9) |
+| **The filesystem: repo reads** | Paths in `read_file`, `list_dir`, `search_code` | `RepoPath` (canonical, under an opened folder or a shared source, checked again after a symlink resolves) | A result 400 lines or 64 KB; 64 read files kept; search respects `.gitignore` | Leave the roots; read a credential path (`tools::CREDENTIAL_PATHS`) |
+| **The filesystem: shared sources** | A native drop, the chooser, a name resolved by a walk | `sources::validate` → `ValidSource`; in the core, `SourceInfo::parsed`, its names as plain text (D-291) | A path 1,024 bytes, 16 a drop; a code file 4 MiB, Markdown or text 16 MiB, a PDF 256 MiB; the walk 5,000 folders, 6 levels | Be too broad (`tools::too_broad`), sit in `~/Library`, be a credential path, hold a control character (D-287) |
+| **The filesystem: the vault and `settings.toml`** | Hand-edited Markdown, an old event log, the settings file | `Settings::parse` (unknown keys are errors; values never echoed); the index's normalized rows (`created` stamps, note ids, session links); the log reader's `LogLine`; `SessionId` | A vault file 8 MiB; a log line 1 MiB; a replayed log 32 MiB; `sources.md` or a brief file 256 KiB | Make a view unreadable (a bad row is skipped); be rewritten by the store (it edits your files a line at a time, D-042); send a key over cleartext (`https` or this Mac only) |
+| **`osascript` and other helpers** | PDFKit's JSON (`text`, `pages`, `split`); a chooser's printed path; `ps` lines; `--version` output | `documents::pdfkit::PdfText`, then `order::reading_order` and `layer::from_pdf`; `setup::folders::parse_chosen` (one absolute path, no control characters, `-128` a cancel); `harnesses::parse_version` | `PDFKIT_TIMEOUT_MS` (30 s), `PDFKIT_OUTPUT_MAX_BYTES` (48 MiB), 600 pages, `PDF_PAGE_BOXES_MAX` (2,000); helpers 4 KiB a stream, 1 s per `ps`, 300 s per chooser | Run PDF parsing inside BoardAI's process (D-253: no crate, no `unsafe`); hand a path in unchecked (a chosen source is validated as a drop is) |
+| **Documents' content** | A digest from a file-reading model, the harness or the text alone; a page's text | `digest::parse` → `Digest` (titles, captions and the reader as `PlainText`, D-266; a locator past the page count dropped, D-273); `DocumentPage` (8 KiB); `PagesAnswer` / `PagesUnread` | A digest 64 KiB, 48 sections, 40 figures, 24 tables; 4 pages a read; a model call 12,000 tokens, a 1 MiB answer, 24 MiB of PDF | Reach the talker unfenced (D-107) or in a system message (I18); open a Doc card on a page or figure the session didn't read (I17); fetch a web image; approve a change (I9) |
+| **Model lists** | OpenRouter's model and provider lists, Ollama's tags | `ModelListing`, `ModelProvider`; prices as integer micro-dollars | 4 MiB and 1,000 models; 512 KiB and 64 providers; 8 s | Make an unknown price or median zero |
+| **The microphone** | PCM from CoreAudio | Samples into the mic ring | 2 s ring, 30 s utterance | Be stored: only transcripts reach the log (law 10) |
+
+How a source's words travel once they are in (D-107, D-265, D-266, I18): to the talker only in a user turn, between `<task-output>` and `</task-output>` (`engine::text::TASK_OUTPUT_OPEN`, `TASK_OUTPUT_CLOSE`), with any fence or `system-reminder` marker inside broken up; BoardAI's own notes around them through `PlainText::note`; in a system message (the board summary, the thread, notices) only as ids; a part's label only to the UI (a detail layer's breadcrumbs, `DetailAnchor.display`, D-290). `sim::check::untrusted` holds the core to it on every request.
+
 ## 10. Dependencies
 
 New entries need a row in the decision log.
@@ -1104,3 +1381,260 @@ New entries need a row in the decision log.
 5. **Audio.** VoiceProcessingIO, Silero VAD and Whisper (spikes S1 and S4).
 6. **Voice.** The system voice first, then Kokoro and ElevenLabs (spike S2). The playback clock drives ops.
 7. **Steel thread.** Speak → draw → interrupt → resume, end to end. Exit when the product's Phase 0 criteria are met.
+
+## 12. End-to-end sequences
+
+Each sequence names the input, effect or event at every hop, so a step can be traced to its code. Times are the HLD §8 measurements (`just e2e`, 2026-10-17): p50 first, the range after. "gpt-oss" is gpt-oss-120b on OpenRouter routed to Cerebras (a hosted talker); "gemma4" is gemma4 on a local Ollama.
+
+### 12.1 One turn, from mic to stroke (panel C)
+
+"Walk me through the request path", open mic, a hosted talker. t = 0 is the end of the user's sound.
+
+| # | Where | What happens | Carried as | When |
+|---|---|---|---|---|
+| 1 | Capture callback | VoiceProcessingIO cancels BoardAI's own voice; frames are converted to 16 kHz and written to the mic ring | `MicWriter` | Every IO cycle |
+| 2 | `speech-in-vad` | Silero on 32 ms windows: the first window at or above 0.5 after silence, then 150 ms of speech | `Input::VoiceOnset`, then `VoiceStart` (speech-in queue → `LiveListener` → inbox) | `VoiceStart` ~160 ms after the onset |
+| 3 | Core | `Idle` → `Listening(Utterance)`; the suggestion clears | `Milestone::VoiceStart`; `UiEvent::Orb { Listening }`, `Suggestion { text: None }` | |
+| 4 | `speech-in-stt` | Partials of the utterance, with 300 ms of audio before the onset | `Transcript { is_final: false }` → `Caption { who: User }` | 256, 320, 384 ms after the onset, then every 500 ms |
+| 5 | `speech-in-stt` | 96 ms of quiet inside speech: the final is decoded at once | `EarlyFinal { text }` | |
+| 6 | Core | Speculative start (§2.11.3): a clone ends the turn, the words sound finished, one request | `Effect::Talk { request }`, `Milestone::SpeculativeRequest`, `WakeAt(+1 s)` | **330 ms** (170–385) |
+| 7 | Orchestrator → talker | `Talker::talk`: a new generation and a stream task; the core holds what it sends | `Envelope::Talker { generation, input }` | |
+| 8 | `speech-in-vad` → `speech-in-stt` | The 256 ms hangover ends; the final (already decoded) follows `VoiceEnd` | `VoiceEnd { voiced_ms, silence_ms: 256 }`, `Transcript { is_final: true }` | **418 ms** (268–458); the final 0–1 ms after |
+| 9 | Core | End of turn: a finished final needs 250 ms from the last voiced moment, already past. `end_turn` asks for the same request: the speculation is confirmed and the held deltas replay | `Milestone::FinalTranscript`, `TalkerRequested`; `Orb { Thinking }` | 418 ms |
+| 10 | Talker | The first token | `TalkerDelta { text }` | ~440 ms after the request |
+| 11 | Core | The narration parser splits speech from tags; the first clause is cut at a comma after 16 bytes or a sentence end; each op is anchored `(clause, char_offset)`; speech is normalized (`narration::speakable`) | `Synthesize { clause, text }`; `Caption { who: Assistant }` | 0–20 ms after the first token |
+| 12 | Speech-out actor | The engine synthesizes the clause (system voice); `ClauseReady` goes before the clause's first frame enters the voice ring | `ClauseReady { clause, timings }` → `Thinking` → `Speaking` | 60 ms (48–153) |
+| 13 | Render callback → speech out | Played frames minus the output latency (27.6 ms on the built-in speakers) | `PlaybackAt { position }` on the `watch`, every 20 ms | Voice to voice **0.88 s** (0.66–2.07) |
+| 14 | Core | Every op whose anchor is at or before the spoken offset starts; the camera frame goes first (I11); ops at least 120 ms apart | `UiEvent::Camera`, `OpStart { layer, op, budget_ms }` (150–2,500 ms, to the next anchor) | Each stroke 3–17 ms after its word |
+| 15 | Bridge → UI | One batch per 16 ms frame (the first step after a quiet frame at once), stamped with the latest step's time | `UiBatch { at, events }` | |
+| 16 | UI | `SessionClock` follows `at`; the canvas plans the stroke (seeded by its id) and draws it within `budget_ms`, compressed if needed, never stretched | SVG | |
+| 17 | Core | The last clause drained and the talker done: what staged diagrams still hold is revealed (`queue_leftovers`), what was heard is committed, the reply ends | `PlaybackDrained`, `TalkerDone { EndTurn }` → `Orb { Idle }` | |
+
+On a local talker (`RequestStart::AtTurnEnd`, gemma4), steps 5–7 leave nothing early: the request goes at step 9 (411 ms), the first token follows in 75–349 ms on a follow-up (3.5–4.0 s for a session's first question), and voice to voice is 1.00 s.
+
+### 12.2 Barge-in and resume (panel D)
+
+BoardAI is speaking; the user says "Wait, why Redis first?". t = 0 is the user's onset.
+
+| # | Where | What happens | Carried as | When |
+|---|---|---|---|---|
+| 1 | `speech-in-vad` | The first speech window | `VoiceOnset` | 0 |
+| 2 | Core | A tentative duck: `Speaking` stays, the gain drops, the hold starts | `Duck { gain: 0.25 }` (`LiveVoice::duck` sets the ring's gain atomic directly; it ramps over 10 ms), `Milestone::OnsetDuck`, `WakeAt(+300 ms)` | Duck **48–88 ms** |
+| 3 | `speech-in-vad` → core | Speech confirmed: `Speaking` → `Ducked(BargeIn)`; the decision is due by onset + 1,200 ms | `VoiceStart`, `Milestone::BargeInDuck`, `WakeAt(onset + BARGE_IN_DECISION_MS)` | ~160 ms |
+| 4 | `speech-in-stt` → core | An early partial holds the cue "wait" (`conversation::cues`): an interruption | `Transcript { is_final: false }`, `Milestone::BargeInStop` | Partials at 256, 320, 384 ms |
+| 5 | Core | Stop at once: `StopVoice`; `CancelTalk` if the stream still runs; the stroke in flight freezes and ops not started are dropped; `Ducked` → `Listening` (the user keeps the floor); a `PendingStop` waits | `StopVoice`, `CancelTalk`, `Freeze { layer }`, `WakeAt(+VOICE_STOP_TIMEOUT_MS)` | Stop decision **330–444 ms** |
+| 6 | Speech-out actor | Fades out over 30 ms, drops the rest of the ring, answers with the counter at the end of the fade (the device's acknowledgement within 250 ms, else from the counter) | `VoiceStopped { last: Some(position) }` | |
+| 7 | Core | `settle_stop`: the `HeardPrefix` from that position ("…checks Re"). A reply still streaming gets an assistant message holding only the heard prefix (text and the tags of ops that drew); a reply already stored is left alone, and the next user message opens with a note of where the user stopped hearing | History append (I2, I3) | ≤ 500 ms after the stop, else the last reported position |
+| 8 | Core | The user's turn ends as in §12.1; its message carries the words, the pointer target, the thread position and the frozen op | `Talk { request }` | |
+| 9 | Talker → core | It opens a detour and draws there | `<detour title="…">` → `LayerPush { layer, title, question: Some("why Redis first?"), anchor: None }`, `OpStart` on the detour layer | |
+| 10 | Core | `<resume/>`, "back to the main board", or "go on" once the detour's answer ended: the detour closes, the frozen stroke finishes first, then a bridge sentence, then new ops | `LayerPop { layer }`, `Resume { layer, budget_ms }` | |
+
+A backchannel instead ("mm-hm", decided on the final, which arrives with `VoiceEnd`): `Duck { gain: 1.0 }` and `Acknowledge`, back to `Speaking`; nothing stops (I7).
+
+### 12.3 A research brief's lifecycle (panel I)
+
+The user drops the `inf-alloc` folder on the left half of the window, then asks how it fits together.
+
+| # | Stage | Where | What happens | Carried as |
+|---|---|---|---|---|
+| 1 | Share | App (`app::sources`) | Tauri's drag-drop event: each path is checked on the blocking pool (`sources::validate` → `ValidSource`) | `SessionHandle::share(source, keep: false)` → `Envelope::Source(SourceMessage::Shared)` |
+| 2 | Share | Orchestrator | The `SourceDesk` registers it: a `SourceId`, its reach (the enclosing git repository, `sources::reach`), readable; the repo tools' roots refresh | `SourceInput::Shared { source: SourceInfo, keep }` |
+| 3 | Share | Core | `SourceInfo::parsed` (names as plain text, D-291); the entry starts `Ready { "Shared" }`; the tray; a notice that questions about it go to `research`; "Claude Code is reading inf-alloc." if nobody holds the floor | `UiEvent::Sources { tray }` |
+| 4 | Prefetch | Core | The overview brief starts at once, waiting for nobody (`request_brief(…, Waiting::Nobody)`) | `SourceEffect::Brief { task, source, topic: Overview, prompt }` (`brief::request_prompt`) |
+| 5 | Cache | Orchestrator | A cached brief for that path and topic is checked against a fresh stamp (`sources::stamp`: the git HEAD and the newest file time) in a source job: the same stamp answers at once; a different one, no stamp in time, or no cache researches | `BriefCached { task, markdown }`, or `SourceMessage::Stale` → research |
+| 6 | Confine | Orchestrator → harness | `HarnessTask { Research, brief: prompt }` in `Workspace { folder, reach, answer: Answer::Brief }` through `Work::run_harness_in` and `HarnessPool::run_in`; Claude Code on `--model sonnet` with `harness::confine::claude_rules`: only Read, Grep and Glob, `dontAsk`, no setting source, `Read(//<reach>/**)` the one allow rule, credential paths denied, `blockReadsOutsideWorkingDirectories` (D-226, D-285) | `BriefStarted { task }`; the brief's phase `Running` |
+| 7 | Read | Harness → core | Each file read is the tray's progress and a ghost name | `Harness { task, event: FileTouched { path } }`, `Progress { text }` |
+| 8 | Parse | Core | The answer is parsed line by line into a bounded `Brief` (`brief::parse`; what doesn't fit is dropped and counted, `BriefDropped`); phase `Checking` | `Harness { event: Finished { summary } }` → `SourceEffect::CheckCitations { task, source, citations }` |
+| 9 | Cite check | Orchestrator | A source job reads every cited range natively (`sources::check_citations`), inside the source, or beyond it inside its reach only when the reach is inside an opened code folder; past `SOURCE_JOB_TIMEOUT_MS` every citation is unverified | `CitationsChecked { task, read: Vec<CitedLines>, unverified }` |
+| 10 | Arrival | Core | Unverified citations leave the brief and the talker is told how many; the read lines count as read this session, so their chips may show (I15); the `## Diagram` is read with the narration parser (`WrittenDiagram::read`) into a `WaitingDiagram { carried: OnUse }`; the canonical brief is sent to be cached, except off the record (I10) | `CacheBrief { source, topic, markdown }` → `SourceMessage::Stamped` → the in-memory cache (64) or, for a kept source, `projects/<id>/briefs/inf-alloc-<hash>--overview.md` |
+| 11 | Deliver | Core | A prefetch goes quietly with the next request, fenced between `<task-output>` marks (D-107); the talker has it only once a request carried it (D-271) | The next `Talk` |
+| 12 | Use | Talker → core | "How does inf-alloc fit together?": `research` about the shared source is the core's (`sources::routing`), and its words name no component, so the topic is the overview (`topic_of`; "how does the arena work?" would start the arena's component brief). That brief is already in the conversation, so the call says so, and the waiting diagram is now carried by this reply's tool round | `TalkerToolCall` → a tool result; `carried: ThisReply` |
+| 13 | Stage | Core | With the request that carries that result, the diagram is laid out whole (§12.5) on the board in front (a full page turns first); a component brief's goes on that part's detail layer (D-238); a staging that would open a layer or turn the page under earlier unplayed ops is deferred (D-270). The talker gets a note with the diagram's id and its parts' ids, at most 24 named, never its labels (I18) | `UiEvent::Diagram { layer, title, part: 0, parts, provenance: Some(DiagramProvenance { reader: "Claude Code", source: "inf-alloc", files_read: Some(23) }) }` |
+| 14 | Reveal | Talker → core → UI | The talker writes `<reveal id="arena"/>` as it explains each part; what its reply leaves planned is revealed as the reply ends | `OpStart { op: Reveal { … } }`, `Diagram { part: N }`; the header "inf-alloc · memory allocation · part 2 of 4" with "from Claude Code's brief · 23 files read" |
+
+A brief the harness is still reading answers a `research` call "still reading" at once and gets a report turn when done (`Waiting::Talker`); calls about a brief the cache or the check is about to answer are held, the first gets the brief and the rest point at its result (D-268). Measured: a brief takes seconds to minutes; the harness's timeout is 10 min.
+
+### 12.4 A PDF's digest pipeline (panel I)
+
+The user drops `paper.pdf` (the generated 6-page fixture, `tests/fixtures/documents/paper.pdf`).
+
+| # | Stage | Where | What happens | Carried as |
+|---|---|---|---|---|
+| 1 | Share | App, orchestrator, core | As §12.3 steps 1–3, kind `Document { Pdf }`, entry `Waiting { "Waiting for the document reader" }`; the talker hears how to read and cite it; "Reading paper.pdf." if quiet | `SourceInput::Shared` |
+| 2 | Queue | Orchestrator (`orchestrator::documents`) | A whole cached digest whose stamp still matches answers without a reader; else a reader starts if fewer than `SOURCE_READERS_RUNNING_MAX` (2) run, or the document waits in line (`DOCUMENTS_WAITING_MAX`, 48) until one ends | `SourceMessage::DigestChecked`, or `Work::run_reader` |
+| 3 | Text | Reader (`documents::reader`, `Step::Extract`) | The text layer, once per file (single-flight `OnceCell`, kept by length and modification time, 8 documents): `PdfKit` runs `/usr/bin/osascript -l JavaScript pdfkit.js text <path> 600`, which prints `PdfText` (page count, locked, each line's box, font size and boldness) | `ReaderEvent::Reading { read: 0, by: None }` (the tray: "BoardAI is reading") |
+| 4 | Reading order | `documents::order::reading_order` (D-293) | Per page, from the boxes alone: lines within 2 points of a baseline join; gutters at least 8 points wide between prose lines of 30 characters; a band's columns read top to bottom one after another; full-width rows in place; past 2,000 boxes or vertical text, PDFKit's own order | Ordered lines |
+| 5 | Layer | `documents::layer::from_pdf` | The body size; headings (1.5 points larger, or bold and 0.5 larger); captions ("Figure N:", "Fig. N.", "Table N –"); table rows under their caption; trailing page numbers dropped; hyphenation mended; the title | `TextLayer` |
+| 6 | Local digest | `documents::local::local_digest` | The text's digest: sections, captions, tables, and every figure the text names, listed unread | `Digest` |
+| 7 | Figures | Reader (`Step::Calls` or `Step::Harness`) | The first configured OpenRouter model whose endpoints list `file` among `input_modalities` (the talker's, then the scribe's, with a saved key) reads page ranges of 12, at most 4 calls: `pdfkit split` → a `file` part (a data URL) in `files::request_body`, with `plugins: [{ id: "file-parser", pdf: { engine: "native" } }]`, the role's route and reasoning, `max_tokens` 12,000. A PDF longer than 48 pages with a harness installed, or no such model, goes to the harness instead, in a `PrivateCopy` (a `0700` folder holding only a hard link to the document and its linked images, D-286); with neither, the text alone | `Reading { read, of, by: Some("Gemini 3.8 Flash") }` |
+| 8 | Digest | Reader | The parts merge (`Digest::merge`); `local::completed` adds back every figure or table the text names that the answer left out, unread; the tray's words come from `Digest::tray_state` | `ReaderEvent::Ready { detail, digest }` (or `Partial { reason, digest }`, `Failed { reason }`) |
+| 9 | Cache | `Work::run_reader` → orchestrator | A whole digest is stamped and cached first (topic `digest`, D-259; in the vault for a kept document), then reported | `SourceMessage::Digested`, then `SourceInput::DocumentRead { source, state, digest }` |
+| 10 | Parse | Core | `digest::parse` (bounded, drops counted; titles, captions and the reader as `PlainText`; a locator past the document's `Read:` length dropped, D-273); the tray: "6 pages · text, 2 tables and 3 of 3 figures read · figures by Gemini 3.8 Flash"; the digest goes quietly with the next request, fenced | `UiEvent::Sources`; the next `Talk` |
+| 11 | Page reads | Talker → core → orchestrator → reader | `read_file { path: "paper.pdf", start_line: 3, end_line: 4 }` is the core's (pages as lines, at most 4); a source job waits `PAGE_READ_TIMEOUT_MS` (4.5 s) for `SourceReader::pages`, which answers from the kept layer or extracts those pages alone (`pdfkit pages`) | `ReadDocument { request, source, first_page, last_page }` → `DocumentPages { request, answer: Read { pages, page_count } \| Unread { reason } }` → the held call's result, fenced |
+| 12 | Page citations | Core (`engine::shared::documents::cites`, I17) | Each clause sent to speech is scanned (`pages::find_cites`: "p. 3", "Figure 1 (p. 3)", "Table 2"); each cue waits until the voice reaches it, then is checked against the digest and the pages read; one that checks out opens the Doc card, and the card's highlight follows the clauses | `SurfaceShow { surface: Doc { id, title, chip: "p. 3 · Figure 1", figure: Some(DocFigure { label, caption, read }), sentences, highlight, note } }`, then `SurfaceUpdate { update: Sentence { index } }` |
+| 13 | Figure diagram | Core | Reading `paper.pdf#Figure 2` answers from the digest; a figure with a `<diagram>` is staged with that reply's next request (`diagrams::wait_to_stage_figure`, as `figure-2`, once per layer, D-269) and revealed as a brief's is, with no provenance chip | `Diagram { provenance: None }`, `OpStart { Reveal }` |
+
+Measured (§3.9): Gemini 3.8 Flash read the paper in one call, 16.1 s, $0.0107; Claude Code (Sonnet) in 46.1 s, $0.141. Ending the session cancels a read without a word and leaves nothing half-written (D-283).
+
+### 12.5 A staged diagram's layout and reveal (panel J)
+
+| # | Where | What happens | Carried as |
+|---|---|---|---|
+| 1 | Talker | "Draw the whole map": its message ended with `STAGE_HINT`; it writes one sentence, then `<diagram id="alloc" title="…">` … `</diagram>`, then explains part by part, each part's words starting with its `<reveal id="…"/>` | `TalkerDelta`s |
+| 2 | Narration parser (`narration::block`, `narration::tags::diagram`) | Inside the block, `node`, `edge`, `cells`, `record`, `note` are collected into a `DiagramSpec`; its text isn't speech. It ends at `</diagram>`, at another tag, after 240 bytes of text without a tag, or at the stream's end; at most 16 KiB and 200 parts | One op, anchored on the first word after the block |
+| 3 | Core, when that word plays | `Core::checked_spec` holds labels that read as repo paths to what was read (" ?", D-252); `Board::stage(layer, op, spec, page_may_turn, inherited)` refuses `Full` (8 diagrams on a layer), `Empty`, or `NeedsPage` (past 2,800 × 1,600 units on a page with drawing: the page turns first, D-177) | |
+| 4 | `board::staged::structure` | Each part in the container its `in` names, at most 6 deep (deeper ones move up); categories take slate, violet, blue, green in first use (at most 4); ids already taken, a connector naming nothing or joining a container to its own part are dropped and counted | `Dropped::DiagramPart` |
+| 5 | `board::staged::layout`, `connect`, `place` | Sizes innermost first, places outermost first, in loops with no recursion; runs of boxes wrap at `CONTENT_WIDTH_MAX`, sections side by side wrap at `ROW_WIDTH_MAX`; records last along the bottom; the legend above. Connectors routed last from the nearest sides, bowing 30 units a try around what is in the way. The whole box goes at the origin of an empty layer, else under everything there, and is reserved on the grid. Sizes are `board::staged::metrics`, mirrored by the UI's `--diagram-*` tokens. The 150-element inf-alloc map stages in 0.19 ms | Every part an element in `Planned` |
+| 6 | Core | The header learns of it | `Diagram { layer, title, part: 0, parts, provenance }` |
+| 7 | Core, at each `<reveal id deep>` | `Board::plan_reveal` lists, in a hand's order, the containers not yet drawn (outermost first), the part, everything inside it with `deep`, each connector right after its second end, and the legend with the diagram's first part; a solid part over a shape the user drew since staging stays planned (I6). `Board::start_reveal` starts them all under one op with one budget: to the next drawing op's anchor or the end of what is said, at most `REVEAL_BUDGET_MAX_MS` (20 s) | `Camera { frame, enlarge }` (what it draws plus the next reveal's part, closing up on a small one), `OpStart { op: Reveal { id, op, parts: Vec<StagedPart> } }`, `Diagram { part: N }` |
+| 8 | UI (`canvas/staged.ts`) | One run: each part planned in the order sent, seeded by its id; a part's SVG made the first frame it shows; it freezes and resumes as one stroke | SVG |
+| 9 | Core, on an interruption | The reveal freezes like any stroke; parts not reached stay `Planned` for the next reply | `Freeze { layer }` |
+| 10 | Core, at the reply's end | `queue_leftovers`: each diagram staged for this reply that still holds parts is revealed whole at `LEFTOVER_REVEAL_MS_PER_PART` (200 ms a part); a reply that revealed 12 parts or more (`DIAGRAM_OVERVIEW_PARTS_MIN`) ends by framing the whole layer (`show_overview`) | `OpStart { Reveal }`, `Camera` |
+
+A drawing tag naming a planned part reveals it too; one naming a part already drawn points at it and changes nothing (D-251). The export draws only what was revealed (`board::excalidraw::staged`).
+
+### 12.6 Drill-down (panel J)
+
+| # | Where | What happens | Carried as |
+|---|---|---|---|
+| 1 | Core | "More detail on the arena" (`conversation::detail_cues::detail_cue`: a lead, then at most 6 words) is matched against the active layer's drawn and planned parts by their words | |
+| 2 | Core (`engine::detail::detail_by_voice`) | A match opens a detail layer at once, before the talker hears the words: a detour anchored to that part, on the same bounded stack (I4); the words carry `DETAIL_HINT` | `LayerPush { layer, title, question, anchor: Some(DetailAnchor { layer, element, rect, category, display }) }`, `Camera` |
+| 3 | Core (`engine::shared::voice::source_detail_by_voice`) | When a shared source has that component, its component brief is asked for now, and the talker hears that the brief's diagram will be staged on this layer, so it draws no guess there | `SourceEffect::Brief { topic: Component { name } }` |
+| 4 | Talker | It stages the part's internals there: a `<detail of="arena">` block, a `<diagram>`, or the first `<detour>` it writes while the layer is empty | Staged and revealed as §12.5 |
+| 5 | Core, when the brief arrives | Its diagram is staged on that part's detail layer (D-238), deferred if the reply's earlier words still wait to draw (D-270) | `Diagram { provenance }` |
+| 6 | UI (`canvas/detail.ts`, `app/DetailStage.tsx`) | A full-stage card grows out of the anchor's box; the board under it steps back; breadcrumbs "root › … › current" (a source part's label from `anchor.display`, D-290) and "depth N of 4" | |
+| 7 | Core | "Back out", "zoom out", "up a level", or Esc while BoardAI is quiet (`engine::detail::back_out`): the innermost layer closes and the stroke frozen under it finishes; said alone, an `Acknowledge` and no talker request. "Back to the main board" closes every layer | `LayerPop { layer }`, `Resume`, `Acknowledge` |
+
+At `DETOUR_DEPTH_MAX` (3) nothing opens and the talker is told, so a map drills at most four levels, the main board included. While the user draws, nothing opens (I14).
+
+## 13. Data formats (panel F)
+
+### 13.1 The session event log
+
+`sessions/<folder>/events.jsonl`, written only by the store (`store::log`). One JSON object per line, `v`, `t` (session time in ms) and `k` first; `LOG_VERSION` is 1.
+
+| `k` | Fields | For |
+|---|---|---|
+| `session` | `id`, `started` (RFC 3339) | The first line: whose log this is |
+| `ui` | `event`, a `UiEvent` exactly as `UiLogLine` | The UI's replay |
+| `input` | `input`, a core `Input` | Re-simulating the core with the same build |
+| `record` | `record`, a `LogRecord` | Milestones and the core's drop counts |
+| `dropped` | `reason` (`oversized`, `inbox_full`, `write_failed`, `unencodable`), `count` | What the store itself dropped, so gaps show |
+| `end` | | The last line of a session that ended cleanly |
+
+```json
+{"v":1,"t":0,"k":"session","id":"2026-10-15-143210","started":"2026-10-15T14:32:10Z"}
+{"v":1,"t":0,"k":"input","input":{"input":"voice_start"}}
+{"v":1,"t":3990,"k":"ui","event":{"type":"Caption","who":"User","text":"Walk me through the request path for our","is_final":false}}
+{"v":1,"t":7271,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"client","op":1,"shape":"Actor","label":"Client","rect":{"x":119,"y":384,"w":42,"h":86},"stack":1,"fill":null,"link":null},"budget_ms":1721}}
+{"v":1,"t":7271,"k":"record","record":{"record":"milestone","milestone":"first_op"}}
+{"v":1,"t":9120,"k":"dropped","reason":"inbox_full","count":3}
+{"v":1,"t":61200,"k":"end"}
+```
+
+- Every string literal is redacted on the way (`redact_json_text`, I8); inputs carry transcripts, never audio.
+- Flushed every 250 ms (one `write`), fsynced at the session's end; a line over 1 MiB becomes a counted `dropped` marker.
+- `SessionStart` is the first `ui` event; `SessionEnd` is never written, so a replay ends on its board.
+- The reader streams, and skips and counts malformed, oversized and other-version lines (`EventLogReader`, `SkipCounts`). Fields added later are `Option`s that read as `None` in older logs (§3.7).
+
+### 13.2 The vault and the app's folders
+
+```
+~/BoardAI/                                   the vault: the source of truth, yours (settings `vault`)
+  sessions/<date>-<time>/                    renamed after the digest's title (sessions/2026-10-14-request-path/)
+    events.jsonl                             §13.1
+    board.excalidraw                         the core's export, a frame per layer, written when something was drawn
+    digest.md                                front matter: id, title, started, duration_ms, written_by (scribe | fallback),
+                                             project, project_name; then # title, ## Summary, ## Key diagrams,
+                                             ## Open questions, ## Captured, ## Proposed memories (- [ ] … ^p3), ## Graph
+  notes/<slug>.md                            one note per file; front matter: id, created, session, links
+  projects/<name>.md                         tasks: - [ ] Check Redis TTLs [[session:2026-10-14-143210]] ^t27
+  projects/<id>/sources.md                   what the project keeps, one line each: - code folder: ~/code/infinitydb,
+                                             - PDF: ~/Papers/hekaton.pdf (SourceKind::noun); any other line is yours
+  projects/<id>/briefs/<source>-<hash>--<topic>.md     a kept source's brief; front matter: source, topic, stamp, written
+  projects/<id>/briefs/<document>-<hash>--digest.md    a kept document's digest (D-259)
+  memory/about-you.md                        what you stated and learning signals: - … ^m12
+  memory/facts.md                            facts about your systems
+~/Library/Application Support/ai.boardai.desktop/
+  models/                                    Whisper, Silero, Kokoro and the lexicon, SHA-256 verified (`just models`)
+<the app's data folder>/index.sqlite         the derived index (FTS5), rebuilt from the vault at any time
+<the app's config folder>/settings.toml      §13.3
+```
+
+- Slugs are lowercase ASCII words of at most 60 bytes, `-2`, `-3`… on a collision; a brief's `<hash>` is FNV-1a of its source's path, so two folders of one name never share one.
+- Writes are atomic: a temporary file, fsync, rename, fsync the folder. Your own files are edited a line at a time (`Edited`, D-042).
+- Nothing about sources is indexed; the runtime reads `sources.md` and the briefs when a project becomes current.
+
+### 13.3 `settings.toml`
+
+Every field has a default; unknown keys are errors, and errors name the field and never quote a value (§3.8). With every table written out:
+
+```toml
+setup_complete = true                 # absent: the first-run screen shows
+vault = "~/BoardAI"
+code_roots = ["~/code"]               # default []; absolute or ~/; never too broad (tools::too_broad)
+mic = "open"                          # or "push_to_talk"
+
+[talker]                              # [scribe] takes the same fields except early_start
+kind = "openai_compatible"            # or "anthropic" (default: claude-opus-5-5, effort low)
+base_url = "https://openrouter.ai/api/v1"
+model = "openai/gpt-oss-120b"
+effort = "low"                        # none, low, medium, high, xhigh, max
+max_tokens = 4096                     # 1 to 128,000; default 16,000
+secret = "openrouter"                 # a Keychain name, never the key
+route = ["cerebras"]                  # OpenRouter only: at most 8 slugs
+early_start = true                    # the talker only: a hosted talker's early request (D-262)
+
+[scribe]
+kind = "openai_compatible"
+base_url = "https://openrouter.ai/api/v1"
+model = "qwen/qwen3.8-27b"
+effort = "medium"
+secret = "openrouter"
+route = ["cerebras"]
+
+[stt]
+kind = "whisper"
+model = "base.en"
+
+[tts]
+kind = "kokoro"                       # or "elevenlabs" (model, base_url, secret) or "system"
+
+[voice]
+id = "default"
+
+[audio]
+input = "system_default"              # or "built_in", or a device's name
+output = "system_default"             # or a device's name
+
+[harness]
+kind = "auto"                         # or "claude_code", "pi"
+research_model = "sonnet"             # briefs on Claude Code (D-226)
+# model = "…"                         # spoken research, reviews and changes (D-245)
+```
+
+### 13.4 The protocol's main shapes
+
+Generated from `core::protocol` into `ui/src/protocol/generated/` (ts-rs). Enums are internally tagged: `UiEvent` and `UiCommand` by `"type"`, `DrawOp`, `Surface`, `SurfaceUpdate`, `PointerTarget`, `DrawAction` and `SourceAction` by `"kind"`, `StagedPart` by `"part"`, `DrawnShape` by `"tool"`; `MicAction` is a plain string.
+
+- **A batch:** `UiBatch { at: SessionTime, events: Vec<UiEvent> }`, the only thing the bridge sends.
+- **`UiEvent`:** `Orb`, `Acknowledge`, `Caption`, `Thread`, `OpStart`, `Freeze`, `Resume`, `LayerPush`, `LayerPop`, `Camera`, `SurfaceShow`, `SurfaceUpdate`, `SurfaceDismiss`, `Chip`, `Problem`, `Suggestion`, `SessionStart`, `ViewShow`, `ViewDismiss`, `OpenSettings`, `SessionEnd`, `DrawMode`, `UserShape`, `UserShapeRemove`, `LabelHint`, `PageTurn`, `Diagram`, `Sources`, `SourceDrop` (fields in §3.7).
+- **`DrawOp`:** `Node`, `Edge`, `Annotate`, `Strike`, `Trace`, `Participant`, `Message`, `Cells`, `Write`, `Reveal`. Every op but `Strike` and `Write` carries its element `id`; every op carries its `op: OpId`. Geometry is final, in world units: `Rect { x, y, w, h }`, `Point`, `EdgePath`.
+- **`Surface`:** `Code`, `Compare`, `Recap`, `Doc`, each with its `id: SurfaceId`.
+- **`UiCommand`:** `Pointer { target: Option<PointerTarget> }` (`Element { layer, id }` or `CodeLine { surface, line }`), `Mic { action: Mute | Unmute | TalkDown | TalkUp }`, `Stop`, `CloseView`, `OpenSource { path, line }`, `Draw { action: Start | Shape { layer, drawn } | Undo | Done | Cancel }`, `Sources { action }`.
+
+```json
+{"at":12180,"events":[
+ {"type":"Diagram","layer":0,"title":"inf-alloc · memory allocation","part":1,"parts":4,"provenance":{"reader":"Claude Code","source":"inf-alloc","files_read":23}},
+ {"type":"OpStart","layer":0,"budget_ms":3060,"op":{"kind":"Reveal","id":"r:1","op":1,"parts":[
+   {"part":"Frame","id":"arena","rect":{"x":0,"y":46,"w":401,"h":628},"label":{"text":"Arena","at":{"x":18,"y":70}},"note":{"text":"slab allocation · RAM records","at":{"x":88,"y":70}},"category":"Slate","dashed":true},
+   {"part":"Legend","id":"alloc:legend0","rect":{"x":0,"y":0,"w":110,"h":22},"category":"Slate","label":"RAM records"}]}}]}
+```
+
+```json
+{"type":"Draw","action":{"kind":"Shape","layer":0,"drawn":{"tool":"Box","rect":{"x":120,"y":80,"w":160,"h":90}}}}
+{"type":"Mic","action":"TalkDown"}
+{"type":"Pointer","target":{"kind":"Element","layer":0,"id":"arr.3"}}
+```
+
+The batch is illustrative: its two events are taken from `ui/public/fixtures/sources.events.jsonl` and `staged.events.jsonl` (the core's own output), with the reveal's parts cut to two and the diagram's `part` set to the reveal it announces.

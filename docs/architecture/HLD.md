@@ -1,6 +1,6 @@
 # BoardAI · High-level design
 
-> Status: **draft for review** · 2026-10-15 · Diagram: [`hld.excalidraw`](hld.excalidraw) (open it at [excalidraw.com](https://excalidraw.com) → menu → Open) · Low level: [LLD.md](LLD.md)
+> Status: **draft for review** · 2026-10-17 · Diagram: [`hld.excalidraw`](hld.excalidraw) (open it at [excalidraw.com](https://excalidraw.com) → menu → Open) · Low level: [LLD.md](LLD.md)
 
 ## 1. What this document covers
 
@@ -39,33 +39,42 @@ This split pays for itself in three ways:
 
 ## 4. Components
 
-The [diagram](hld.excalidraw) shows these boxes and how they connect.
+The [diagram](hld.excalidraw) shows these boxes and how they connect. Every thread, task and channel behind them, with its owner and capacity, is in LLD §3.10.
 
 **Core** (pure):
 
-- **Conversation state machine.** Idle, Listening, Thinking, Speaking, Ducked and Muted, plus turn-taking and the backchannel-versus-interruption decision.
+- **Conversation state machine.** Idle, Listening, Thinking, Speaking, Ducked and Muted, plus turn-taking and the backchannel-versus-interruption decision. On a hosted talker it can start a turn's request on the early final, before the end of the turn is confirmed, and shows nothing of it until it is: the **speculative start** (D-262; a local talker waits for the turn's end).
 - **Narration parser.** Reads the LLM's streamed output: spoken text interleaved with drawing tags such as `<node id="lb" …/>`. It is tolerant of malformed output and never blocks speech.
 - **Op scheduler.** Fires each drawing op when the voice actually reaches the word the op is anchored to.
-- **Board model and layout.** Turns meaning ("to the right of the CDN") into geometry. Existing elements never move. Quick sketches are placed one op at a time; a **staged diagram** (a whole spec from a research brief, a document digest or the talker) is laid out at once, nested containers and all, and revealed part by part as the narration names them (D-187). Drill-down opens a detail layer anchored to a part (D-188).
-- **Sources.** What the user shared for this session or kept in a project (D-184), and which questions about them go to harness research (D-185).
+- **Board model and layout.** Turns meaning ("to the right of the CDN") into geometry. Existing elements never move. Quick sketches are placed one op at a time.
+- **Staged board.** A **staged diagram** (a whole spec from a research brief, a document digest or the talker) is laid out at once, nested containers and all, and revealed part by part as the narration names them (D-187); what a reply leaves planned is revealed as it ends. Drill-down opens a detail layer anchored to a part (D-188).
+- **Sources.** What the user shared for this session or kept in a project (D-184), and which questions about them go to harness research (D-185) or to a document's digest.
+- **Research briefs and digests.** A brief from the harness and a document's digest are parsed into bounded types; a brief's cited lines must be read before a chip shows one (I15), a document's page citations are checked against what was read (I17), and a source's words never reach a system message (I18).
+- **Change gate.** A code change runs only on your spoken yes to BoardAI's own question naming it, word for word (I9).
 - **Thread and detours.** The explanation plan, plus a stack of detours opened by interruptions.
 - **Memory policy.** Decides what is remembered automatically, what is proposed, and what is never kept.
 
 **Runtime** (I/O):
 
+- **Orchestrator.** One task owns the core (law 3): it steps each input at session time and applies the effects in order. It opens a session, rests it after 30 minutes idle or when you end it, and opens a new one on your next words.
+- **Bridge.** Batches UI events per 16 ms frame to the transport, stamped with the core's time.
 - **Audio I/O.** macOS VoiceProcessingIO provides echo cancellation, so an open mic doesn't hear BoardAI's own voice.
 - **Speech in.** Voice activity detection plus speech-to-text, producing partial and final transcripts.
 - **Speech out.** Text-to-speech plus playback. The audio sample counter is the session clock.
 - **Talker client.** Streams from the LLM and runs its tools.
 - **Repo tools.** Native, read-only file reading and search in the opened code folders and the shared sources.
 - **Harness runner.** Runs Claude Code or pi as a subprocess for code research (every question about a shared codebase, returning a structured brief with a diagram, D-185, run in that source's own folder), reviews and confirmed changes.
-- **Sources.** Checks every shared path where it enters (a drop, the chooser, a name resolved by a bounded walk), keeps the session's sources by id, reads each brief's cited lines natively, and caches briefs with a freshness stamp (the git HEAD and the files' times): in memory for a session source, in the project's vault folder when it is kept there. Documents go to the **document reader** (the `SourceReader` seam, D-186): it reads Markdown and text natively, a PDF's text, headings, captions and tables with macOS PDFKit (out of process, D-253; in a reading order rebuilt from where its lines sit, the same on every macOS, D-293), gets the figures from the configured talker's or scribe's model when OpenRouter lists it as reading files, else from the harness, and writes each document's digest, every figure counted read or not; a whole digest is cached like a brief (a partial one is read again), and the talker's page reads come from the same text, a page at a time while the whole text isn't extracted.
+- **Confinement.** Research and reviews read only inside one git repository: the shared source's, or the opened code folder's (D-226, D-243). Claude Code enforces it with its own permission rules (only Read, Grep and Glob, nothing asked, no setting file loaded, one allow rule for the repository, D-285); pi is told in the prompt.
+- **Sources.** Checks every shared path where it enters (a drop, the chooser, a name resolved by a bounded walk), keeps the session's sources by id, reads each brief's cited lines natively, and caches briefs with a freshness stamp (the git HEAD and the files' times): in memory for a session source, in the project's vault folder when it is kept there.
+- **Source reader and document reader.** Documents go to a **source reader** (the `SourceReader` seam, D-186); BoardAI's own is the **document reader**. It reads Markdown and text natively, a PDF's text, headings, captions and tables with macOS PDFKit (out of process, D-253; in a reading order rebuilt from where its lines sit, the same on every macOS, D-293), gets the figures from the configured talker's or scribe's model when OpenRouter lists it as reading files, else from the harness, and writes each document's digest, every figure counted read or not; a whole digest is cached like a brief (a partial one is read again), and the talker's page reads come from the same text, a page at a time while the whole text isn't extracted.
 - **Store.** The event log, the vault files and the SQLite index. It is the only writer.
 - **Scribe.** Background memory work: the session digest, extracting entities, proposing memories.
+- **Settings and secrets.** `settings.toml` in the app's config folder and the keys in the macOS Keychain, read when a session starts; a change on the settings page ends the session and starts a fresh one from the new settings.
 
 **UI:**
 
-- The orb, the canvas stroke renderer, surfaces (code card, compare, doc), captions and the thread bar, the library and the brain views.
+- The orb, the canvas stroke renderer, surfaces (code card, compare, the Doc card for a document's cited passage or figure), captions and the thread bar, the library and the brain views.
+- The staged board: a staged diagram drawn part by part, its header ("title · part N of M", and who read the code), and a detail layer as a full-stage card with breadcrumbs and "depth N of 4".
 - The Sources tray: what this session and the current project can read, each source's state (reading, ready, figures unread), and adding one by drop or the chooser; the drop overlay while something is dragged over the window; the files the harness reads, drifting at the edge.
 - The first-run screen, and the settings page (⌘, or "open settings"): the talker and its model picked from the providers' lists, the voice, the microphone and its permission, the keys (saved, replaced or removed in the Keychain, never shown), the coding harnesses and code folders, and what memory keeps.
 - A replay mode that plays a recorded session with no backend. UI work is checked against the design canvas this way.
@@ -75,7 +84,7 @@ The [diagram](hld.excalidraw) shows these boxes and how they connect.
 The numbers match the badges on the diagram.
 
 1. **Hear.** Mic → echo cancellation → voice activity detection → speech-to-text partials → core. End of turn is decided from silence plus whether the sentence sounds finished.
-2. **Think.** The core asks the talker for a response. The request carries the transcript, a board summary, the thread, and relevant memory. The LLM streams back narration.
+2. **Think.** The core asks the talker for a response. The request carries the transcript, a board summary, the thread, and relevant memory. The LLM streams back narration. On a hosted talker the request leaves on the early final (after 96 ms of quiet), sooner than the confirmed end of the turn (330 against 418 ms p50 in §8), and nothing of it shows unless the turn ends with exactly that request (D-262).
 3. **Speak and draw.** The parser splits the narration into spoken clauses and drawing ops anchored to words. Clauses go to text-to-speech. Playback reports its position, and the core fires each op as the voice reaches its word. The UI animates the stroke within the time budget until the next op.
 4. **Interrupt.** Your voice starts, so BoardAI's volume ducks within 100 ms. The core then classifies what you said:
    - A backchannel ("mm-hm") restores the volume.
@@ -85,6 +94,10 @@ The numbers match the badges on the diagram.
    - Every input is appended to the session's event log.
    - At the end, the scribe writes the digest and proposed memories into the vault, and the index is updated.
    - The next session starts with a short "where we left off" recap.
+7. **Read a document.** A shared PDF's text is extracted on this Mac by PDFKit, out of process, in a reading order rebuilt from where its lines sit (D-253, D-293); its figures are read by the talker's or scribe's model when OpenRouter lists it as reading files, else by the harness in a private copy, else listed unread; the digest goes to the talker fenced as untrusted data. The talker reads pages on demand, and a page or figure it cites opens the Doc card only when the session read it (I17).
+8. **Stage, reveal and drill down.** A map (the talker's own `<diagram>`, a brief's or a figure's) is laid out whole before its first stroke and revealed part by part as the voice names each part; "more detail on X" opens a detail layer on that part and stages its internals there, and "back out" returns.
+
+LLD §12 traces each flow hop by hop, with the types at every step and the measured times.
 
 ## 6. Providers: bring your own keys
 
@@ -176,7 +189,7 @@ Each spike has a pass bar. A failing spike changes the design before more code i
 |---|---|---|---|
 | **S1 Echo cancellation** | Can an open mic on laptop speakers barge in without BoardAI hearing itself? | Fewer than 1 false barge-in per 10 minutes of BoardAI speaking | Push-to-talk by default on speakers, open mic with headphones |
 | **S2 Local voice** | Does Kokoro sound human enough, run fast enough, and give word timings? | Real-time factor ≤ 0.3 on M1; timings within 50 ms; no GPL code linked (English pronunciation through a lexicon, not espeak-ng) | ElevenLabs as the recommended default; the system voice stays as the free fallback |
-| **S3 Talker latency** | Time to first token and how well each model follows the narration format | p50 ≤ 450 ms and ≥ 98% well-formed tags | Change the recommended default model (a product decision, recorded in DECISIONS) |
+| **S3 Talker latency** | Time to first token and how well each model follows the narration format | p50 ≤ 450 ms and ≥ 98% well-formed tags | Change the recommended default model (a product decision, recorded in the decision log) |
 | **S4 Whisper partials** | Partial transcripts on Metal with `base.en` | A partial every ≤ 500 ms; final ≤ 150 ms after end of turn | A smaller model for partials, or a streaming model (Parakeet) behind the same interface |
 | **S5 Narration across models** | Do Claude, an OpenRouter model and a local Ollama model all produce usable drawings? | Each one draws the demo diagram end to end | Mark the model as unsupported for drawing in the provider list |
 
