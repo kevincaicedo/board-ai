@@ -13,9 +13,11 @@ use boardai_core::harness::{HarnessEvent, HarnessFailure, HarnessKind, HarnessTa
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::process::{self, Output, Preflight, ProcessSpec, Protocol, failed};
+use super::claude::BRIEF_RESEARCH_PROMPT;
+use super::confine::reach_line;
+use super::process::{self, Output, Preflight, ProcessSpec, Protocol, failed, failed_stream};
 use super::text::{bounded_summary, citations, progress_note, relative_to};
-use super::{CodingHarness, HarnessStream};
+use super::{Answer, CodingHarness, HarnessStream, Workspace};
 use crate::cancel::CancelToken;
 use crate::limits::HARNESS_FILES_TOUCHED_MAX;
 
@@ -33,7 +35,8 @@ const PROMPT_ID: &str = "boardai-prompt";
 #[derive(Clone, Debug)]
 pub struct PiConfig {
     pub program: PathBuf,
-    pub repo: PathBuf,
+    /// As for Claude Code: the default folder, `None` when no code folder is set.
+    pub repo: Option<PathBuf>,
     pub environment: Vec<(OsString, OsString)>,
 }
 
@@ -51,6 +54,22 @@ impl PiHarness {
 
 impl CodingHarness for PiHarness {
     fn run(&self, task: HarnessTask, cancel: CancelToken) -> HarnessStream {
+        let Some(folder) = self.config.repo.clone() else {
+            return failed_stream(HarnessFailure::NotInstalled, "no code folder is open");
+        };
+        let workspace = Workspace {
+            folder,
+            answer: Answer::Spoken,
+        };
+        self.run_in(task, workspace, cancel)
+    }
+
+    fn run_in(
+        &self,
+        task: HarnessTask,
+        workspace: Workspace,
+        cancel: CancelToken,
+    ) -> HarnessStream {
         let preflight = match &task.kind {
             HarnessKind::Research | HarnessKind::Review => Preflight::None,
             HarnessKind::Change { branch } => Preflight::Branch {
@@ -59,12 +78,11 @@ impl CodingHarness for PiHarness {
         };
         let spec = ProcessSpec {
             program: self.config.program.clone(),
-            arguments: arguments(&task.kind),
-            working_directory: self.config.repo.clone(),
+            arguments: arguments(&task.kind, &workspace),
+            working_directory: workspace.folder.clone(),
             environment: self.config.environment.clone(),
         };
-        let repo =
-            std::fs::canonicalize(&self.config.repo).unwrap_or_else(|_| self.config.repo.clone());
+        let repo = std::fs::canonicalize(&workspace.folder).unwrap_or(workspace.folder);
         let protocol = PiProtocol {
             brief: task.brief,
             repo,
@@ -79,15 +97,27 @@ impl CodingHarness for PiHarness {
 }
 
 /// pi has no working-directory flag; the process runs in the repo. Extensions are off because
-/// an extension dialog would wait for an answer we never give.
+/// an extension dialog would wait for an answer we never give. pi has no permission rules, so a
+/// brief's reach (D-226) is its read-only tools, its working folder and the prompt
+/// (`confine`); it keeps its own model.
 #[must_use]
-pub fn arguments(kind: &HarnessKind) -> Vec<OsString> {
-    let mut command_line = vec!["--mode", "rpc", "--no-extensions", "--append-system-prompt"];
+pub fn arguments(kind: &HarnessKind, workspace: &Workspace) -> Vec<OsString> {
+    let mut command_line: Vec<String> =
+        ["--mode", "rpc", "--no-extensions", "--append-system-prompt"]
+            .map(str::to_owned)
+            .to_vec();
     match kind {
         HarnessKind::Research | HarnessKind::Review => {
-            command_line.extend([READ_ONLY_BRIEF, "--tools", "read,grep,find,ls"]);
+            let prompt = match &workspace.answer {
+                Answer::Spoken => READ_ONLY_BRIEF.to_owned(),
+                Answer::Brief { reach } => format!(
+                    "{BRIEF_RESEARCH_PROMPT} {}",
+                    reach_line(&workspace.folder, reach)
+                ),
+            };
+            command_line.extend([prompt, "--tools".to_owned(), "read,grep,find,ls".to_owned()]);
         }
-        HarnessKind::Change { .. } => command_line.push(CHANGE_BRIEF),
+        HarnessKind::Change { .. } => command_line.push(CHANGE_BRIEF.to_owned()),
     }
     command_line.into_iter().map(OsString::from).collect()
 }

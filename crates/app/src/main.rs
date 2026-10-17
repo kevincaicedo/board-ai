@@ -14,6 +14,7 @@ mod secrets;
 mod session;
 mod setup;
 mod sink;
+mod sources;
 
 use std::process::ExitCode;
 
@@ -27,6 +28,12 @@ fn main() -> ExitCode {
     let built = tauri::Builder::default()
         .manage(AppState::new())
         .manage(SetupState::new())
+        .manage(sources::DragState::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drop) = event {
+                sources::on_drag_drop(window, drop);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::connect,
             commands::command,
@@ -45,6 +52,7 @@ fn main() -> ExitCode {
             setup::commands::setup_add_code_folder,
             setup::commands::setup_open_vault,
             setup::commands::setup_rebuild_index,
+            sources::sources_choose,
             #[cfg(debug_assertions)]
             dev::dev_say,
         ])

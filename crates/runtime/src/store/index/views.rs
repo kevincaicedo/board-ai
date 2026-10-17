@@ -132,6 +132,18 @@ pub(crate) fn latest_digest(
 }
 
 /// A session's folder, by exact id.
+/// The folder of the latest session with a digest.
+pub(crate) fn latest_session_folder(connection: &Connection) -> Result<Option<String>, StoreError> {
+    Ok(connection
+        .query_row(
+            "SELECT folder FROM sessions WHERE has_digest = 1
+             ORDER BY started_ms DESC, id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 pub(crate) fn session_folder(
     connection: &Connection,
     id: &SessionId,

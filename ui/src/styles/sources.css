@@ -1,0 +1,504 @@
+/* Sources, transcribed from the design canvas (14 · Sources, and 14b's drop overlay): the tray
+   at the left, the ghost file names at the right edge while the harness reads, and the overlay
+   while something is dragged over the window. Only tokens here. */
+
+.tray {
+  position: absolute;
+  left: var(--tray-left);
+  top: var(--tray-top);
+  bottom: var(--tray-bottom);
+  width: var(--tray-live-width, var(--tray-width));
+  z-index: 3;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tray-gap);
+  padding: var(--tray-padding-y) var(--tray-padding-x);
+  border-radius: var(--radius-card);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow:
+    var(--shadow-panel),
+    inset 0 0 0 1px var(--glass-edge-strong);
+  overflow: hidden auto;
+  /* The canvas's pearlPanelIn, from the left, eased on session time. */
+  opacity: var(--tray-presence, 0);
+  transform: translateX(calc((var(--tray-presence, 0) - 1) * var(--tray-shift-in)));
+  filter: blur(calc((1 - var(--tray-presence, 0)) * var(--tray-blur-in)));
+  pointer-events: auto;
+}
+
+.tray-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tray-label {
+  font-size: var(--type-panel-label);
+  line-height: 18px;
+  color: var(--ink-3);
+}
+
+.tray-title {
+  margin: 0;
+  font-size: var(--type-tray-title);
+  line-height: var(--type-tray-title-line);
+  font-weight: 300;
+  letter-spacing: -0.015em;
+}
+
+.tray-close {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: var(--tray-pin);
+  height: var(--tray-pin);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tray-close svg,
+.tray-remove svg {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.tray-tabs {
+  display: flex;
+  gap: var(--tray-tabs-gap);
+  padding: var(--tray-tabs-padding);
+  border-radius: var(--tray-tabs-radius);
+  background: var(--tray-tabs-bg);
+}
+
+.tray-tab {
+  flex: 1;
+  min-width: 0;
+  height: var(--tray-tab-height);
+  border-radius: var(--tray-tab-radius);
+  border: none;
+  font-family: inherit;
+  font-size: var(--type-tray-tab);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-tab-on {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-tray-tab);
+}
+
+.tray-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tray-rows-gap);
+}
+
+.tray-empty {
+  margin: 0;
+  font-size: var(--type-tray-state);
+  line-height: var(--type-tray-state-line);
+  color: var(--ink-3);
+}
+
+.tray-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tray-row-gap);
+  padding: var(--tray-row-padding);
+  border-radius: var(--tray-row-radius);
+  background: var(--tray-row-bg);
+  box-shadow: var(--shadow-row);
+}
+
+.tray-row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tray-badge {
+  width: var(--tray-badge);
+  height: var(--tray-badge);
+  flex: none;
+  border-radius: var(--tray-badge-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-code);
+  font-size: var(--type-tray-badge);
+  color: var(--ink);
+}
+
+.tray-tint-code {
+  background: var(--tray-tint-code);
+}
+
+.tray-tint-kept {
+  background: var(--tray-tint-kept);
+}
+
+.tray-tint-pdf {
+  background: var(--tray-tint-pdf);
+}
+
+.tray-tint-markdown {
+  background: var(--tray-tint-markdown);
+}
+
+.tray-tint-text {
+  background: var(--tray-tint-text);
+}
+
+.tray-row-names {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.tray-row-title {
+  font-size: var(--type-tray-row);
+  line-height: var(--type-tray-row-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-row-path {
+  font-family: var(--font-code);
+  font-size: var(--type-tray-path);
+  line-height: var(--type-tray-path-line);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-pin,
+.tray-remove {
+  width: var(--tray-pin);
+  height: var(--tray-pin);
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* Remove is not on the canvas: it shows beside the pin only while the row is hovered or holds
+   the keyboard focus, so the row reads as the canvas draws it. */
+.tray-remove {
+  display: none;
+}
+
+.tray-row:hover .tray-remove,
+.tray-row:focus-within .tray-remove {
+  display: flex;
+}
+
+.tray-pin:focus-visible,
+.tray-remove:focus-visible,
+.tray-tab:focus-visible,
+.tray-link:focus-visible,
+.tray-close:focus-visible,
+.tray-button:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+.tray-pin-glyph {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.tray-pin-kept {
+  fill: var(--signal);
+  stroke: var(--signal);
+}
+
+.tray-pin-stem {
+  fill: none;
+}
+
+.tray-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--type-tray-state);
+  line-height: var(--type-tray-state-line);
+  color: var(--ink-2);
+}
+
+.tray-dot {
+  width: var(--tray-dot);
+  height: var(--tray-dot);
+  flex: none;
+  border-radius: 50%;
+}
+
+.tray-dot-reading {
+  background: var(--state-reading);
+}
+
+.tray-dot-ready {
+  background: var(--state-ready);
+}
+
+.tray-dot-partial {
+  background: var(--state-partial);
+}
+
+.tray-dot-waiting {
+  background: var(--state-waiting);
+}
+
+.tray-dot-failed {
+  background: var(--state-failed);
+}
+
+@keyframes tray-read-bar {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: var(--tray-bar-span) 0;
+  }
+}
+
+.tray-bar {
+  height: var(--tray-bar-height);
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--grey-100) 0 40%,
+    var(--signal) 40% 60%,
+    var(--grey-100) 60% 100%
+  );
+  background-size: var(--tray-bar-span) var(--tray-bar-height);
+  animation: tray-read-bar var(--duration-tray-bar) linear infinite;
+}
+
+.tray-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tray-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--tray-drop-padding);
+  border-radius: var(--tray-row-radius);
+  border: var(--tray-drop-border) dashed var(--grey-300);
+  text-align: center;
+}
+
+.tray-drop-title {
+  font-size: var(--type-tray-drop);
+  line-height: var(--type-tray-drop-line);
+}
+
+.tray-drop-line,
+.tray-drop-problem {
+  font-size: var(--type-tray-state);
+  line-height: var(--type-tray-state-line);
+  color: var(--ink-2);
+}
+
+.tray-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--signal);
+  cursor: pointer;
+}
+
+.tray-privacy {
+  font-size: var(--type-tray-foot);
+  line-height: var(--type-tray-foot-line);
+  color: var(--ink-3);
+}
+
+.tray-button {
+  position: absolute;
+  left: var(--tray-left);
+  top: var(--tray-top);
+  z-index: 2;
+  width: var(--size-control);
+  height: var(--size-control);
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: var(--bg);
+  box-shadow: var(--shadow-control);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.tray-button svg {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+
+.tray-button-hidden {
+  visibility: hidden;
+}
+
+.tray-button-count {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  min-width: var(--tray-button-count);
+  height: var(--tray-button-count);
+  border-radius: calc(var(--tray-button-count) / 2);
+  background: var(--signal);
+  color: var(--bg);
+  font-size: var(--type-tray-badge);
+  line-height: var(--tray-button-count);
+  text-align: center;
+}
+
+@keyframes ghost-drift {
+  from {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  30% {
+    opacity: var(--ghost-opacity);
+  }
+  to {
+    transform: translateY(calc(-1 * var(--ghost-drift)));
+    opacity: 0;
+  }
+}
+
+.ghosts {
+  position: absolute;
+  right: var(--ghost-right);
+  top: var(--ghost-top);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--ghost-gap);
+  font-family: var(--font-code);
+  font-size: var(--type-ghost);
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.ghost {
+  opacity: 0;
+  animation: ghost-drift var(--duration-ghost) linear infinite;
+  animation-delay: calc(var(--ghost-index) * var(--duration-ghost-stagger));
+}
+
+.drop {
+  position: absolute;
+  inset: var(--drop-inset);
+  z-index: 20;
+  border-radius: var(--drop-radius);
+  overflow: hidden;
+  background: var(--drop-bg);
+  box-shadow: inset 0 0 0 var(--drop-ring) var(--signal);
+  pointer-events: none;
+}
+
+.drop-refused {
+  box-shadow: inset 0 0 0 var(--drop-ring) var(--grey-300);
+}
+
+.drop-half {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 50%;
+  background: var(--drop-half-tint);
+}
+
+.drop-half-left {
+  left: 0;
+}
+
+.drop-half-right {
+  right: 0;
+}
+
+.drop-refused .drop-half {
+  display: none;
+}
+
+.drop-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--drop-gap);
+}
+
+.drop-title {
+  font-size: var(--type-drop-title);
+  font-weight: 300;
+}
+
+.drop-pills {
+  display: flex;
+  gap: var(--drop-pills-gap);
+}
+
+.drop-pill {
+  height: var(--drop-pill-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--drop-pill-padding);
+  border-radius: var(--drop-pill-radius);
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+  font-size: var(--type-drop-pill);
+}
+
+.drop-pill-on {
+  background: var(--bg);
+  box-shadow:
+    var(--shadow-drop-pill),
+    inset 0 0 0 var(--drop-pill-ring) var(--signal);
+}
+
+.drop-hint {
+  font-size: var(--type-drop-hint);
+  color: var(--ink-2);
+}

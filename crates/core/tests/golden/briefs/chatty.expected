@@ -1,0 +1,15 @@
+usable: true
+topic: "storage module"
+overview (40 bytes): "The storage module writes pages to disk."
+component writer | Page writer | type | src/storage/writer.rs | Writes dirty pages
+component reader | Page reader | type | src/storage/reader.rs | Reads pages back
+relation writer -> reader: shares the page cache
+flow "Write a page"
+  step "Mark the page dirty" @ src/storage/writer.rs:12
+  step "Flush it (it goes to disk eventually)"
+diagram "Storage", 228 bytes, ids ["writer", "reader"]
+detail reader: "Reads are cached."
+citation src/storage/writer.rs:12
+citation ../outside.rs:3
+citation src/storage/reader.rs:5
+dropped: BriefDropped { components: 3, relations: 2, flows: 0, steps: 1, details: 1, citations: 2, lines: 8, truncated: false }

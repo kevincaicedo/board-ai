@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use boardai_core::harness::{HarnessEvent, HarnessFailure, HarnessKind, HarnessTask};
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, HarnessPool, HarnessStream,
-    HarnessTimeouts, PiConfig, PiHarness, discover,
+    Answer, ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL,
+    HarnessPool, HarnessStream, HarnessTimeouts, PiConfig, PiHarness, Workspace, discover,
 };
 use futures_util::StreamExt;
 use support::{TempFolder, fixture, fixture_path};
@@ -57,15 +57,16 @@ impl Fake {
     fn claude(&self, fixture_name: &str, mode: &str) -> ClaudeCodeHarness {
         ClaudeCodeHarness::new(ClaudeCodeConfig {
             program: self.program.clone(),
-            repo: self.repo.clone(),
+            repo: Some(self.repo.clone()),
             environment: self.environment(fixture_name, mode),
+            research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         })
     }
 
     fn pi(&self, fixture_name: &str, mode: &str) -> PiHarness {
         PiHarness::new(PiConfig {
             program: self.program.clone(),
-            repo: self.repo.clone(),
+            repo: Some(self.repo.clone()),
             environment: self.environment(fixture_name, mode),
         })
     }
@@ -148,6 +149,87 @@ async fn claude_research_maps_stream_json_to_events() {
     );
 }
 
+/// A brief request (D-185) runs in the source's own folder with the brief's system prompt, and
+/// its answer is the brief, whole, for the core to parse. It runs on the research model, held
+/// to its reach by Claude Code's permission rules (D-226).
+#[tokio::test]
+async fn a_brief_runs_in_the_sources_folder_and_answers_the_shape() {
+    let fake = Fake::new();
+    let mono = fake.folder.path.join("mono");
+    let source = mono.join("crates/greeter");
+    std::fs::create_dir_all(source.join("src")).expect("a source folder");
+    std::fs::create_dir_all(mono.join(".git")).expect("a repository");
+    std::fs::write(source.join("src/lib.rs"), "pub fn greet() {}\n").expect("a file");
+    let reach = std::fs::canonicalize(&mono).expect("canonical");
+    let workspace = Workspace {
+        folder: source.clone(),
+        answer: Answer::Brief {
+            reach: reach.clone(),
+        },
+    };
+    let pool = HarnessPool::new(
+        Arc::new(fake.claude("claude/brief.jsonl", "replay")),
+        HarnessTimeouts::default(),
+    );
+    let events =
+        collect(pool.run_in(research("Read the code"), workspace, CancelToken::new())).await;
+    assert!(
+        events.contains(&HarnessEvent::FileTouched {
+            path: "src/lib.rs".into()
+        }),
+        "paths are relative to the source: {events:?}"
+    );
+    let HarnessEvent::Finished { summary, .. } = last(&events) else {
+        panic!("expected Finished, got {events:?}");
+    };
+    assert!(
+        summary.starts_with("# Brief: greeter overview\n## Overview"),
+        "{summary}"
+    );
+    let arguments = fake.recorded("arguments");
+    assert!(
+        arguments.contains("Answer only in the Markdown shape the task gives"),
+        "{arguments}"
+    );
+    assert!(!arguments.contains("short, plain answer"));
+    for expected in [
+        "\n--model\nsonnet\n",
+        "\n--permission-mode\ndontAsk\n--tools\nRead,Grep,Glob\n--strict-mcp-config\n",
+        "\n--setting-sources\nuser\n--settings\n",
+    ] {
+        assert!(arguments.contains(expected), "{expected:?} in {arguments}");
+    }
+    let rules = arguments
+        .lines()
+        .skip_while(|line| *line != "--settings")
+        .nth(1)
+        .expect("the rules");
+    let rules: serde_json::Value = serde_json::from_str(rules).expect("json");
+    assert_eq!(
+        rules["permissions"]["allow"],
+        serde_json::json!([format!("Read(/{}/**)", reach.display())])
+    );
+    assert_eq!(
+        rules["permissions"]["blockReadsOutsideWorkingDirectories"],
+        true
+    );
+}
+
+/// Without a code folder, a task that names no workspace fails at once, out loud.
+#[tokio::test]
+async fn a_harness_without_a_folder_refuses_a_task_with_none() {
+    let fake = Fake::new();
+    let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
+        program: fake.program.clone(),
+        repo: None,
+        environment: fake.environment("claude/research.jsonl", "replay"),
+        research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+    });
+    let events = collect(harness.run(research("q"), CancelToken::new())).await;
+    assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);
+    assert!(fake.recorded("arguments").is_empty(), "nothing ran");
+}
+
 /// A real Claude Code 2.1.301 run (Opus 5.5, plan mode), recorded by `just live` and
 /// sanitized: the same events the live run produced.
 #[tokio::test]
@@ -222,8 +304,9 @@ async fn a_crash_keeps_stderr_written_after_exit() {
 async fn a_missing_program_is_not_installed() {
     let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
         program: "/nonexistent/claude".into(),
-        repo: std::env::temp_dir(),
+        repo: Some(std::env::temp_dir()),
         environment: Vec::new(),
+        research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
     });
     let events = collect(harness.run(research("q"), CancelToken::new())).await;
     assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);
@@ -470,6 +553,15 @@ async fn a_change_runs_only_on_a_new_branch_of_a_clean_tree() {
 struct Idle;
 
 impl CodingHarness for Idle {
+    fn run_in(
+        &self,
+        task: HarnessTask,
+        _workspace: boardai_runtime::harness::Workspace,
+        cancel: CancelToken,
+    ) -> HarnessStream {
+        self.run(task, cancel)
+    }
+
     fn run(&self, _task: HarnessTask, cancel: CancelToken) -> HarnessStream {
         Box::pin(futures_util::stream::once(async move {
             cancel.cancelled().await;

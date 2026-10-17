@@ -25,6 +25,7 @@ mod memory_store;
 mod orchestrator;
 mod ports;
 mod script;
+mod shelf;
 mod store_views;
 mod talker;
 mod timings;
@@ -33,6 +34,7 @@ mod vault_sink;
 mod virtual_voice;
 mod work;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,6 +56,7 @@ pub use ports::{SessionClose, SessionOpened, SpeechOut, SpeechOutError, StoreRea
 pub use script::{
     Cue, Observed, Progress, Script, ScriptError, ScriptLine, run_script, wait_for_answer,
 };
+pub use shelf::{MemoryShelf, ShelfError, SourceShelf, VaultShelf};
 pub use talker::{
     TalkerSetupError, UnconfiguredTalker, scribe_from_settings, talker_config,
     talker_from_settings, talker_name,
@@ -63,8 +66,8 @@ pub use typed::say_typed;
 pub use vault_sink::VaultSink;
 pub use virtual_voice::{VirtualVoice, VirtualVoiceConfig};
 
-use self::inbox::Inbox;
-use self::orchestrator::{Orchestrator, OrchestratorParts, Receivers};
+use self::inbox::{Envelope, Inbox};
+use self::orchestrator::{Orchestrator, OrchestratorParts, Receivers, SourceMessage};
 use self::work::Work;
 use crate::bridge::{BridgeHandle, UiSink};
 use crate::cancel::CancelToken;
@@ -72,6 +75,8 @@ use crate::clock::TokioClock;
 use crate::harness::HarnessPool;
 use crate::limits::SESSION_CLOSE_TIMEOUT_MS;
 use crate::llm::LlmProvider;
+use crate::sources::{SourceDesk, SourceReader, ValidSource};
+use crate::store::{SystemWallClock, WallClock};
 use crate::tools::RepoTools;
 
 /// Everything a session drives besides the core.
@@ -90,6 +95,36 @@ pub struct SessionParts {
     pub store: Arc<dyn StoreSink>,
     /// Where the bridge sends UI batches.
     pub ui: Arc<dyn UiSink>,
+    /// What sources need besides the tools and the harness (D-184).
+    pub sources: SourceParts,
+}
+
+/// Sources' part of a session (D-184, D-185).
+pub struct SourceParts {
+    /// The home folder: paths are shown and written under it as `~/…`.
+    pub home: PathBuf,
+    /// The installed harness's name ("Claude Code"), `None` when `harness` is.
+    pub harness_name: Option<String>,
+    /// Where projects keep their sources and briefs.
+    pub shelf: Arc<dyn SourceShelf>,
+    /// The day a brief is written on.
+    pub clock: Arc<dyn WallClock>,
+    /// Document readers (T-031); none yet, so documents wait in the tray.
+    pub readers: Vec<Arc<dyn SourceReader>>,
+}
+
+impl SourceParts {
+    /// No harness, a shelf kept in memory, the system's clock: tests and the dev loops.
+    #[must_use]
+    pub fn in_memory(home: PathBuf) -> Self {
+        Self {
+            home,
+            harness_name: None,
+            shelf: Arc::new(MemoryShelf::default()),
+            clock: Arc::new(SystemWallClock),
+            readers: Vec::new(),
+        }
+    }
 }
 
 /// A running session. Dropping it leaves the session running until [`SessionHandle::close`].
@@ -114,6 +149,13 @@ pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
         ..
     } = channels;
     let closing = CancelToken::new();
+    let base_roots: Vec<PathBuf> = parts
+        .tools
+        .roots()
+        .folders()
+        .map(std::path::Path::to_path_buf)
+        .collect();
+    let desk = SourceDesk::new(parts.sources.home, base_roots, parts.sources.harness_name);
     let orchestrator = Orchestrator::new(
         parts.core,
         parts.clock,
@@ -126,6 +168,10 @@ pub fn spawn(channels: SessionChannels, parts: SessionParts) -> SessionHandle {
             bridge: BridgeHandle::spawn(parts.ui),
             listening,
             closing: closing.clone(),
+            desk,
+            shelf: parts.sources.shelf,
+            wall: parts.sources.clock,
+            readers: parts.sources.readers,
         },
     );
     let receivers = Receivers {
@@ -147,6 +193,25 @@ impl SessionHandle {
     /// stale pointer or mic toggle is worse than a missing one (D-027).
     pub fn command(&self, command: UiCommand) -> Result<(), InboxRefused> {
         self.inbox.try_send(Input::Command(command))
+    }
+
+    /// A path the user shared natively (dropped on the window or chosen), already validated by
+    /// the app (D-184). Never waits: a full inbox drops it, and the app says so.
+    pub fn share(&self, source: ValidSource, keep: bool) -> Result<(), InboxRefused> {
+        self.inbox
+            .try_send_envelope(Envelope::Source(SourceMessage::Shared { source, keep }))
+    }
+
+    /// A drop or a choice the app refused (every path failed its checks): BoardAI says why.
+    pub fn refuse(&self, detail: String) -> Result<(), InboxRefused> {
+        self.inbox
+            .try_send_envelope(Envelope::Source(SourceMessage::Refused { detail }))
+    }
+
+    /// Something is dragged over the window, or left it (`None`): the drop overlay (14b).
+    pub fn drag(&self, drag: Option<boardai_core::sources::DragOver>) -> Result<(), InboxRefused> {
+        self.inbox
+            .try_send_envelope(Envelope::Source(SourceMessage::Dragging { drag }))
     }
 
     /// The link typed text or a speech-in actor sends utterances through.

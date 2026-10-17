@@ -274,6 +274,9 @@ export class SessionStore {
       case "PageTurn":
       // Staged diagrams' headers and detail layers are the diagram store's.
       case "Diagram":
+      // The tray and the drop overlay have their own store (sources/model.ts).
+      case "Sources":
+      case "SourceDrop":
         break;
     }
   }

@@ -18,6 +18,7 @@ pub mod pages;
 mod reply;
 mod repo_names;
 mod reveal;
+mod shared;
 mod sources;
 mod stage;
 mod stop;
@@ -160,6 +161,8 @@ pub struct Core {
     repo_names: repo_names::RepoNames,
     /// Staged diagrams waiting for their reveals (D-187).
     staging: reveal::Staging,
+    /// What the user shared to read, the project, and briefs on their way (D-184, D-185).
+    sources: shared::SourceDesk,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -203,6 +206,7 @@ impl Core {
             drawing: Drawing::Off,
             repo_names: repo_names::RepoNames::default(),
             staging: reveal::Staging::default(),
+            sources: shared::SourceDesk::default(),
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }
@@ -264,7 +268,7 @@ impl Core {
                 }
             }
             Input::ToolResult { id, output } => self.on_tool_result(now, &id, output, effects),
-            Input::Harness { task, event } => self.on_harness(task, event, effects),
+            Input::Harness { task, event } => self.on_harness(now, task, event, effects),
             Input::Command(UiCommand::Pointer { target }) => {
                 self.pointer.set_at = target.is_some().then_some(now);
                 self.pointer.target = target;
@@ -280,6 +284,10 @@ impl Core {
             Input::Tick => self.on_tick(now, effects),
             Input::MemoryFailed { change, detail } => {
                 self.on_memory_failed(change, &detail, effects);
+            }
+            Input::Source { source } => self.on_source(now, source, effects),
+            Input::Command(UiCommand::Sources { action }) => {
+                self.on_sources_command(action, effects);
             }
         }
         self.after_step(now, effects);

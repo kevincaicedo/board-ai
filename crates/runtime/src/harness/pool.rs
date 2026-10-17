@@ -12,7 +12,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 use tokio::time::Instant;
 
 use super::process::failed;
-use super::{CodingHarness, HarnessStream};
+use super::{CodingHarness, HarnessStream, Workspace};
 use crate::cancel::CancelToken;
 use crate::limits::{
     HARNESS_CHANGE_TASKS_MAX, HARNESS_CHANGE_TIMEOUT_MS, HARNESS_QUEUE_MAX, HARNESS_READ_TASKS_MAX,
@@ -59,6 +59,26 @@ impl HarnessPool {
     /// Runs a task, waits in the queue for a slot, or is refused with `QueueFull`. The stream
     /// ends with exactly one `Finished` or `Failed`; dropping it cancels the task.
     pub fn run(&self, task: HarnessTask, cancel: CancelToken) -> HarnessStream {
+        self.admit(task, None, cancel)
+    }
+
+    /// [`HarnessPool::run`] in a workspace of its own (a shared source, D-184), within the same
+    /// limits.
+    pub fn run_in(
+        &self,
+        task: HarnessTask,
+        workspace: Workspace,
+        cancel: CancelToken,
+    ) -> HarnessStream {
+        self.admit(task, Some(workspace), cancel)
+    }
+
+    fn admit(
+        &self,
+        task: HarnessTask,
+        workspace: Option<Workspace>,
+        cancel: CancelToken,
+    ) -> HarnessStream {
         let (slots, timeout) = match task.kind {
             HarnessKind::Research | HarnessKind::Review => {
                 (Arc::clone(&self.read_slots), self.timeouts.read_only)
@@ -76,6 +96,7 @@ impl HarnessPool {
         let run = PoolRun {
             harness: Arc::clone(&self.harness),
             task,
+            workspace,
             slots,
             timeout,
             caller: cancel,
@@ -122,6 +143,7 @@ impl Drop for QueueTicket {
 struct PoolRun {
     harness: Arc<dyn CodingHarness>,
     task: HarnessTask,
+    workspace: Option<Workspace>,
     slots: Arc<Semaphore>,
     timeout: Duration,
     caller: CancelToken,
@@ -164,9 +186,16 @@ impl PoolRun {
                 }
                 Phase::Admitted(permit) => {
                     let inner_cancel = CancelToken::new();
+                    let task = self.task.clone();
+                    let inner = match self.workspace.clone() {
+                        Some(workspace) => {
+                            self.harness.run_in(task, workspace, inner_cancel.clone())
+                        }
+                        None => self.harness.run(task, inner_cancel.clone()),
+                    };
                     self.phase = Phase::Running(Running {
                         _permit: permit,
-                        inner: self.harness.run(self.task.clone(), inner_cancel.clone()),
+                        inner,
                         inner_cancel,
                         deadline: Instant::now() + self.timeout,
                         timed_out: false,

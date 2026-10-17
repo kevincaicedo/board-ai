@@ -1,6 +1,7 @@
 // The only way the UI talks to the rest of BoardAI (LLD §3.7, D-015). Components never see Tauri;
 // they see a Transport, whose implementations are Tauri (live), replay (a file) and a fake (tests).
 
+import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
 import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 
@@ -27,6 +28,12 @@ export interface Transport {
    * unknown id, a log too large to replay, no backend). Never throws.
    */
   sessionLog(id: string): Promise<string | null>;
+  /**
+   * The Sources tray's "choose a folder" / "a file" (D-184): the app shows the system's chooser
+   * itself and shares what it picks, so no path ever comes from the UI. Resolves with a sentence
+   * to show when it couldn't, else `null` (a cancel included). Never throws.
+   */
+  chooseSource(what: ChooseWhat, keep: boolean): Promise<string | null>;
   close(): void;
 }
 

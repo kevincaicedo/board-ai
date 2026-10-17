@@ -27,15 +27,16 @@ use std::time::Duration;
 use boardai_core::{CoreConfig, MicMode};
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, HarnessPool, HarnessTimeouts, PiConfig,
-    PiHarness, discover_from_environment,
+    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, HarnessPool,
+    HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
 };
 use boardai_runtime::limits::STORE_SHUTDOWN_TIMEOUT_MS;
 use boardai_runtime::llm::LlmProvider;
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
-    MemoryStore, SessionChannels, SessionHandle, SessionParts, SpeechOut, StoreSink,
-    UnconfiguredTalker, VaultSink, scribe_from_settings, talker_from_settings, talker_name,
+    MemoryShelf, MemoryStore, SessionChannels, SessionHandle, SessionParts, SourceParts,
+    SourceShelf, SpeechOut, StoreSink, UnconfiguredTalker, VaultShelf, VaultSink,
+    scribe_from_settings, talker_from_settings, talker_name,
 };
 use boardai_runtime::settings::{self, HarnessChoice, Settings};
 use boardai_runtime::store::{Store, StoreConfig, StoreTask, SystemWallClock};
@@ -214,6 +215,11 @@ async fn open_session(app: AppHandle) {
     let state = app.state::<AppState>();
     let settings = load_settings(app);
     let opened = open_store(app, &settings).await;
+    // A project's sources live in the vault when there is one, else in memory for the run.
+    let shelf: Arc<dyn SourceShelf> = match &opened {
+        Some(open) => Arc::new(VaultShelf::new(open.store.clone())),
+        None => Arc::new(MemoryShelf::default()),
+    };
     let store: Arc<dyn StoreSink> = match &opened {
         Some(open) => {
             let scribe = scribe(&settings).await;
@@ -235,7 +241,7 @@ async fn open_session(app: AppHandle) {
     if let Ok(mut slot) = state.audio.lock() {
         *slot = audio;
     }
-    let parts = parts(&settings, speech, store, Arc::clone(&state.sink)).await;
+    let parts = parts(&settings, speech, store, shelf, Arc::clone(&state.sink)).await;
     let session = boardai_runtime::session::spawn(channels, parts);
     let link = session.speech_in();
     match state.session.lock() {
@@ -315,11 +321,12 @@ async fn parts(
     settings: &Settings,
     speech: Box<dyn SpeechOut>,
     store: Arc<dyn StoreSink>,
+    shelf: Arc<dyn SourceShelf>,
     ui: Arc<TauriSink>,
 ) -> SessionParts {
     let talker = talker(settings).await;
     let opened = repo_tools(&settings.code_roots);
-    let harness = harness(settings, opened.folders.first());
+    let (harness, harness_name) = harness(settings, opened.folders.first()).unzip();
     SessionParts {
         core: CoreConfig {
             talker_name: talker_name(&settings.talker),
@@ -338,7 +345,18 @@ async fn parts(
         speech,
         store,
         ui,
+        sources: SourceParts {
+            home: home_folder(),
+            harness_name,
+            shelf,
+            clock: Arc::new(SystemWallClock),
+            readers: Vec::new(),
+        },
     }
+}
+
+fn home_folder() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
 /// `settings.toml` in the app's config folder (or the dev override); the first-run screen
@@ -452,9 +470,10 @@ fn repo_tools(code_roots: &[PathBuf]) -> Opened {
     }
 }
 
-/// A harness pool for the first code root, when a harness is installed.
-fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<HarnessPool> {
-    let repo = repo?.clone();
+/// A harness pool, with its name, when a harness is installed. Its default folder is the first
+/// code root; with none, only a shared source's research runs (in that source, D-184).
+fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<(HarnessPool, String)> {
+    let repo = repo.cloned();
     let found = discover_from_environment();
     let (claude, pi) = match settings.harness.kind {
         HarnessChoice::Auto => (found.claude_code, found.pi),
@@ -462,18 +481,32 @@ fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<HarnessPool> {
         HarnessChoice::Pi => (None, found.pi),
     };
     let environment = Vec::new();
-    let harness: Arc<dyn CodingHarness> = match (claude, pi) {
-        (Some(program), _) => Arc::new(ClaudeCodeHarness::new(ClaudeCodeConfig {
-            program,
-            repo,
-            environment,
-        })),
-        (None, Some(program)) => Arc::new(PiHarness::new(PiConfig {
-            program,
-            repo,
-            environment,
-        })),
+    let (harness, name): (Arc<dyn CodingHarness>, &str) = match (claude, pi) {
+        (Some(program), _) => (
+            Arc::new(ClaudeCodeHarness::new(ClaudeCodeConfig {
+                program,
+                repo,
+                environment,
+                research_model: settings
+                    .harness
+                    .research_model
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_RESEARCH_MODEL.to_owned()),
+            })),
+            "Claude Code",
+        ),
+        (None, Some(program)) => (
+            Arc::new(PiHarness::new(PiConfig {
+                program,
+                repo,
+                environment,
+            })),
+            "pi",
+        ),
         (None, None) => return None,
     };
-    Some(HarnessPool::new(harness, HarnessTimeouts::default()))
+    Some((
+        HarnessPool::new(harness, HarnessTimeouts::default()),
+        name.to_owned(),
+    ))
 }

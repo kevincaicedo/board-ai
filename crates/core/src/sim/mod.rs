@@ -7,6 +7,7 @@
 //! reuse the fake speech. It is never part of the shipped app.
 
 pub mod check;
+pub mod sources;
 pub mod speech;
 pub mod talker;
 
@@ -18,6 +19,7 @@ use crate::input::Input;
 use crate::protocol::{MicAction, UiCommand, UiEvent};
 use crate::time::SessionTime;
 use check::Checker;
+use sources::FakeSources;
 use speech::{FakeSpeech, PLAYBACK_REPORT_MS, STOP_FADE_MS};
 use talker::{FakeHarness, FakeTalker, FakeTools};
 
@@ -60,6 +62,8 @@ pub struct Sim {
     pub talker: FakeTalker,
     pub tools: FakeTools,
     pub harness: FakeHarness,
+    /// The runtime's side of sources: the resolver, the vault, the brief cache, native reads.
+    pub sources: FakeSources,
     trace: Vec<(SessionTime, Entry)>,
     checker: Checker,
 }
@@ -78,6 +82,7 @@ impl Sim {
             talker: FakeTalker::default(),
             tools: FakeTools::default(),
             harness: FakeHarness::default(),
+            sources: FakeSources::default(),
             trace: Vec::new(),
             checker: Checker::default(),
         };
@@ -132,7 +137,8 @@ impl Sim {
             | Effect::Remember(_)
             | Effect::WakeAt { .. }
             | Effect::Forget { .. }
-            | Effect::AcceptProposal { .. } => None,
+            | Effect::AcceptProposal { .. }
+            | Effect::Source { .. } => None,
         })
     }
 
@@ -205,6 +211,16 @@ impl Sim {
         self.run_until(at_ms);
         self.checker.expect_backchannel(self.now, &self.core);
         self.user_says(at_ms, text);
+    }
+
+    /// The user drops `info` on the window (the left half, or the right with `keep`).
+    pub fn share(&mut self, at_ms: u64, info: &crate::sources::SourceInfo, keep: bool) {
+        self.sources.shared(info);
+        let source = crate::sources::SourceInput::Shared {
+            source: info.clone(),
+            keep,
+        };
+        self.at(at_ms, Input::Source { source });
     }
 
     pub fn mic(&mut self, at_ms: u64, action: MicAction) {
@@ -330,6 +346,11 @@ impl Sim {
                 self.schedule(now.plus_ms(delay), Event::Input(input));
             }
             Effect::WakeAt { at } => self.schedule((*at).max(now), Event::Input(Input::Tick)),
+            Effect::Source { source } => {
+                for (delay, input) in self.sources.answer(source) {
+                    self.schedule(now.plus_ms(delay), Event::Input(input));
+                }
+            }
             // The store's side of memory is tested in the runtime, against a real vault.
             Effect::Ui(_)
             | Effect::Log(_)

@@ -81,6 +81,10 @@ impl Core {
                 return None;
             }
             ToolCall::Research { question, depth } => {
+                // A question about a shared code source is a brief request (D-223).
+                if let Some(answer) = self.research_on_source(id, question, effects) {
+                    return answer;
+                }
                 let brief = format!("{question}\n(depth: {depth:?})");
                 self.run_read_only(HarnessKind::Research, brief, effects)
             }
@@ -228,10 +232,14 @@ impl Core {
 
     pub(in crate::engine) fn on_harness(
         &mut self,
+        now: SessionTime,
         task: TaskId,
         event: HarnessEvent,
         effects: &mut Vec<Effect>,
     ) {
+        if self.on_brief_harness(now, task, &event, effects) {
+            return;
+        }
         // A task that was cancelled (or already reported) has nothing more to say.
         let Some(kind) = self.context.tasks.get(&task).cloned() else {
             return;
@@ -248,6 +256,32 @@ impl Core {
             self.context.tasks.remove(&task);
             self.context.report(report);
         }
+    }
+
+    /// Answers a call whose result the core held open (a research call waiting for a cached
+    /// brief, D-223). False when the reply that made it is gone.
+    pub(in crate::engine) fn answer_held_call(
+        &mut self,
+        now: SessionTime,
+        id: &ToolCallId,
+        content: String,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        let Some(slot) = self.reply.as_mut().and_then(|reply| {
+            reply
+                .tools
+                .iter_mut()
+                .find(|slot| slot.id == *id && slot.result.is_none())
+        }) else {
+            return false;
+        };
+        slot.result = Some(UserPart::ToolResult {
+            id: id.clone(),
+            content,
+            is_error: false,
+        });
+        self.maybe_tool_round(now, effects);
+        true
     }
 
     /// Harness results are reported when the conversation is idle (LLD §3.3).

@@ -27,6 +27,12 @@ const USER_CANCELED: &str = "(-128)";
 const CHOOSE_FOLDER: &str =
     "POSIX path of (choose folder with prompt \"Choose a code folder BoardAI may read\")";
 
+/// The Sources tray's chooser (D-184): a folder or a file to share.
+pub const CHOOSE_SOURCE_FOLDER: &str =
+    "POSIX path of (choose folder with prompt \"Choose a folder for BoardAI to read\")";
+pub const CHOOSE_SOURCE_FILE: &str =
+    "POSIX path of (choose file with prompt \"Choose a file for BoardAI to read\")";
+
 /// What the chooser answered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Chosen {
@@ -37,8 +43,14 @@ pub enum Chosen {
 
 /// Shows the macOS folder chooser and waits for it. Blocks for up to `FOLDER_DIALOG_WAIT_MS`.
 pub fn choose_folder() -> Result<Chosen, String> {
+    choose(CHOOSE_FOLDER)
+}
+
+/// Shows a macOS chooser (`choose folder` or `choose file`, the script given) and waits for it,
+/// bounded the same way. The path comes from the system, never from the UI (D-173).
+pub fn choose(script: &str) -> Result<Chosen, String> {
     let mut command = Command::new("/usr/bin/osascript");
-    command.args(["-e", CHOOSE_FOLDER]);
+    command.args(["-e", script]);
     let finished = run_bounded(command, Duration::from_millis(FOLDER_DIALOG_WAIT_MS));
     parse_chosen(finished.as_ref())
 }

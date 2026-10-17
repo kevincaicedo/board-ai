@@ -38,6 +38,8 @@ pub(crate) struct DigestDocument<'a> {
     /// One line per item captured in the session, already rendered.
     pub captured: &'a [String],
     pub proposals: &'a [ProposalLine],
+    /// The project the session worked on (D-184): the next session starts with it.
+    pub project: Option<&'a boardai_core::sources::Project>,
 }
 
 impl DigestDocument<'_> {
@@ -48,7 +50,7 @@ impl DigestDocument<'_> {
             WrittenBy::Scribe => "scribe",
             WrittenBy::Fallback { .. } => "fallback",
         };
-        let mut out = render_front_matter(&[
+        let mut fields = vec![
             ("id", FrontValue::Text(self.id.to_string())),
             ("title", FrontValue::Text(digest.title.clone())),
             ("started", FrontValue::Text(self.started.rfc3339())),
@@ -57,7 +59,12 @@ impl DigestDocument<'_> {
                 FrontValue::Text(self.duration_ms.to_string()),
             ),
             ("written_by", FrontValue::Text(written_by.to_owned())),
-        ]);
+        ];
+        if let Some(project) = self.project {
+            fields.push(("project", FrontValue::Text(project.id.as_str().to_owned())));
+            fields.push(("project_name", FrontValue::Text(project.name.clone())));
+        }
+        let mut out = render_front_matter(&fields);
         out.push_str(&format!(
             "# {}\n\n## {SUMMARY}\n\n{}\n",
             digest.title, digest.summary
@@ -290,6 +297,7 @@ mod tests {
             has_board: true,
             captured: &["Task: Check Redis TTLs (projects/inbox.md ^t27)".into()],
             proposals: &proposals,
+            project: None,
         }
         .render();
         assert!(

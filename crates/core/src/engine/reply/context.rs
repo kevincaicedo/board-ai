@@ -16,6 +16,9 @@ pub(in crate::engine) struct ContextTracker {
     pub(super) thread: String,
     pub(super) notices: VecDeque<String>,
     pub(super) reports: VecDeque<String>,
+    /// Harness output nobody asked about yet (a prefetched brief, D-223): it goes with the next
+    /// new turn's request, fenced like a report, without a turn of its own.
+    pub(super) quiet: VecDeque<String>,
     pub(super) tasks: BTreeMap<TaskId, HarnessKind>,
 }
 
@@ -68,15 +71,33 @@ impl ContextTracker {
         std::mem::take(&mut self.tasks).into_iter().collect()
     }
 
-    pub(super) fn report(&mut self, text: String) {
-        self.reports.push_back(text);
-        // Past the limit the two oldest reports become one message, so nothing is lost.
-        while self.reports.len() > HARNESS_REPORTS_MAX {
-            let (Some(first), Some(second)) = (self.reports.pop_front(), self.reports.pop_front())
-            else {
-                break;
-            };
-            self.reports.push_front(format!("{first}\n\n{second}"));
-        }
+    pub(in crate::engine) fn report(&mut self, text: String) {
+        push_merging(&mut self.reports, text);
+    }
+
+    /// Harness output for the next new turn's request, with no turn of its own (a prefetched
+    /// brief, D-223).
+    pub(in crate::engine) fn quiet_report(&mut self, text: String) {
+        push_merging(&mut self.quiet, text);
+    }
+
+    pub(in crate::engine) fn has_task(&self, task: TaskId) -> bool {
+        self.tasks.contains_key(&task)
+    }
+
+    /// A task that ended outside the generic report (a brief, D-223).
+    pub(in crate::engine) fn forget_task(&mut self, task: TaskId) {
+        self.tasks.remove(&task);
+    }
+}
+
+/// Past the limit the two oldest reports become one message, so nothing is lost.
+fn push_merging(queue: &mut VecDeque<String>, text: String) {
+    queue.push_back(text);
+    while queue.len() > HARNESS_REPORTS_MAX {
+        let (Some(first), Some(second)) = (queue.pop_front(), queue.pop_front()) else {
+            break;
+        };
+        queue.push_front(format!("{first}\n\n{second}"));
     }
 }

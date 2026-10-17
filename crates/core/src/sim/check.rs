@@ -2,6 +2,7 @@
 //! it happened; scenarios and the fuzzer assert there are none.
 
 mod drawing;
+mod sources;
 mod staged;
 mod tasks;
 
@@ -64,6 +65,8 @@ pub struct Checker {
     tasks: tasks::Tasks,
     /// Staged diagrams: I16.
     staged: staged::Staged,
+    /// Lines read this session, so a source chip names only one of them (law 6).
+    read: sources::ReadLines,
 }
 
 impl Checker {
@@ -154,8 +157,10 @@ impl Checker {
             | Input::ToolResult { .. }
             | Input::Command(_)
             | Input::Tick
-            | Input::MemoryFailed { .. } => {}
+            | Input::MemoryFailed { .. }
+            | Input::Source { .. } => {}
         }
+        self.read.on_input(input);
     }
 
     pub fn on_effect(
@@ -217,7 +222,10 @@ impl Checker {
                 }
             }
             Effect::CancelHarness { task } => self.tasks.cancelled(*task),
-            Effect::RunTool { .. } | Effect::Log(_) | Effect::WakeAt { .. } => {}
+            Effect::RunTool { .. }
+            | Effect::Log(_)
+            | Effect::WakeAt { .. }
+            | Effect::Source { .. } => {}
         }
     }
 
@@ -318,6 +326,7 @@ impl Checker {
         self.yours
             .on_ui(now, event, self.talk_in_flight, &mut self.violations);
         self.staged.on_ui(now, event, core, &mut self.violations);
+        self.read.on_ui(now, event, &mut self.violations);
         match event {
             UiEvent::OpStart { layer, op, .. } => {
                 self.check_anchor(now, op, core, speech);
@@ -358,7 +367,9 @@ impl Checker {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
-            | UiEvent::Diagram { .. } => {}
+            | UiEvent::Diagram { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => {}
         }
     }
 

@@ -89,6 +89,36 @@ impl Edited {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// A new file of the store's own: a header, then a plain line (D-184's `sources.md`).
+    pub(crate) fn create_text(header: &Redacted, line: &Redacted) -> Self {
+        Self(format!("{}{}\n", header.as_str(), line.as_str()))
+    }
+
+    /// Appends a plain line the store wrote.
+    pub(crate) fn append_text(file: &OnDisk, line: &Redacted) -> Self {
+        Self(append_line(&file.0, line.as_str()).0)
+    }
+
+    /// Removes every line `matches` picks; `None` when it picks none. Every other byte stays.
+    pub(crate) fn remove_lines(file: &OnDisk, matches: impl Fn(&str) -> bool) -> Option<Self> {
+        let mut out = String::with_capacity(file.0.len());
+        let mut removed = false;
+        for line in file.0.split_inclusive('\n') {
+            if matches(line.trim_end_matches(['\n', '\r'])) {
+                removed = true;
+            } else {
+                out.push_str(line);
+            }
+        }
+        removed.then_some(Self(out))
+    }
+}
+
+impl OnDisk {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 #[cfg(test)]

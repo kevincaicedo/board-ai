@@ -344,6 +344,17 @@ fn start_with_store(
     refusing_voice: bool,
     starts_answered_max: Option<usize>,
 ) -> Harness {
+    start_configured(talker, refusing_voice, starts_answered_max, |_| {})
+}
+
+/// [`start_with_store`], with the session's parts adjusted before it spawns (the repo tools,
+/// the harness, sources).
+fn start_configured(
+    talker: Arc<ScriptedTalker>,
+    refusing_voice: bool,
+    starts_answered_max: Option<usize>,
+    configure: impl FnOnce(&mut SessionParts),
+) -> Harness {
     let channels = SessionChannels::new();
     let speech: Box<dyn SpeechOut> = if refusing_voice {
         Box::new(RefusingVoice)
@@ -372,7 +383,10 @@ fn start_with_store(
         speech,
         store: Arc::clone(&recorder) as Arc<dyn StoreSink>,
         ui: Arc::clone(&recorder) as Arc<dyn UiSink>,
+        sources: crate::session::SourceParts::in_memory(std::path::PathBuf::from("/")),
     };
+    let mut parts = parts;
+    configure(&mut parts);
     Harness {
         session: spawn(channels, parts),
         talker,
@@ -412,4 +426,5 @@ async fn close(harness: Harness) -> (SessionStats, Arc<Recorder>, Arc<ScriptedTa
 mod flow;
 mod lifecycle;
 mod live;
+mod sources;
 mod warm_up;

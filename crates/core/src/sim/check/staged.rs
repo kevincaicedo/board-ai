@@ -85,7 +85,9 @@ impl Staged {
             | UiEvent::DrawMode { .. }
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
-            | UiEvent::LabelHint { .. } => {}
+            | UiEvent::LabelHint { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => {}
         }
     }
 

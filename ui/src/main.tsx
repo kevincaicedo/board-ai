@@ -8,6 +8,7 @@ import "./styles/views.css";
 import "./styles/panels.css";
 import "./styles/setup.css";
 import "./styles/draw.css";
+import "./styles/sources.css";
 import { showFirstRun } from "./setup/FirstRun.tsx";
 import { isPreset, presetTransport } from "./setup/fake.ts";
 import { installSettings } from "./setup/settings.tsx";

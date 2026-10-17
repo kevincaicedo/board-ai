@@ -415,7 +415,8 @@ impl Core {
             || self.open_settings_by_voice(said, effects)
             || self.end_session_by_voice(said, effects)
             || self.page_by_voice(said, context, effects)
-            || self.back_out_by_voice(now, said, effects);
+            || self.back_out_by_voice(now, said, effects)
+            || self.sources_by_voice(said, effects);
         if !answered {
             // A drill-down opens its detail layer here; the talker fills it (D-188).
             self.detail_by_voice(said, effects);

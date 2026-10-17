@@ -148,9 +148,15 @@ impl Core {
                 JoinedCue::Detail if self.is_drawing() => false,
                 JoinedCue::BackOut => self.back_out(now, effects),
                 JoinedCue::Detail => {
+                    self.source_detail_by_voice(control.words, effects);
                     for_talker |= self.detail_by_voice(control.words, effects);
                     false
                 }
+                JoinedCue::Tray(cue) => {
+                    self.tray_by_voice(cue, effects);
+                    true
+                }
+                JoinedCue::KeepSource => self.keep_control(control.words, effects),
             };
         }
         if let Some(words) = end {

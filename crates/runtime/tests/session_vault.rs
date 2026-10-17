@@ -159,6 +159,7 @@ fn start_session(store: &Store, test: &TestStore, talker: Arc<Replies>) -> Runni
         speech: Box::new(voice),
         store: Arc::new(observed),
         ui: Arc::clone(&screen) as Arc<dyn UiSink>,
+        sources: boardai_runtime::session::SourceParts::in_memory(std::path::PathBuf::from("/")),
     };
     let session = spawn(channels, parts);
     let link = session.speech_in();

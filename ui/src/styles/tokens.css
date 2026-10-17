@@ -439,6 +439,13 @@
   --depth-chip-height: 22px;
   --depth-chip-padding: 8px;
   --type-depth-chip: 11px;
+  /* The Sources tray's place (14 · Sources); the rest of its tokens are in their own block. */
+  --tray-left: 28px;
+  --tray-top: 32px;
+  --tray-width: 380px;
+  /* Narrower than this, the tray stays hidden rather than sit over the column (LLD §4). */
+  --tray-width-min: 300px;
+  --tray-column-gap: 24px;
 }
 
 html,
@@ -511,4 +518,89 @@ body {
   --type-settings-section: 22px;
   --type-settings-section-line: 28px;
   --type-settings-nav: 15px;
+}
+
+/* Sources (14 · Sources, and the drop overlay of 14b): the tray at the left, its rows and
+   tabs, the ghost file names at the right edge while the harness reads, and the overlay while
+   something is dragged over the window. Copied from the artboards at 1440 px. */
+:root {
+  --tray-bottom: 108px;
+  --tray-padding-y: 26px;
+  --tray-padding-x: 22px;
+  --tray-gap: 18px;
+  --tray-shift-in: 56px;
+  --tray-blur-in: 14px;
+  --type-tray-title: 28px;
+  --type-tray-title-line: 34px;
+  --tray-tabs-gap: 6px;
+  --tray-tabs-padding: 4px;
+  --tray-tabs-radius: 18px;
+  --tray-tabs-bg: rgba(238, 239, 242, 0.7);
+  --tray-tab-height: 34px;
+  --tray-tab-radius: 14px;
+  --type-tray-tab: 13px;
+  --shadow-tray-tab: 0 4px 12px rgba(20, 20, 40, 0.08);
+  --tray-rows-gap: 10px;
+  --tray-row-gap: 8px;
+  --tray-row-padding: 14px 14px 12px;
+  --tray-row-radius: 18px;
+  --tray-row-bg: rgba(255, 255, 255, 0.82);
+  --tray-badge: 30px;
+  --tray-badge-radius: 9px;
+  --type-tray-badge: 10px;
+  --tray-tint-code: #e9ddf6;
+  --tray-tint-kept: #c4def6;
+  --tray-tint-pdf: #f7d3e0;
+  --tray-tint-markdown: #cfefd9;
+  --tray-tint-text: #eeeff2;
+  --type-tray-row: 15px;
+  --type-tray-row-line: 20px;
+  --type-tray-path: 11px;
+  --type-tray-path-line: 15px;
+  --tray-pin: 30px;
+  --type-tray-state: 12px;
+  --type-tray-state-line: 17px;
+  --tray-dot: 7px;
+  --state-reading: #d9548b;
+  --state-ready: #34a853;
+  --state-partial: #e8913a;
+  --state-waiting: #c5c8cf;
+  --state-failed: #a1a1a6;
+  --tray-bar-height: 3px;
+  --tray-bar-span: 120px;
+  --duration-tray-bar: 1400ms;
+  --tray-drop-padding: 16px;
+  --tray-drop-border: 1.5px;
+  --type-tray-drop: 14px;
+  --type-tray-drop-line: 20px;
+  --type-tray-foot: 11px;
+  --type-tray-foot-line: 16px;
+  /* The tray button (not on the canvas, which shows the tray open): one 44 px control at the
+     tray's corner, under the window's traffic lights. */
+  --tray-button-count: 18px;
+  /* Ghost file names (PRODUCT §8.6), drifting up at the right edge. */
+  --ghost-right: 64px;
+  --ghost-top: 140px;
+  --ghost-gap: 34px;
+  --type-ghost: 12px;
+  --ghost-drift: 90px;
+  --ghost-opacity: 0.5;
+  --duration-ghost: 4200ms;
+  --duration-ghost-stagger: 1100ms;
+  /* The drop overlay (14b): the whole window takes the drop; each half is one choice. */
+  --drop-inset: 16px;
+  --drop-radius: 18px;
+  --drop-bg: rgba(250, 250, 251, 0.9);
+  --drop-ring: 2px;
+  --drop-half-tint: rgba(217, 84, 139, 0.06);
+  --drop-gap: 14px;
+  --type-drop-title: 20px;
+  --drop-pills-gap: 10px;
+  --drop-pill-height: 44px;
+  --drop-pill-padding: 18px;
+  --drop-pill-radius: 22px;
+  --drop-pill-ring: 1.5px;
+  --shadow-drop-pill: 0 8px 24px rgba(20, 20, 40, 0.1);
+  --type-drop-pill: 14px;
+  --type-drop-hint: 12px;
 }

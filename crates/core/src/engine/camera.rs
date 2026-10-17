@@ -151,7 +151,9 @@ mod tests {
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
             | UiEvent::PageTurn { .. }
-            | UiEvent::Diagram { .. } => None,
+            | UiEvent::Diagram { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => None,
         }
     }
 

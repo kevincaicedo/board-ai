@@ -21,6 +21,7 @@ pub mod logging;
 pub mod models;
 pub mod session;
 pub mod settings;
+pub mod sources;
 pub mod speech_in;
 pub mod speech_out;
 pub mod store;

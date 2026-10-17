@@ -297,6 +297,7 @@ impl Printer {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. } => self.print_drawing(at, event),
+            UiEvent::Sources { .. } | UiEvent::SourceDrop { .. } => sources_line(at, event),
         }
     }
 
@@ -394,6 +395,11 @@ impl StoreSink for Printer {
                 let mut detail = format!("{change:?}: {detail}");
                 bound(&mut detail, PRINTED_DETAIL_MAX_BYTES);
                 line(at, "memory", &detail);
+            }
+            Input::Source { source } => {
+                let mut detail = format!("{source:?}");
+                bound(&mut detail, PRINTED_DETAIL_MAX_BYTES);
+                line(at, "source", &detail);
             }
         }
     }
@@ -764,5 +770,22 @@ fn first_line(output: &ToolOutput) -> String {
         ToolOutput::Text { text } => text.lines().next().unwrap_or_default().to_owned(),
         ToolOutput::Failed { kind, message } => format!("failed ({kind:?}): {message}"),
         ToolOutput::View { view, .. } => format!("view {:?}", view.kind()),
+    }
+}
+
+/// The tray's session sources and their states, on one line.
+fn tray_line(tray: &boardai_core::sources::tray::SourcesTray) -> String {
+    let rows: Vec<String> = tray
+        .session
+        .iter()
+        .map(|row| format!("{} {:?}", row.title, row.state))
+        .collect();
+    rows.join(" | ")
+}
+
+/// The Sources tray whole; a drag over the window prints nothing.
+fn sources_line(at: SessionTime, event: &UiEvent) {
+    if let UiEvent::Sources { tray } = event {
+        line(at, "sources", &tray_line(tray));
     }
 }

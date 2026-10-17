@@ -20,6 +20,9 @@ enum Key {
     Camera(LayerId),
     /// A caption not yet final, by speaker.
     Caption(Speaker),
+    /// The Sources tray and the drop overlay are sent whole; the latest wins (D-184).
+    Sources,
+    SourceDrop,
 }
 
 /// What happened to the events pushed into a frame, for the bridge's counters.
@@ -112,7 +115,9 @@ impl Frame {
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
             | UiEvent::PageTurn { .. }
-            | UiEvent::Diagram { .. } => key,
+            | UiEvent::Diagram { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -129,6 +134,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         UiEvent::Thread { .. } => Some(Key::Thread),
         UiEvent::Camera { layer, .. } => Some(Key::Camera(*layer)),
         UiEvent::Caption { who, .. } => Some(Key::Caption(*who)),
+        UiEvent::Sources { .. } => Some(Key::Sources),
+        UiEvent::SourceDrop { .. } => Some(Key::SourceDrop),
         UiEvent::Acknowledge
         | UiEvent::OpStart { .. }
         | UiEvent::Freeze { .. }

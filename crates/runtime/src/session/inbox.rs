@@ -32,6 +32,8 @@ pub(crate) enum Envelope {
         spoken: String,
         detail: String,
     },
+    /// From the app (a drop, a drag) or one of the orchestrator's own source jobs (D-184).
+    Source(super::orchestrator::SourceMessage),
 }
 
 /// The session has ended; nothing more is delivered.
@@ -78,6 +80,19 @@ impl Inbox {
             .send(Envelope::Talker { generation, input })
             .await
             .map_err(|_| SessionClosed)
+    }
+
+    /// Waits for room, like `send`, for any envelope (a source job's answer).
+    pub(crate) async fn send_envelope(&self, envelope: Envelope) -> Result<(), SessionClosed> {
+        self.sender.send(envelope).await.map_err(|_| SessionClosed)
+    }
+
+    /// Never waits; a full inbox drops the envelope.
+    pub(crate) fn try_send_envelope(&self, envelope: Envelope) -> Result<(), InboxRefused> {
+        self.sender.try_send(envelope).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => InboxRefused::Full,
+            mpsc::error::TrySendError::Closed(_) => InboxRefused::Closed,
+        })
     }
 
     /// For callers that must not wait; a full inbox drops the input.

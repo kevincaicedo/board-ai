@@ -1,0 +1,5 @@
+usable: false
+topic: ""
+overview (0 bytes): ""
+diagram "Unclosed", 62 bytes, ids []
+dropped: BriefDropped { components: 1, relations: 0, flows: 0, steps: 0, details: 0, citations: 0, lines: 1, truncated: true }

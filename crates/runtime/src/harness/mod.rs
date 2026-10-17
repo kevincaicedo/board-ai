@@ -6,6 +6,7 @@
 //! kills its process.
 
 mod claude;
+mod confine;
 mod discovery;
 mod git;
 mod lines;
@@ -14,12 +15,14 @@ mod pool;
 mod process;
 mod text;
 
+use std::path::PathBuf;
+
 use boardai_core::harness::{HarnessEvent, HarnessTask};
 use futures_util::stream::BoxStream;
 
 use crate::cancel::CancelToken;
 
-pub use claude::{ClaudeCodeConfig, ClaudeCodeHarness};
+pub use claude::{ClaudeCodeConfig, ClaudeCodeHarness, DEFAULT_RESEARCH_MODEL};
 pub use discovery::{HarnessDiscovery, discover, discover_from_environment};
 pub use git::{BRANCH_PREFIX, is_valid_branch};
 pub use pi::{PiConfig, PiHarness};
@@ -33,7 +36,30 @@ pub mod command_line {
 
 pub type HarnessStream = BoxStream<'static, HarnessEvent>;
 
+/// What a task's answer must be.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Answer {
+    /// A short answer that can be spoken, citing `path:line`.
+    Spoken,
+    /// A research brief in the shape the task gives (D-185), parsed by the core, read only
+    /// inside `reach` (canonical: the source's enclosing repository, D-226) and on the research
+    /// model.
+    Brief { reach: PathBuf },
+}
+
+/// Where a task runs and how it answers: a shared source's folder and a brief (D-184, D-185).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Workspace {
+    pub folder: PathBuf,
+    pub answer: Answer,
+}
+
 pub trait CodingHarness: Send + Sync {
-    /// Runs one task. `cancel` asks it to stop (SIGINT, then a kill after the grace period).
+    /// Runs one task in the configured repo, answering to be spoken. `cancel` asks it to stop
+    /// (SIGINT, then a kill after the grace period). With no repo configured it fails at once.
     fn run(&self, task: HarnessTask, cancel: CancelToken) -> HarnessStream;
+
+    /// Runs one task in `workspace.folder`, answering as `workspace.answer` asks.
+    fn run_in(&self, task: HarnessTask, workspace: Workspace, cancel: CancelToken)
+    -> HarnessStream;
 }

@@ -97,7 +97,9 @@ impl Yours {
             | UiEvent::OpenSettings
             | UiEvent::SessionEnd
             | UiEvent::LabelHint { .. }
-            | UiEvent::Diagram { .. } => {}
+            | UiEvent::Diagram { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => {}
         }
     }
 

@@ -251,7 +251,7 @@ pub fn harness_report(task: TaskId, kind: &HarnessKind, event: &HarnessEvent) ->
 /// `text` with every fence marker broken up ("task-output" becomes "task output"), compared
 /// without regard to ASCII case. The markers are ASCII, so a match starts and ends on a char
 /// boundary.
-fn unfenced(text: &str) -> String {
+pub(crate) fn unfenced(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while !rest.is_empty() {

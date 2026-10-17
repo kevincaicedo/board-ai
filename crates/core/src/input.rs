@@ -8,6 +8,7 @@ use crate::history::RawAssistant;
 use crate::ids::{ClauseId, TaskId, ToolCallId};
 use crate::memory::MemoryChange;
 use crate::protocol::UiCommand;
+use crate::sources::SourceInput;
 use crate::tools::{ToolInvocation, ToolOutput};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -86,6 +87,11 @@ pub enum Input {
     MemoryFailed {
         change: MemoryChange,
         detail: String,
+    },
+    /// Sources (D-184, D-185): what the user shared, names resolved, a project's kept sources,
+    /// briefs from the cache, cited lines read, and a drag over the window.
+    Source {
+        source: SourceInput,
     },
 }
 

@@ -1,5 +1,6 @@
 //! Controls said in one breath ("Don't remember this session, we can stop here."). Each control
-//! is matched against a whole utterance (`cues`, `stage_cues`), so two joined matched neither,
+//! is matched against a whole utterance (`cues`, `stage_cues`, `sources::cues`), so two joined
+//! matched neither,
 //! and the words went to the talker, which has no tool to forget a session: nothing was
 //! forgotten and the session didn't end.
 //!
@@ -15,6 +16,7 @@ use super::cues::{
 };
 use super::detail_cues::{is_back_out, is_detail};
 use super::stage_cues::{STAGE_FILLERS, is_end_session};
+use crate::sources::cues::{TrayCue, keep_cue, tray_cue};
 
 /// Words that join two controls ("forget that and close it"). None of the controls' phrases has
 /// one of these in it, so a split never cuts a phrase.
@@ -35,6 +37,10 @@ pub enum JoinedCue {
     BackOut,
     /// "More detail on the arena": the talker fills the detail layer it opens.
     Detail,
+    /// "Show sources", "hide sources" (`sources::cues::tray_cue`).
+    Tray(TrayCue),
+    /// "Keep this in the project" (`sources::cues::keep_cue`); its words name what and where.
+    KeepSource,
 }
 
 /// One control of a joined utterance, with its words as written.
@@ -76,6 +82,10 @@ fn control(part: &str) -> Option<JoinedCue> {
         Some(JoinedCue::BackOut)
     } else if is_detail(part) {
         Some(JoinedCue::Detail)
+    } else if let Some(cue) = tray_cue(part) {
+        Some(JoinedCue::Tray(cue))
+    } else if keep_cue(part).is_some() {
+        Some(JoinedCue::KeepSource)
     } else {
         None
     }
@@ -124,6 +134,7 @@ fn parts(text: &str) -> Vec<&str> {
 mod tests {
     use super::{JoinedCue, joined};
     use crate::conversation::cues::{CancelTarget, MemoryCue};
+    use crate::sources::cues::TrayCue;
 
     fn cues(text: &str) -> Option<Vec<JoinedCue>> {
         joined(text).map(|controls| controls.iter().map(|control| control.cue).collect())
@@ -193,6 +204,53 @@ mod tests {
             "is that settings? close that",
             "stop, and go back",
             "new session, and close that",
+        ] {
+            assert_eq!(cues(said), None, "{said:?}");
+        }
+    }
+
+    /// The sources tray and "keep this in the project" join other controls as they would be
+    /// said alone.
+    #[test]
+    fn source_controls_join_other_controls() {
+        let show = JoinedCue::Tray(TrayCue::Show);
+        let hide = JoinedCue::Tray(TrayCue::Hide);
+        for (said, expected) in [
+            (
+                "Keep this in the project, then show sources.",
+                vec![JoinedCue::KeepSource, show],
+            ),
+            (
+                "Hide sources and open settings.",
+                vec![hide, JoinedCue::OpenSettings],
+            ),
+            (
+                "Okay, keep it in the infinitydb project, we can stop here.",
+                vec![JoinedCue::KeepSource, JoinedCue::EndSession],
+            ),
+            (
+                "close that, and show me the sources",
+                vec![JoinedCue::CloseView, show],
+            ),
+        ] {
+            assert_eq!(cues(said), Some(expected), "{said:?}");
+        }
+    }
+
+    /// A sources phrase inside a question, or a keep with no project, joins nothing: the
+    /// talker hears the words.
+    #[test]
+    fn source_words_in_a_question_are_not_joined_controls() {
+        for said in [
+            "show sources",
+            "keep this in the project",
+            "show sources and explain the arena",
+            "keep this in mind, we can stop here",
+            "keep it, and close that",
+            "show me the sources of the bug, and close that",
+            "keep this in the project and tell me about Kafka",
+            "what are the sources of truth here, then hide sources",
+            "hide the sources of latency, and open settings",
         ] {
             assert_eq!(cues(said), None, "{said:?}");
         }

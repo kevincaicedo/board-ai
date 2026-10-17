@@ -74,6 +74,9 @@ pub(crate) struct Session {
     pub proposals: Vec<Proposal>,
     /// The digest once written, so accepting a proposal can re-render it.
     pub digest: Option<Digest>,
+    /// The project the session worked on (D-184), for its digest: the next session starts
+    /// with it.
+    pub project: Option<boardai_core::sources::Project>,
 }
 
 /// What ending a session gave.
@@ -132,6 +135,7 @@ impl StoreState {
             created_files: Vec::new(),
             proposals: Vec::new(),
             digest: None,
+            project: None,
         }));
         Ok(SessionInfo {
             id,
@@ -329,6 +333,7 @@ impl StoreState {
             has_board,
             captured: &session.captured_lines(),
             proposals: &proposals,
+            project: session.project.as_ref(),
         }
         .render();
         write_atomic(&self.vault.absolute(&path), &redact_text(&text))
@@ -392,6 +397,7 @@ impl StoreState {
                 created_files: Vec::new(),
                 proposals: Vec::new(),
                 digest: None,
+                project: None,
             }));
             let recovered = if self.nobody_spoke_in_the_ended_session() {
                 self.forget_session()

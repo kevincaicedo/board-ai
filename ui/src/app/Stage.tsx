@@ -3,6 +3,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Drawing, DrawingSurface } from "../draw/Drawing.tsx";
+import { Sources } from "../sources/Sources.tsx";
 import { Views } from "../views/Views.tsx";
 import { Captions } from "./Captions.tsx";
 import { Chips } from "./Chips.tsx";
@@ -77,6 +78,7 @@ export function Stage({
         <Chips />
         <Captions />
         <MicButton />
+        <Sources />
         <Drawing raised={runtime.replay !== null && controls} />
         {runtime.replay !== null && controls ? <ReplayControls replay={runtime.replay} /> : null}
         {perf ? <PerfReadout runtime={runtime} /> : null}

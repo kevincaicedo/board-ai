@@ -8,6 +8,7 @@ use crate::history::Message;
 use crate::ids::{CaptureId, ClauseId, TaskId, ToolCallId};
 use crate::memory::MemoryWrite;
 use crate::protocol::UiEvent;
+use crate::sources::SourceEffect;
 use crate::time::SessionTime;
 use crate::tools::ToolCall;
 
@@ -59,6 +60,11 @@ pub enum Effect {
     /// cause this, never a tool result or repo text (the same rule as I9).
     AcceptProposal {
         capture: CaptureId,
+    },
+    /// Sources (D-184, D-185): resolve a spoken name, share or forget sources, load and keep a
+    /// project's, ask for a brief, cache one, read its citations.
+    Source {
+        source: SourceEffect,
     },
 }
 

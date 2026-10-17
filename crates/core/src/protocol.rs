@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId, SurfaceId};
+use crate::sources::tray::{DropOverlay, SourceAction, SourcesTray};
 use crate::time::SessionTime;
 use crate::views::View;
 
@@ -209,6 +210,16 @@ pub enum UiEvent {
         title: String,
         part: u8,
         parts: u8,
+    },
+    /// The Sources tray (artboard 14), whole, each time it changes: this session's sources, the
+    /// project's, their states, and the files the harness is reading (D-184).
+    Sources {
+        tray: SourcesTray,
+    },
+    /// The drop overlay (14b) while something is dragged over the window; `None` once it left
+    /// or dropped.
+    SourceDrop {
+        drop: Option<DropOverlay>,
     },
 }
 
@@ -638,6 +649,11 @@ pub enum UiCommand {
     /// and Esc.
     Draw {
         action: DrawAction,
+    },
+    /// The Sources tray's controls (artboard 14): open or close it, keep, stop keeping, remove.
+    /// No path ever comes this way: a source is added by a native drop or the chooser (D-173).
+    Sources {
+        action: SourceAction,
     },
 }
 

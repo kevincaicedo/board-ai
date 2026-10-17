@@ -12,6 +12,7 @@ use std::sync::Arc;
 use boardai_core::RepoReads;
 use boardai_core::tools::{ToolCall, ToolFailure, ToolOutput};
 
+pub(crate) use repo_path::is_credential;
 pub use repo_path::{CREDENTIAL_PATHS, RepoPath, RepoRoots, TooBroad, ToolError, too_broad};
 
 /// The repo tools over a fixed set of opened folders. Cheap to clone.

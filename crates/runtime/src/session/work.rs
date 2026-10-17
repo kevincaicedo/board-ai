@@ -11,16 +11,21 @@ use std::time::Duration;
 use boardai_core::harness::{HarnessEvent, HarnessFailure, HarnessTask};
 use boardai_core::ids::{TaskId, ToolCallId};
 use boardai_core::input::Input;
+use boardai_core::sources::{SourceId, SourceInput, SourceState};
 use boardai_core::tools::{ToolCall, ToolFailure, ToolOutput};
 use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
 use tokio::task::{Id, JoinSet};
 
-use super::inbox::Inbox;
+use super::inbox::{Envelope, Inbox};
 use super::ports::{StoreRead, StoreSink};
 use crate::cancel::CancelToken;
-use crate::harness::HarnessPool;
-use crate::limits::{SESSION_HARNESS_TASKS_MAX, SESSION_TOOL_TASKS_MAX, SESSION_TOOL_TIMEOUT_MS};
+use crate::harness::{HarnessPool, Workspace};
+use crate::limits::{
+    SESSION_HARNESS_TASKS_MAX, SESSION_TOOL_TASKS_MAX, SESSION_TOOL_TIMEOUT_MS,
+    SOURCE_JOB_TIMEOUT_MS, SOURCE_JOBS_MAX, SOURCE_READERS_RUNNING_MAX,
+};
+use crate::sources::{ReaderEvent, ReaderStream};
 use crate::tools::RepoTools;
 
 /// What a running task is, so its bookkeeping is released when it ends, however it ends.
@@ -28,6 +33,10 @@ use crate::tools::RepoTools;
 enum Running {
     Tool,
     Harness(TaskId),
+    /// A source job: a resolve, a project's load, a stamp, a citation check (D-184).
+    Source,
+    /// A document reader on one source (the `SourceReader` seam).
+    Reader(SourceId),
 }
 
 pub(crate) struct Work {
@@ -36,6 +45,7 @@ pub(crate) struct Work {
     tasks: JoinSet<()>,
     running: BTreeMap<Id, Running>,
     harness_running: BTreeMap<TaskId, CancelToken>,
+    readers_running: BTreeMap<SourceId, CancelToken>,
 }
 
 impl Work {
@@ -46,6 +56,7 @@ impl Work {
             tasks: JoinSet::new(),
             running: BTreeMap::new(),
             harness_running: BTreeMap::new(),
+            readers_running: BTreeMap::new(),
         }
     }
 
@@ -105,11 +116,117 @@ impl Work {
         None
     }
 
+    /// The repo tools over new roots (a source was shared or let go). Calls already running
+    /// keep the roots they started with.
+    pub(crate) fn set_tools(&mut self, tools: RepoTools) {
+        self.tools = tools;
+    }
+
+    #[must_use]
+    pub(crate) fn has_harness(&self) -> bool {
+        self.harness.is_some()
+    }
+
+    /// Runs a source job, which answers through the inbox; false when as many run as may
+    /// (`SOURCE_JOBS_MAX`), so the caller answers at once instead.
+    pub(crate) fn spawn_source_job(
+        &mut self,
+        job: BoxFuture<'static, Option<Envelope>>,
+        inbox: &Inbox,
+    ) -> bool {
+        let running = self
+            .running
+            .values()
+            .filter(|running| **running == Running::Source)
+            .count();
+        if running >= SOURCE_JOBS_MAX {
+            tracing::warn!("too many source jobs are running; one was answered empty");
+            return false;
+        }
+        let inbox = inbox.clone();
+        let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS);
+        let handle = self.tasks.spawn(async move {
+            match tokio::time::timeout(bound, job).await {
+                Ok(Some(envelope)) => {
+                    let _ = inbox.send_envelope(envelope).await;
+                }
+                Ok(None) => {}
+                Err(_elapsed) => tracing::warn!("a source job ran past its bound and was dropped"),
+            }
+        });
+        self.running.insert(handle.id(), Running::Source);
+        true
+    }
+
+    /// Runs a document reader on `source`, its reports stepped as `DocumentRead`; false when as
+    /// many run as may (`SOURCE_READERS_RUNNING_MAX`) or one already reads it.
+    pub(crate) fn run_reader(
+        &mut self,
+        source: SourceId,
+        name: String,
+        mut events: ReaderStream,
+        cancel: CancelToken,
+        inbox: &Inbox,
+    ) -> bool {
+        if self.readers_running.len() >= SOURCE_READERS_RUNNING_MAX
+            || self.readers_running.contains_key(&source)
+        {
+            return false;
+        }
+        self.readers_running.insert(source, cancel);
+        let inbox = inbox.clone();
+        let handle = self.tasks.spawn(async move {
+            while let Some(event) = events.next().await {
+                let (state, digest) = reader_state(&name, event);
+                let input = Input::Source {
+                    source: SourceInput::DocumentRead {
+                        source,
+                        state,
+                        digest,
+                    },
+                };
+                if inbox.send(input).await.is_err() {
+                    break;
+                }
+            }
+        });
+        self.running.insert(handle.id(), Running::Reader(source));
+        true
+    }
+
+    /// The source is no longer shared: its reader stops.
+    pub(crate) fn stop_reader(&self, source: SourceId) {
+        if let Some(cancel) = self.readers_running.get(&source) {
+            cancel.cancel();
+        }
+    }
+
+    /// Starts a harness task in a source's workspace (a brief, D-185); like [`Work::run_harness`].
+    pub(crate) fn run_harness_in(
+        &mut self,
+        task: TaskId,
+        spec: HarnessTask,
+        workspace: Workspace,
+        inbox: &Inbox,
+    ) -> Option<Input> {
+        self.start_harness(task, spec, Some(workspace), inbox)
+    }
+
     /// Starts a harness task; returns its terminal event at once when it can't start.
     pub(crate) fn run_harness(
         &mut self,
         task: TaskId,
         spec: HarnessTask,
+        inbox: &Inbox,
+    ) -> Option<Input> {
+        self.start_harness(task, spec, None, inbox)
+    }
+
+    fn start_harness(
+        &mut self,
+        task: TaskId,
+        spec: HarnessTask,
+        workspace: Option<Workspace>,
         inbox: &Inbox,
     ) -> Option<Input> {
         let Some(pool) = &self.harness else {
@@ -121,7 +238,10 @@ impl Work {
             return Some(harness_failed(task, HarnessFailure::QueueFull, detail));
         }
         let cancel = CancelToken::new();
-        let mut events = pool.run(spec, cancel.clone());
+        let mut events = match workspace {
+            Some(workspace) => pool.run_in(spec, workspace, cancel.clone()),
+            None => pool.run(spec, cancel.clone()),
+        };
         self.harness_running.insert(task, cancel);
         let inbox = inbox.clone();
         let handle = self.tasks.spawn(async move {
@@ -151,8 +271,14 @@ impl Work {
                 error.id()
             }
         };
-        if let Some(Running::Harness(task)) = self.running.remove(&id) {
-            self.harness_running.remove(&task);
+        match self.running.remove(&id) {
+            Some(Running::Harness(task)) => {
+                self.harness_running.remove(&task);
+            }
+            Some(Running::Reader(source)) => {
+                self.readers_running.remove(&source);
+            }
+            Some(Running::Tool | Running::Source) | None => {}
         }
         Some(())
     }
@@ -160,12 +286,34 @@ impl Work {
     /// Stops everything: harness tasks are asked to stop, then every task is aborted (dropping
     /// a harness stream kills its process group).
     pub(crate) async fn shutdown(&mut self) {
-        for cancel in self.harness_running.values() {
+        for cancel in self
+            .harness_running
+            .values()
+            .chain(self.readers_running.values())
+        {
             cancel.cancel();
         }
         self.tasks.shutdown().await;
         self.harness_running.clear();
+        self.readers_running.clear();
         self.running.clear();
+    }
+}
+
+/// A reader's report as the core's source state, and the digest it carries.
+fn reader_state(reader: &str, event: ReaderEvent) -> (SourceState, Option<String>) {
+    match event {
+        ReaderEvent::Reading { read, of } => (
+            SourceState::Reading {
+                reader: reader.to_owned(),
+                files_read: read,
+                files_estimate: of,
+            },
+            None,
+        ),
+        ReaderEvent::Ready { detail, digest } => (SourceState::Ready { detail }, Some(digest)),
+        ReaderEvent::Partial { reason, digest } => (SourceState::Partial { reason }, Some(digest)),
+        ReaderEvent::Failed { reason } => (SourceState::Failed { reason }, None),
     }
 }
 

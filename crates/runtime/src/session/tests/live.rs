@@ -116,6 +116,7 @@ fn parts(
         speech,
         store: Arc::clone(recorder) as Arc<dyn StoreSink>,
         ui: Arc::clone(recorder) as Arc<dyn UiSink>,
+        sources: crate::session::SourceParts::in_memory(std::path::PathBuf::from("/")),
     }
 }
 

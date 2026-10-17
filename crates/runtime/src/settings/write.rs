@@ -40,8 +40,17 @@ pub(super) fn to_toml(raw: &RawSettings) -> String {
     if let Some(tts) = &raw.tts {
         provider(&mut out, "tts", tts);
     }
-    if let Some(RawHarness { kind, model }) = &raw.harness {
-        let fields = [("kind", kind.as_deref()), ("model", model.as_deref())];
+    if let Some(RawHarness {
+        kind,
+        model,
+        research_model,
+    }) = &raw.harness
+    {
+        let fields = [
+            ("kind", kind.as_deref()),
+            ("model", model.as_deref()),
+            ("research_model", research_model.as_deref()),
+        ];
         table(&mut out, "harness", &fields);
     }
     out
@@ -171,6 +180,7 @@ secret = "elevenlabs"
 
 [harness]
 kind = "pi"
+research_model = "opus"
 "#;
         let raw = read_raw(text).expect("parses");
         let written = to_toml(&raw);

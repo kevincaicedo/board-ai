@@ -137,6 +137,7 @@ pub async fn run(args: &Args) -> Result<bool, String> {
         speech: Box::new(speech),
         store: Arc::new(store) as Arc<dyn StoreSink>,
         ui: Arc::clone(&ui_log) as Arc<dyn UiSink>,
+        sources: boardai_runtime::session::SourceParts::in_memory(std::path::PathBuf::from("/")),
     };
     let session = boardai_runtime::session::spawn(channels, parts);
     let clips = prepared.clips;

@@ -27,12 +27,15 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 mod resting;
+mod sources;
 
 use self::resting::RestingLibrary;
+pub(crate) use self::sources::SourceMessage;
 use super::deadlines::Deadlines;
 use super::inbox::{Envelope, Inbox};
 use super::listening::{Listening, ListeningPublisher};
 use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreSink};
+use super::shelf::SourceShelf;
 use super::talker::Talker;
 use super::work::Work;
 use crate::bridge::BridgeHandle;
@@ -44,6 +47,8 @@ use crate::limits::{
     SESSION_START_TIMEOUT_MS,
 };
 use crate::llm::LlmProvider;
+use crate::sources::SourceDesk;
+use crate::store::WallClock;
 
 /// Counters the session reports when it closes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -114,6 +119,11 @@ pub(crate) struct Orchestrator {
     /// The core ended the session in this step (`UiEvent::SessionEnd`); it rests once the
     /// step's effects are applied.
     end_requested: bool,
+    /// What the session shared, by id, and the briefs cached for it (D-184, D-185).
+    pub(crate) desk: SourceDesk,
+    pub(crate) shelf: Arc<dyn SourceShelf>,
+    pub(crate) wall: Arc<dyn WallClock>,
+    pub(crate) readers: Vec<Arc<dyn crate::sources::SourceReader>>,
 }
 
 /// The receiving ends the loop waits on.
@@ -150,6 +160,10 @@ impl Orchestrator {
             stats: SessionStats::default(),
             turn: 0,
             end_requested: false,
+            desk: parts.desk,
+            shelf: parts.shelf,
+            wall: parts.wall,
+            readers: parts.readers,
         }
     }
 
@@ -252,6 +266,7 @@ impl Orchestrator {
         self.core.start(now, &mut effects);
         self.apply_all(now, &mut effects).await;
         self.effects = effects;
+        self.start_sources().await;
     }
 
     async fn receive(&mut self, envelope: Envelope) {
@@ -283,6 +298,20 @@ impl Orchestrator {
                     self.talker.finished(generation);
                 }
                 self.step(input).await;
+            }
+            Envelope::Source(message) => {
+                if matches!(self.phase, Phase::Resting { .. }) {
+                    // A drop on the resting stage opens a session, like the pen; anything else
+                    // belonged to the session that ended.
+                    if !matches!(message, SourceMessage::Shared { .. }) {
+                        return;
+                    }
+                    self.wake().await;
+                    if matches!(self.phase, Phase::Resting { .. }) {
+                        return;
+                    }
+                }
+                self.on_source_message(message).await;
             }
             Envelope::Problem { spoken, detail } => {
                 let now = self.clock.now();
@@ -364,7 +393,13 @@ impl Orchestrator {
             }
             Effect::Remember(memory) => self.store.remember(now, &memory),
             Effect::WakeAt { at } => self.deadlines.insert(at),
-            Effect::Forget { scope } => self.store.forget(now, scope),
+            Effect::Forget { scope } => {
+                self.store.forget(now, scope);
+                if scope == boardai_core::effect::ForgetScope::Session {
+                    self.forget_written();
+                }
+            }
+            Effect::Source { source } => self.apply_source(source),
             Effect::AcceptProposal { capture } => self.store.accept_proposal(now, capture),
         }
     }
@@ -661,6 +696,9 @@ fn opens_a_session(input: &Input, muted: bool) -> bool {
         | Input::Harness { .. }
         | Input::Tick
         | Input::MemoryFailed { .. }
+        // A drop opens a session through its own envelope (`orchestrator::sources`).
+        | Input::Source { .. }
+        | Input::Command(UiCommand::Sources { .. })
         // An onset alone may be a cough; the session opens on the `VoiceStart` that confirms it.
         | Input::VoiceOnset => false,
     }
@@ -676,6 +714,10 @@ pub(crate) struct OrchestratorParts {
     pub(crate) bridge: BridgeHandle,
     pub(crate) listening: Arc<watch::Sender<Listening>>,
     pub(crate) closing: CancelToken,
+    pub(crate) desk: SourceDesk,
+    pub(crate) shelf: Arc<dyn SourceShelf>,
+    pub(crate) wall: Arc<dyn WallClock>,
+    pub(crate) readers: Vec<Arc<dyn crate::sources::SourceReader>>,
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

@@ -22,8 +22,8 @@ use boardai_core::tools::ToolCall;
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::MonotonicClock;
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, PiConfig, PiHarness,
-    discover_from_environment,
+    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, PiConfig,
+    PiHarness, discover_from_environment,
 };
 use boardai_runtime::llm::anthropic::{AnthropicOptions, AnthropicProvider};
 use boardai_runtime::llm::openai::{
@@ -264,14 +264,153 @@ async fn claude_code_answers_a_read_only_question() {
     }
     let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
         program,
-        repo: repo.path.clone(),
+        repo: Some(repo.path.clone()),
         environment,
+        research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
     });
     let events = run_task("claude code", &harness).await;
     assert!(
         matches!(events.last(), Some(HarnessEvent::Finished { .. })),
         "{events:?}"
     );
+}
+
+/// A brief request (D-185) through the real Claude Code, on a module of this repo: the answer
+/// parses as a brief, its citations are read natively (those beyond the folder inside its
+/// reach too, as when this repo is a code folder), and the run's time and shape are printed.
+/// It runs as the app runs it: on the research model, held to the reach (D-226).
+/// `BOARDAI_LIVE_BRIEF_FOLDER` picks the folder (default `crates/runtime/src/harness`),
+/// `BOARDAI_LIVE_BRIEF_TOPIC` a component (default the overview); `BOARDAI_LIVE_CAPTURE` keeps
+/// the raw stream-json (its `result` line has the run's cost).
+#[tokio::test]
+#[ignore = "live: run with `just live`"]
+async fn claude_code_writes_a_brief_on_a_module_of_this_repo() {
+    use boardai_core::sources::brief::{parse, request_prompt};
+    use boardai_core::sources::{BriefTopic, SourceKind};
+    use boardai_runtime::harness::{Answer, Workspace};
+
+    if !enabled("BOARDAI_LIVE_CLAUDE") {
+        return;
+    }
+    let claude = discover_from_environment()
+        .claude_code
+        .expect("claude on PATH");
+    let folder = std::env::var("BOARDAI_LIVE_BRIEF_FOLDER").map_or_else(
+        |_| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/harness"),
+        std::path::PathBuf::from,
+    );
+    let folder = std::fs::canonicalize(&folder).expect("the folder");
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .expect("HOME");
+    let reach =
+        boardai_runtime::sources::reach(&folder, SourceKind::CodeFolder, &home).expect("a reach");
+    let topic = std::env::var("BOARDAI_LIVE_BRIEF_TOPIC")
+        .map_or(BriefTopic::Overview, |name| BriefTopic::component(&name));
+    let title = folder
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (program, environment) = captured(claude);
+    let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
+        program,
+        repo: None,
+        environment,
+        research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+    });
+    let task = HarnessTask {
+        kind: HarnessKind::Research,
+        brief: request_prompt(&title, SourceKind::CodeFolder, &topic, None),
+    };
+    let workspace = Workspace {
+        folder: folder.clone(),
+        answer: Answer::Brief {
+            reach: reach.clone(),
+        },
+    };
+    let started = Instant::now();
+    let events: Vec<HarnessEvent> = tokio::time::timeout(
+        Duration::from_secs(600),
+        harness
+            .run_in(task, workspace, CancelToken::new())
+            .collect(),
+    )
+    .await
+    .expect("the task ends");
+    let elapsed = started.elapsed();
+    let touched = events
+        .iter()
+        .filter(|event| matches!(event, HarnessEvent::FileTouched { .. }))
+        .count();
+    let Some(HarnessEvent::Finished { summary, .. }) = events.last() else {
+        panic!("no brief: {events:?}");
+    };
+    let brief = parse(summary);
+    println!("reach: {}", reach.display());
+    print_brief(&title, &topic, (&folder, &reach), elapsed, touched, summary);
+    assert!(brief.is_usable(), "{summary}");
+}
+
+/// What a live brief came back as: its shape, its citations read natively, and the file it was
+/// saved to (`target/live-briefs/<topic>.md`).
+fn print_brief(
+    title: &str,
+    topic: &boardai_core::sources::BriefTopic,
+    (folder, reach): (&std::path::Path, &std::path::Path),
+    elapsed: Duration,
+    touched: usize,
+    summary: &str,
+) {
+    use boardai_runtime::sources::check_citations;
+
+    let brief = boardai_core::sources::brief::parse(summary);
+    let citations = brief.all_citations();
+    let inside = check_citations(folder, None, None, &citations).read.len();
+    let checked = check_citations(folder, None, Some(reach), &citations);
+    let target = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/live-briefs");
+    let _ = std::fs::create_dir_all(&target);
+    let _ = std::fs::write(target.join(format!("{}.md", topic.key())), summary);
+    println!(
+        "brief on {} of {title}: {elapsed:?}, {touched} files read, {} bytes; {} components, {} \
+         relations, {} flows, diagram ids {:?}, {} details; citations {} read ({inside} in the \
+         folder), {} unverified; dropped {:?}",
+        topic.spoken(),
+        summary.len(),
+        brief.components.len(),
+        brief.relations.len(),
+        brief.flows.len(),
+        brief.diagram.as_ref().map(|diagram| diagram.ids.len()),
+        brief.details.len(),
+        checked.read.len(),
+        checked.unverified.len(),
+        brief.dropped
+    );
+}
+
+/// The program to run: `claude` itself, or a wrapper that tees its stream-json to
+/// `BOARDAI_LIVE_CAPTURE`.
+fn captured(
+    claude: std::path::PathBuf,
+) -> (
+    std::path::PathBuf,
+    Vec<(std::ffi::OsString, std::ffi::OsString)>,
+) {
+    let Ok(capture) = std::env::var("BOARDAI_LIVE_CAPTURE") else {
+        return (claude, Vec::new());
+    };
+    let folder = TempFolder::new("claude-tee");
+    let wrapper = folder.write(
+        "claude-tee",
+        b"#!/bin/sh\n\"$REAL_CLAUDE\" \"$@\" | tee \"$CAPTURE\"\n",
+    );
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    // The wrapper's folder must outlive the run: it is left for the OS to clean.
+    std::mem::forget(folder);
+    let environment = vec![
+        ("REAL_CLAUDE".into(), claude.into_os_string()),
+        ("CAPTURE".into(), capture.into()),
+    ];
+    (wrapper, environment)
 }
 
 #[tokio::test]
@@ -287,7 +426,7 @@ async fn pi_answers_a_read_only_question() {
     let repo = scratch_repo();
     let harness = PiHarness::new(PiConfig {
         program: pi,
-        repo: repo.path.clone(),
+        repo: Some(repo.path.clone()),
         environment: Vec::new(),
     });
     let events = run_task("pi", &harness).await;

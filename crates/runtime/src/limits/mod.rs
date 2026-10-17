@@ -1,8 +1,10 @@
 //! The runtime's named limits (LLD §5). Each one says what happens when it is crossed.
 
 mod llm;
+mod sources;
 
 pub use llm::*;
+pub use sources::*;
 
 // ---------------------------------------------------------------------------------------------
 // Repo tools (owner: runtime::tools)

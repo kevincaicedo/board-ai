@@ -316,3 +316,8 @@ pub const DRAWING_WORDS_MAX_BYTES: usize = 1_024;
 
 /// The description of your drawing in the talker's turn; a longer one ends with "…".
 pub const DRAWING_DESCRIPTION_MAX_BYTES: usize = 2_048;
+
+// Sources and research briefs (D-184, D-185): their own file, so the bounds of one feature stay
+// together.
+mod sources;
+pub use sources::*;

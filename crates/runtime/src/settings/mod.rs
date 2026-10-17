@@ -103,6 +103,9 @@ pub struct HarnessSettings {
     pub kind: HarnessChoice,
     /// Passed to the harness as its model; `None` keeps the harness's own default.
     pub model: Option<String>,
+    /// Claude Code's `--model` for research briefs (D-226); `None` is
+    /// `harness::DEFAULT_RESEARCH_MODEL` (`sonnet`). pi keeps its own model.
+    pub research_model: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

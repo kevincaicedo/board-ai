@@ -26,6 +26,7 @@ pub mod protocol;
 pub mod setup;
 #[cfg(feature = "sim")]
 pub mod sim;
+pub mod sources;
 pub mod surfaces;
 pub mod thread;
 pub mod time;

@@ -58,7 +58,8 @@ impl Heard {
             | Input::Harness { .. }
             | Input::Command(_)
             | Input::Tick
-            | Input::MemoryFailed { .. } => {}
+            | Input::MemoryFailed { .. }
+            | Input::Source { .. } => {}
         }
     }
 
@@ -184,7 +185,8 @@ impl Replay {
                 | Effect::Remember(_)
                 | Effect::WakeAt { .. }
                 | Effect::Forget { .. }
-                | Effect::AcceptProposal { .. } => continue,
+                | Effect::AcceptProposal { .. }
+                | Effect::Source { .. } => continue,
             };
             if let UiEvent::OpStart { op, .. } = &event {
                 self.check_anchor(at, op_id(op), core, heard);

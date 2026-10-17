@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window may only open the event channel, send commands, read a past session's log by id for a replay (LLD §9, D-027, D-081), and run the first-run screen: read its status, list models for the picker (D-153), save a choice or a key, download a model file, ask for the microphone, open System Settings at the microphone pane (D-149), and start the session (D-100); and, on the settings page, remove or check a key, read the harnesses' versions, add a code folder through the system's chooser, open the vault in Finder and rebuild the index (D-169..D-175). Debug builds also grant dev_say at runtime.",
+  "description": "The main window may only open the event channel, send commands, read a past session's log by id for a replay (LLD §9, D-027, D-081), and run the first-run screen: read its status, list models for the picker (D-153), save a choice or a key, download a model file, ask for the microphone, open System Settings at the microphone pane (D-149), and start the session (D-100); and, on the settings page, remove or check a key, read the harnesses' versions, add a code folder through the system's chooser, open the vault in Finder and rebuild the index (D-169..D-175); and, from the Sources tray, show the system's chooser for a folder or a file to share (D-184). Debug builds also grant dev_say at runtime.",
   "windows": ["main"],
   "permissions": [
     "allow-connect",
@@ -20,6 +20,7 @@
     "allow-setup-harness-versions",
     "allow-setup-add-code-folder",
     "allow-setup-open-vault",
-    "allow-setup-rebuild-index"
+    "allow-setup-rebuild-index",
+    "allow-sources-choose"
   ]
 }

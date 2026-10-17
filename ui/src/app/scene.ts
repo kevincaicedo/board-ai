@@ -8,6 +8,7 @@ import { DrawModel } from "../draw/model.ts";
 import { OrbDynamics } from "../orb/dynamics.ts";
 import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
+import { SourcesStore } from "../sources/model.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import type { BatchSink } from "../transport/transport.ts";
 import { DiagramStore } from "./diagrams.ts";
@@ -28,6 +29,8 @@ export class Scene implements BatchSink {
   readonly draw = new DrawModel();
   /** Staged diagrams' headers and the open detail layers (15, 15b). */
   readonly diagrams = new DiagramStore();
+  /** The Sources tray and the drop overlay (14 · Sources, 14b). */
+  readonly sources = new SourcesStore();
   /** Bumped on reset, so views know to drop what they built. */
   generation = 0;
   readonly #lead: LeadDecision;
@@ -54,6 +57,7 @@ export class Scene implements BatchSink {
     this.views.reset();
     this.draw.reset();
     this.diagrams.reset();
+    this.sources.reset();
     this.generation += 1;
   }
 
@@ -133,8 +137,12 @@ export class Scene implements BatchSink {
       case "LabelHint":
         this.draw.apply(event, at);
         break;
+      case "Sources":
+      case "SourceDrop":
+        break;
     }
     this.store.apply(event, at);
     this.diagrams.apply(event, at);
+    this.sources.apply(event, at);
   }
 }

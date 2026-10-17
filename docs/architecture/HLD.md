@@ -57,16 +57,16 @@ The [diagram](hld.excalidraw) shows these boxes and how they connect.
 - **Speech in.** Voice activity detection plus speech-to-text, producing partial and final transcripts.
 - **Speech out.** Text-to-speech plus playback. The audio sample counter is the session clock.
 - **Talker client.** Streams from the LLM and runs its tools.
-- **Repo tools.** Native, read-only file reading and search in the opened repo.
-- **Harness runner.** Runs Claude Code or pi as a subprocess for code research (every question about a shared codebase, returning a structured brief with a diagram, D-185), reviews and confirmed changes.
-- **Source reader.** Takes in shared sources: registers code folders and files, reads Markdown and text, extracts a PDF's text and tables locally and gets its figures from a file-capable model or the harness, and writes each document's digest (D-186). Briefs and digests are cached with the source, in the project's vault folder when the source is kept in a project.
+- **Repo tools.** Native, read-only file reading and search in the opened code folders and the shared sources.
+- **Harness runner.** Runs Claude Code or pi as a subprocess for code research (every question about a shared codebase, returning a structured brief with a diagram, D-185, run in that source's own folder), reviews and confirmed changes.
+- **Sources.** Checks every shared path where it enters (a drop, the chooser, a name resolved by a bounded walk), keeps the session's sources by id, reads each brief's cited lines natively, and caches briefs with a freshness stamp (the git HEAD and the files' times): in memory for a session source, in the project's vault folder when it is kept there. Documents go to a **document reader** (the `SourceReader` seam: it reads Markdown and text, extracts a PDF's text and tables locally and gets its figures from a file-capable model or the harness, and writes each document's digest, D-186; T-031).
 - **Store.** The event log, the vault files and the SQLite index. It is the only writer.
 - **Scribe.** Background memory work: the session digest, extracting entities, proposing memories.
 
 **UI:**
 
 - The orb, the canvas stroke renderer, surfaces (code card, compare, doc), captions and the thread bar, the library and the brain views.
-- The Sources tray: what this session and the current project can read, each source's state (reading, ready, figures unread), and adding one by drop or the chooser.
+- The Sources tray: what this session and the current project can read, each source's state (reading, ready, figures unread), and adding one by drop or the chooser; the drop overlay while something is dragged over the window; the files the harness reads, drifting at the edge.
 - The first-run screen, and the settings page (⌘, or "open settings"): the talker and its model picked from the providers' lists, the voice, the microphone and its permission, the keys (saved, replaced or removed in the Keychain, never shown), the coding harnesses and code folders, and what memory keeps.
 - A replay mode that plays a recorded session with no backend. UI work is checked against the design canvas this way.
 
@@ -80,7 +80,7 @@ The numbers match the badges on the diagram.
 4. **Interrupt.** Your voice starts, so BoardAI's volume ducks within 100 ms. The core then classifies what you said:
    - A backchannel ("mm-hm") restores the volume.
    - A real interruption stops the voice and freezes the stroke in place. The core records exactly what you heard, opens a detour, and later resumes from the frozen stroke.
-5. **Ground and delegate.** Understanding a shared codebase goes to the coding harness as research (seconds to minutes, started as soon as the source is shared). The brief comes back with components, flows, `file:line` citations and a diagram, which the core lays out whole and BoardAI reveals while explaining; each cited line is checked by a native read before its chip shows. Quick looks (a code card) use the native repo tools, in milliseconds. Reviews and changes go to the harness too. BoardAI narrates while the harness works.
+5. **Ground and delegate.** Understanding a shared codebase goes to the coding harness as research (seconds to minutes, started as soon as the source is shared; a fresh cached brief answers at once), on a research model (Sonnet by default, D-226) and reading only inside the source's own repository, which Claude Code's permission rules enforce (D-226). The brief comes back with components, flows, `file:line` citations and a diagram, which the core lays out whole and BoardAI reveals while explaining (until staged layout lands, T-032, the talker draws from the brief's diagram as a reference); each cited line is checked by a native read before its chip shows, and an unread one is dropped. Quick looks (a code card) use the native repo tools, in milliseconds. Reviews and changes go to the harness too. BoardAI narrates while the harness works.
 6. **Remember.**
    - Every input is appended to the session's event log.
    - At the end, the scribe writes the digest and proposed memories into the vault, and the index is updated.
@@ -109,6 +109,7 @@ The numbers match the badges on the diagram.
   - Notes and project task lists as Markdown
   - One folder per session, holding the event log (JSONL), the board (`.excalidraw`) and the digest
   - Your memory files
+  - A project's sources (`projects/<id>/sources.md`) and their cached briefs
 - **The index is derived.** SQLite with full-text search lives in the app's data folder and can always be rebuilt by scanning the vault. The MVP has no vector database.
 - **What is kept automatically.** The memory policy in [PRODUCT §7.4](../PRODUCT.md) applies, in short:
   - The session record and learning signals are kept automatically.

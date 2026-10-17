@@ -67,6 +67,7 @@ pub(super) struct RawProvider {
 pub(super) struct RawHarness {
     pub(super) kind: Option<String>,
     pub(super) model: Option<String>,
+    pub(super) research_model: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -109,6 +110,7 @@ pub(super) fn defaults(home: &Path) -> Settings {
             harness: HarnessSettings {
                 kind: HarnessChoice::Auto,
                 model: None,
+                research_model: None,
             },
             voice: VoiceSettings {
                 id: DEFAULT_VOICE.to_owned(),
@@ -397,6 +399,7 @@ fn harness(raw: RawHarness) -> Result<HarnessSettings, SettingsError> {
     Ok(HarnessSettings {
         kind,
         model: non_empty("harness.model", raw.model)?,
+        research_model: non_empty("harness.research_model", raw.research_model)?,
     })
 }
 

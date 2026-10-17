@@ -471,6 +471,14 @@ impl Drop for Running {
     }
 }
 
+/// A task that can't start: one terminal event.
+pub(crate) fn failed_stream(reason: HarnessFailure, detail: &str) -> HarnessStream {
+    Box::pin(stream::once(std::future::ready(failed(
+        reason,
+        detail.to_owned(),
+    ))))
+}
+
 pub(crate) fn failed(reason: HarnessFailure, detail: String) -> HarnessEvent {
     HarnessEvent::Failed { reason, detail }
 }

@@ -20,6 +20,7 @@ fn main() {
         "setup_add_code_folder",
         "setup_open_vault",
         "setup_rebuild_index",
+        "sources_choose",
         "dev_say",
     ]);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);

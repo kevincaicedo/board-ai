@@ -1,0 +1,240 @@
+usable: true
+topic: "everything at once"
+overview (2048 bytes): "This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeats to pass the overview's bound. This sentence repeat"
+component part-0 | Part 0 | module | src/part0.rs | Part number 0
+component part-1 | Part 1 | module | src/part1.rs | Part number 1
+component part-2 | Part 2 | module | src/part2.rs | Part number 2
+component part-3 | Part 3 | module | src/part3.rs | Part number 3
+component part-4 | Part 4 | module | src/part4.rs | Part number 4
+component part-5 | Part 5 | module | src/part5.rs | Part number 5
+component part-6 | Part 6 | module | src/part6.rs | Part number 6
+component part-7 | Part 7 | module | src/part7.rs | Part number 7
+component part-8 | Part 8 | module | src/part8.rs | Part number 8
+component part-9 | Part 9 | module | src/part9.rs | Part number 9
+component part-10 | Part 10 | module | src/part10.rs | Part number 10
+component part-11 | Part 11 | module | src/part11.rs | Part number 11
+component part-12 | Part 12 | module | src/part12.rs | Part number 12
+component part-13 | Part 13 | module | src/part13.rs | Part number 13
+component part-14 | Part 14 | module | src/part14.rs | Part number 14
+component part-15 | Part 15 | module | src/part15.rs | Part number 15
+component part-16 | Part 16 | module | src/part16.rs | Part number 16
+component part-17 | Part 17 | module | src/part17.rs | Part number 17
+component part-18 | Part 18 | module | src/part18.rs | Part number 18
+component part-19 | Part 19 | module | src/part19.rs | Part number 19
+component part-20 | Part 20 | module | src/part20.rs | Part number 20
+component part-21 | Part 21 | module | src/part21.rs | Part number 21
+component part-22 | Part 22 | module | src/part22.rs | Part number 22
+component part-23 | Part 23 | module | src/part23.rs | Part number 23
+component part-24 | Part 24 | module | src/part24.rs | Part number 24
+component part-25 | Part 25 | module | src/part25.rs | Part number 25
+component part-26 | Part 26 | module | src/part26.rs | Part number 26
+component part-27 | Part 27 | module | src/part27.rs | Part number 27
+component part-28 | Part 28 | module | src/part28.rs | Part number 28
+component part-29 | Part 29 | module | src/part29.rs | Part number 29
+component part-30 | Part 30 | module | src/part30.rs | Part number 30
+component part-31 | Part 31 | module | src/part31.rs | Part number 31
+component part-32 | Part 32 | module | src/part32.rs | Part number 32
+component part-33 | Part 33 | module | src/part33.rs | Part number 33
+component part-34 | Part 34 | module | src/part34.rs | Part number 34
+component part-35 | Part 35 | module | src/part35.rs | Part number 35
+component part-36 | Part 36 | module | src/part36.rs | Part number 36
+component part-37 | Part 37 | module | src/part37.rs | Part number 37
+component part-38 | Part 38 | module | src/part38.rs | Part number 38
+component part-39 | Part 39 | module | src/part39.rs | Part number 39
+component part-40 | Part 40 | module | src/part40.rs | Part number 40
+component part-41 | Part 41 | module | src/part41.rs | Part number 41
+component part-42 | Part 42 | module | src/part42.rs | Part number 42
+component part-43 | Part 43 | module | src/part43.rs | Part number 43
+component part-44 | Part 44 | module | src/part44.rs | Part number 44
+component part-45 | Part 45 | module | src/part45.rs | Part number 45
+component part-46 | Part 46 | module | src/part46.rs | Part number 46
+component part-47 | Part 47 | module | src/part47.rs | Part number 47
+relation part-0 -> part-1: calls
+relation part-1 -> part-2: calls
+relation part-2 -> part-3: calls
+relation part-3 -> part-4: calls
+relation part-4 -> part-5: calls
+relation part-5 -> part-6: calls
+relation part-6 -> part-7: calls
+relation part-7 -> part-8: calls
+relation part-8 -> part-9: calls
+relation part-9 -> part-10: calls
+relation part-10 -> part-11: calls
+relation part-11 -> part-12: calls
+relation part-12 -> part-13: calls
+relation part-13 -> part-14: calls
+relation part-14 -> part-15: calls
+relation part-15 -> part-16: calls
+relation part-16 -> part-17: calls
+relation part-17 -> part-18: calls
+relation part-18 -> part-19: calls
+relation part-19 -> part-20: calls
+relation part-20 -> part-21: calls
+relation part-21 -> part-22: calls
+relation part-22 -> part-23: calls
+relation part-23 -> part-24: calls
+relation part-24 -> part-25: calls
+relation part-25 -> part-26: calls
+relation part-26 -> part-27: calls
+relation part-27 -> part-28: calls
+relation part-28 -> part-29: calls
+relation part-29 -> part-30: calls
+relation part-30 -> part-31: calls
+relation part-31 -> part-32: calls
+relation part-32 -> part-33: calls
+relation part-33 -> part-34: calls
+relation part-34 -> part-35: calls
+relation part-35 -> part-36: calls
+relation part-36 -> part-37: calls
+relation part-37 -> part-38: calls
+relation part-38 -> part-39: calls
+relation part-39 -> part-40: calls
+relation part-40 -> part-41: calls
+relation part-41 -> part-42: calls
+relation part-42 -> part-43: calls
+relation part-43 -> part-44: calls
+relation part-44 -> part-45: calls
+relation part-45 -> part-46: calls
+relation part-46 -> part-47: calls
+relation part-0 -> part-1: calls
+relation part-1 -> part-2: calls
+relation part-2 -> part-3: calls
+relation part-3 -> part-4: calls
+flow "Flow 0"
+  step "Step 0 of flow 0" @ src/part0.rs:1
+  step "Step 1 of flow 0" @ src/part1.rs:2
+  step "Step 2 of flow 0" @ src/part2.rs:3
+  step "Step 3 of flow 0" @ src/part3.rs:4
+  step "Step 4 of flow 0" @ src/part4.rs:5
+  step "Step 5 of flow 0" @ src/part5.rs:6
+  step "Step 6 of flow 0" @ src/part6.rs:7
+  step "Step 7 of flow 0" @ src/part7.rs:8
+  step "Step 8 of flow 0" @ src/part8.rs:9
+  step "Step 9 of flow 0" @ src/part9.rs:10
+  step "Step 10 of flow 0" @ src/part10.rs:11
+  step "Step 11 of flow 0" @ src/part11.rs:12
+flow "Flow 1"
+  step "Step 0 of flow 1" @ src/part0.rs:1
+  step "Step 1 of flow 1" @ src/part1.rs:2
+  step "Step 2 of flow 1" @ src/part2.rs:3
+  step "Step 3 of flow 1" @ src/part3.rs:4
+  step "Step 4 of flow 1" @ src/part4.rs:5
+  step "Step 5 of flow 1" @ src/part5.rs:6
+  step "Step 6 of flow 1" @ src/part6.rs:7
+  step "Step 7 of flow 1" @ src/part7.rs:8
+  step "Step 8 of flow 1" @ src/part8.rs:9
+  step "Step 9 of flow 1" @ src/part9.rs:10
+  step "Step 10 of flow 1" @ src/part10.rs:11
+  step "Step 11 of flow 1" @ src/part11.rs:12
+flow "Flow 2"
+  step "Step 0 of flow 2" @ src/part0.rs:1
+  step "Step 1 of flow 2" @ src/part1.rs:2
+  step "Step 2 of flow 2" @ src/part2.rs:3
+  step "Step 3 of flow 2" @ src/part3.rs:4
+  step "Step 4 of flow 2" @ src/part4.rs:5
+  step "Step 5 of flow 2" @ src/part5.rs:6
+  step "Step 6 of flow 2" @ src/part6.rs:7
+  step "Step 7 of flow 2" @ src/part7.rs:8
+  step "Step 8 of flow 2" @ src/part8.rs:9
+  step "Step 9 of flow 2" @ src/part9.rs:10
+  step "Step 10 of flow 2" @ src/part10.rs:11
+  step "Step 11 of flow 2" @ src/part11.rs:12
+flow "Flow 3"
+  step "Step 0 of flow 3" @ src/part0.rs:1
+  step "Step 1 of flow 3" @ src/part1.rs:2
+  step "Step 2 of flow 3" @ src/part2.rs:3
+  step "Step 3 of flow 3" @ src/part3.rs:4
+  step "Step 4 of flow 3" @ src/part4.rs:5
+  step "Step 5 of flow 3" @ src/part5.rs:6
+  step "Step 6 of flow 3" @ src/part6.rs:7
+  step "Step 7 of flow 3" @ src/part7.rs:8
+  step "Step 8 of flow 3" @ src/part8.rs:9
+  step "Step 9 of flow 3" @ src/part9.rs:10
+  step "Step 10 of flow 3" @ src/part10.rs:11
+  step "Step 11 of flow 3" @ src/part11.rs:12
+flow "Flow 4"
+  step "Step 0 of flow 4" @ src/part0.rs:1
+  step "Step 1 of flow 4" @ src/part1.rs:2
+  step "Step 2 of flow 4" @ src/part2.rs:3
+  step "Step 3 of flow 4" @ src/part3.rs:4
+  step "Step 4 of flow 4" @ src/part4.rs:5
+  step "Step 5 of flow 4" @ src/part5.rs:6
+  step "Step 6 of flow 4" @ src/part6.rs:7
+  step "Step 7 of flow 4" @ src/part7.rs:8
+  step "Step 8 of flow 4" @ src/part8.rs:9
+  step "Step 9 of flow 4" @ src/part9.rs:10
+  step "Step 10 of flow 4" @ src/part10.rs:11
+  step "Step 11 of flow 4" @ src/part11.rs:12
+flow "Flow 5"
+  step "Step 0 of flow 5" @ src/part0.rs:1
+  step "Step 1 of flow 5" @ src/part1.rs:2
+  step "Step 2 of flow 5" @ src/part2.rs:3
+  step "Step 3 of flow 5" @ src/part3.rs:4
+  step "Step 4 of flow 5" @ src/part4.rs:5
+  step "Step 5 of flow 5" @ src/part5.rs:6
+  step "Step 6 of flow 5" @ src/part6.rs:7
+  step "Step 7 of flow 5" @ src/part7.rs:8
+  step "Step 8 of flow 5" @ src/part8.rs:9
+  step "Step 9 of flow 5" @ src/part9.rs:10
+  step "Step 10 of flow 5" @ src/part10.rs:11
+  step "Step 11 of flow 5" @ src/part11.rs:12
+flow "Flow 6"
+  step "Step 0 of flow 6" @ src/part0.rs:1
+  step "Step 1 of flow 6" @ src/part1.rs:2
+  step "Step 2 of flow 6" @ src/part2.rs:3
+  step "Step 3 of flow 6" @ src/part3.rs:4
+  step "Step 4 of flow 6" @ src/part4.rs:5
+  step "Step 5 of flow 6" @ src/part5.rs:6
+  step "Step 6 of flow 6" @ src/part6.rs:7
+  step "Step 7 of flow 6" @ src/part7.rs:8
+  step "Step 8 of flow 6" @ src/part8.rs:9
+  step "Step 9 of flow 6" @ src/part9.rs:10
+  step "Step 10 of flow 6" @ src/part10.rs:11
+  step "Step 11 of flow 6" @ src/part11.rs:12
+flow "Flow 7"
+  step "Step 0 of flow 7" @ src/part0.rs:1
+  step "Step 1 of flow 7" @ src/part1.rs:2
+  step "Step 2 of flow 7" @ src/part2.rs:3
+  step "Step 3 of flow 7" @ src/part3.rs:4
+  step "Step 4 of flow 7" @ src/part4.rs:5
+  step "Step 5 of flow 7" @ src/part5.rs:6
+  step "Step 6 of flow 7" @ src/part6.rs:7
+  step "Step 7 of flow 7" @ src/part7.rs:8
+  step "Step 8 of flow 7" @ src/part8.rs:9
+  step "Step 9 of flow 7" @ src/part9.rs:10
+  step "Step 10 of flow 7" @ src/part10.rs:11
+  step "Step 11 of flow 7" @ src/part11.rs:12
+diagram "Big", 12284 bytes, ids ["part-0", "part-1", "part-2", "part-3", "part-4", "part-5", "part-6", "part-7", "part-8", "part-9", "part-10", "part-11", "part-12", "part-13", "part-14", "part-15", "part-16", "part-17", "part-18", "part-19", "part-20", "part-21", "part-22", "part-23", "part-24", "part-25", "part-26", "part-27", "part-28", "part-29", "part-30", "part-31", "part-32", "part-33", "part-34", "part-35", "part-36", "part-37", "part-38", "part-39", "part-40", "part-41", "part-42", "part-43", "part-44", "part-45", "part-46", "part-47"]
+citation src/part0.rs:1-40
+citation src/part1.rs:2-41
+citation src/part2.rs:3-42
+citation src/part3.rs:4-43
+citation src/part4.rs:5-44
+citation src/part5.rs:6-45
+citation src/part6.rs:7-46
+citation src/part7.rs:8-47
+citation src/part8.rs:9-48
+citation src/part9.rs:10-49
+citation src/part10.rs:11-50
+citation src/part11.rs:12-51
+citation src/part12.rs:13-52
+citation src/part13.rs:14-53
+citation src/part14.rs:15-54
+citation src/part15.rs:16-55
+citation src/part16.rs:17-56
+citation src/part17.rs:18-57
+citation src/part18.rs:19-58
+citation src/part19.rs:20-59
+citation src/part20.rs:21-60
+citation src/part21.rs:22-61
+citation src/part22.rs:23-62
+citation src/part23.rs:24-63
+citation src/part24.rs:25-64
+citation src/part25.rs:26-65
+citation src/part26.rs:27-66
+citation src/part27.rs:28-67
+citation src/part28.rs:29-68
+citation src/part29.rs:30-69
+citation src/part30.rs:31-70
+citation src/part31.rs:32-71
+dropped: BriefDropped { components: 12, relations: 19, flows: 2, steps: 16, details: 0, citations: 8, lines: 0, truncated: true }

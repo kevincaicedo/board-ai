@@ -13,11 +13,14 @@
 //      A past session's events.jsonl by id (bounded by the shell); a rejection is counted and
 //      the replay says it couldn't open.
 //   4. The first-run screen's setup_* commands, through the same bridge (setup/tauriSetup.ts).
+//   5. The Sources tray's chooser: invoke("sources_choose", { what, keep }); the app shows the
+//      system's chooser and shares what it picks, so no path crosses this bridge (D-184).
 //
 // Both payloads are the serde JSON of the types in crates/core/src/protocol.rs. Batches are
 // parsed again here (protocol/parse.ts) so a mismatched build drops events instead of crashing.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
 import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import { parseUiBatch } from "../protocol/parse.ts";
@@ -41,7 +44,8 @@ export type TauriCommand =
   | "setup_harness_versions"
   | "setup_add_code_folder"
   | "setup_open_vault"
-  | "setup_rebuild_index";
+  | "setup_rebuild_index"
+  | "sources_choose";
 
 /** The two Tauri calls the transports need, injectable so tests don't need a webview. */
 export interface TauriBridge {
@@ -113,6 +117,15 @@ export class TauriTransport implements Transport {
     }
     this.failedSessionLogs += 1;
     return null;
+  }
+
+  async chooseSource(what: ChooseWhat, keep: boolean): Promise<string | null> {
+    try {
+      await this.#bridge.invoke("sources_choose", { what, keep });
+      return null;
+    } catch (error) {
+      return typeof error === "string" ? error : "The chooser didn't open. Try again.";
+    }
   }
 
   close(): void {

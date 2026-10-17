@@ -167,8 +167,15 @@ impl Core {
             });
         }
         // Harness output can quote repo text: it never gets a system message's authority. It
-        // goes in a user turn, fenced as untrusted data (LLD §9).
-        for report in self.context.reports.drain(..) {
+        // goes in a user turn, fenced as untrusted data (LLD §9). Quiet reports (a prefetched
+        // brief) go with a new turn only: in a tool round they would come between a call's
+        // result and the reply that uses it.
+        let quiet: Vec<String> = if self.reply.is_none() {
+            self.context.quiet.drain(..).collect()
+        } else {
+            Vec::new()
+        };
+        for report in quiet.into_iter().chain(self.context.reports.drain(..)) {
             self.conversation.push(Message::User {
                 parts: vec![UserPart::Text { text: report }],
             });

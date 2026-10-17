@@ -2,6 +2,7 @@
 // speed, on the session's own timing. Delivery is pulled by the frame loop through sessionTime,
 // so a paused or seeked replay renders exactly the frame a live session showed at that time.
 
+import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import type { Chapter, ReplayLog } from "./log.ts";
 import { type BatchSink, isSessionId, type Transport } from "./transport.ts";
@@ -62,6 +63,12 @@ export class ReplayTransport implements Transport {
 
   async sessionLog(id: string): Promise<string | null> {
     return isSessionId(id) ? this.#sessionLogs(id) : null;
+  }
+
+  /** A replay shares nothing: what was shared then is in its log. */
+  async chooseSource(_what: ChooseWhat, _keep: boolean): Promise<string | null> {
+    this.ignoredCommands += 1;
+    return "A replay can't share anything.";
   }
 
   close(): void {

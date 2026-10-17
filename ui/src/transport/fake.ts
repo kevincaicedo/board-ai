@@ -1,5 +1,6 @@
 // An in-memory transport for tests: push batches in, read commands out, set the clock by hand.
 
+import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
 import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiCommand } from "../protocol/generated/UiCommand.ts";
 import type { BatchSink, Transport } from "./transport.ts";
@@ -43,6 +44,14 @@ export class FakeTransport implements Transport {
 
   async sessionLog(id: string): Promise<string | null> {
     return this.logs.get(id) ?? null;
+  }
+
+  /** What the tray asked the chooser for, in order. */
+  readonly chosen: { what: ChooseWhat; keep: boolean }[] = [];
+
+  async chooseSource(what: ChooseWhat, keep: boolean): Promise<string | null> {
+    this.chosen.push({ what, keep });
+    return null;
   }
 
   close(): void {

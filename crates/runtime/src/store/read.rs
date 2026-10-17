@@ -37,6 +37,18 @@ impl Reader {
         }
     }
 
+    /// A query on the read connection, for readers in other modules.
+    pub(crate) fn query<T>(
+        &self,
+        query: impl FnOnce(&Connection) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with(query)
+    }
+
+    pub(crate) fn vault(&self) -> &Vault {
+        &self.vault
+    }
+
     fn with<T>(
         &self,
         query: impl FnOnce(&Connection) -> Result<T, StoreError>,

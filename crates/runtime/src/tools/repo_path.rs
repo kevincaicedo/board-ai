@@ -113,6 +113,8 @@ struct Root {
     canonical: PathBuf,
     /// The folder's own name, shown as a prefix when several folders are open.
     name: String,
+    /// A single shared file (D-184): only the file itself is inside it, by its name.
+    file: bool,
 }
 
 /// A canonical path inside an opened folder. Only [`RepoRoots::resolve`] makes one.
@@ -138,6 +140,35 @@ impl RepoPath {
 impl RepoRoots {
     /// Opens folders. Each must exist and be a directory.
     pub fn open(folders: &[PathBuf]) -> Result<Self, ToolError> {
+        Self::open_with_files(folders, &[])
+    }
+
+    /// Opens folders, and single files shared on their own (D-184): a file is readable by its
+    /// name or its path, and nothing beside it is.
+    pub fn open_with_files(folders: &[PathBuf], files: &[PathBuf]) -> Result<Self, ToolError> {
+        let mut roots = Self::open_folders(folders)?;
+        for file in files {
+            let Ok(canonical) = std::fs::canonicalize(file) else {
+                continue;
+            };
+            if !canonical.is_file() || is_credential(&canonical) {
+                continue;
+            }
+            let name = canonical
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            roots.roots.push(Root {
+                given: file.clone(),
+                canonical,
+                name,
+                file: true,
+            });
+        }
+        Ok(roots)
+    }
+
+    fn open_folders(folders: &[PathBuf]) -> Result<Self, ToolError> {
         let mut roots = Vec::with_capacity(folders.len());
         for folder in folders {
             let canonical = std::fs::canonicalize(folder).map_err(|error| {
@@ -160,6 +191,7 @@ impl RepoRoots {
                 given: folder.clone(),
                 canonical,
                 name,
+                file: false,
             });
         }
         Ok(Self { roots })
@@ -170,7 +202,7 @@ impl RepoRoots {
         self.roots.is_empty()
     }
 
-    /// The canonical folders, in the order they were opened.
+    /// The canonical folders (and single files), in the order they were opened.
     pub fn folders(&self) -> impl Iterator<Item = &Path> {
         self.roots.iter().map(|root| root.canonical.as_path())
     }
@@ -245,14 +277,26 @@ impl RepoRoots {
             return vec![path.to_path_buf()];
         }
         let mut candidates = Vec::new();
-        for root in &self.roots {
+        // A single shared file answers to its own name only.
+        candidates.extend(
+            self.roots
+                .iter()
+                .filter(|root| root.file && path == Path::new(&root.name))
+                .map(|root| root.canonical.clone()),
+        );
+        for root in self.roots.iter().filter(|root| !root.file) {
             if let Ok(rest) = path.strip_prefix(&root.name)
                 && self.roots.len() > 1
             {
                 candidates.push(root.canonical.join(rest));
             }
         }
-        candidates.extend(self.roots.iter().map(|root| root.canonical.join(path)));
+        candidates.extend(
+            self.roots
+                .iter()
+                .filter(|root| !root.file)
+                .map(|root| root.canonical.join(path)),
+        );
         candidates
     }
 
@@ -289,6 +333,9 @@ impl RepoRoots {
     }
 
     fn display_in(&self, root: &Root, absolute: &Path) -> String {
+        if root.file {
+            return root.name.clone();
+        }
         let relative = absolute.strip_prefix(&root.canonical).unwrap_or(absolute);
         let parts: Vec<String> = relative
             .components()

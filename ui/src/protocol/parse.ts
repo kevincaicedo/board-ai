@@ -54,6 +54,7 @@ import type { UiBatch } from "./generated/UiBatch.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { UiLogLine } from "./generated/UiLogLine.ts";
 import type { View } from "./generated/View.ts";
+import { dropOverlay, sourcesTray } from "./sources.ts";
 import { detailAnchor, stagedParts } from "./staged.ts";
 import { labelHint, userShape } from "./yours.ts";
 
@@ -587,6 +588,14 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     return layer === null || title === null || part === null || parts === null || part > parts
       ? null
       : { type: "Diagram", layer, title, part, parts };
+  },
+  Sources: (f, skips) => {
+    const tray = sourcesTray(f.tray, skips);
+    return tray === null ? null : { type: "Sources", tray };
+  },
+  SourceDrop: (f) => {
+    const drop = nullable(f.drop, dropOverlay);
+    return drop === undefined ? null : { type: "SourceDrop", drop };
   },
 };
 

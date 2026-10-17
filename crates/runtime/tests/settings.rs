@@ -42,6 +42,10 @@ fn an_empty_file_is_the_defaults() {
     assert_eq!(settings.mic, MicMode::Open);
     assert_eq!(settings.tts.kind, TtsKind::Kokoro);
     assert_eq!(settings.harness.kind, HarnessChoice::Auto);
+    assert_eq!(
+        settings.harness.research_model, None,
+        "briefs run on sonnet"
+    );
     assert_eq!(settings.audio.input, InputChoice::SystemDefault);
 }
 
@@ -110,6 +114,7 @@ model = "eleven_flash_v2_5"
 
 [harness]
 kind = "pi"
+research_model = "opus"
 "#;
     let settings = parse(text).expect("parses");
     assert_eq!(
@@ -140,6 +145,7 @@ kind = "pi"
     assert_eq!(settings.tts.kind, TtsKind::ElevenLabs);
     assert_eq!(settings.tts.secret, SecretName::parse("elevenlabs"));
     assert_eq!(settings.harness.kind, HarnessChoice::Pi);
+    assert_eq!(settings.harness.research_model.as_deref(), Some("opus"));
 }
 
 #[test]
@@ -168,6 +174,10 @@ fn errors_name_the_field() {
             "tts.base_url",
         ),
         ("[harness]\nkind = \"cursor\"", "harness.kind"),
+        (
+            "[harness]\nresearch_model = \" \"",
+            "harness.research_model",
+        ),
     ];
     for (text, field) in cases {
         assert_eq!(invalid_field(text), field, "{text}");

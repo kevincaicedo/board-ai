@@ -2,8 +2,9 @@
 import type { DrawAction } from "./DrawAction.ts";
 import type { MicAction } from "./MicAction.ts";
 import type { PointerTarget } from "./PointerTarget.ts";
+import type { SourceAction } from "./SourceAction.ts";
 
 /**
  * Commands from the UI. Pointing, the mic and closing a view go to the core.
  */
-export type UiCommand = { "type": "Pointer", target: PointerTarget | null, } | { "type": "Mic", action: MicAction, } | { "type": "Stop" } | { "type": "CloseView" } | { "type": "OpenSource", path: string, line: number, } | { "type": "Draw", action: DrawAction, };
+export type UiCommand = { "type": "Pointer", target: PointerTarget | null, } | { "type": "Mic", action: MicAction, } | { "type": "Stop" } | { "type": "CloseView" } | { "type": "OpenSource", path: string, line: number, } | { "type": "Draw", action: DrawAction, } | { "type": "Sources", action: SourceAction, };

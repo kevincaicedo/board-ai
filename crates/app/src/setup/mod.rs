@@ -10,7 +10,7 @@
 
 pub mod commands;
 mod downloads;
-mod folders;
+pub(crate) mod folders;
 mod harnesses;
 mod input;
 mod keys;

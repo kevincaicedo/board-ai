@@ -214,7 +214,8 @@ fn is_asking_about_a_change(sim: &Sim) -> bool {
             | Effect::Remember(_)
             | Effect::WakeAt { .. }
             | Effect::Forget { .. }
-            | Effect::AcceptProposal { .. } => {}
+            | Effect::AcceptProposal { .. }
+            | Effect::Source { .. } => {}
         }
     }
     asking

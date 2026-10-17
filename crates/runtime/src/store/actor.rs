@@ -83,6 +83,8 @@ pub(crate) enum Message {
         reply: Reply<ScanReport>,
     },
     Read(ReadRequest),
+    /// A project's sources and their briefs (D-184, D-185).
+    Sources(super::sources::SourcesRequest),
     Shutdown {
         reply: Reply<()>,
     },
@@ -120,6 +122,10 @@ pub(crate) enum ReadRequest {
     SessionLog {
         id: SessionId,
         reply: Reply<String>,
+    },
+    /// The project the latest session worked on (D-184).
+    LastProject {
+        reply: Reply<Option<boardai_core::sources::Project>>,
     },
 }
 
@@ -269,6 +275,14 @@ async fn handle(state: &mut State, message: Message) {
             .await;
             let _ = reply.send(result);
         }
+        Message::Sources(request) => {
+            // The request answers its own caller; a lost state drops it, which answers Stopped.
+            let _ = blocking(state, move |state| {
+                super::sources::handle(state, request);
+                Ok(())
+            })
+            .await;
+        }
         // Handled by the loop; listed so a new message kind must be placed deliberately.
         Message::Log(_) | Message::Read(_) | Message::Shutdown { .. } => {}
     }
@@ -302,6 +316,9 @@ fn serve_read(reader: &Reader, request: ReadRequest) {
         }
         ReadRequest::SessionLog { id, reply } => {
             let _ = reply.send(reader.session_log(&id));
+        }
+        ReadRequest::LastProject { reply } => {
+            let _ = reply.send(super::sources::last_project(reader));
         }
     }
 }

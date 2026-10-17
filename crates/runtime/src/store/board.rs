@@ -97,7 +97,9 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
-            | UiEvent::Diagram { .. } => {}
+            | UiEvent::Diagram { .. }
+            | UiEvent::Sources { .. }
+            | UiEvent::SourceDrop { .. } => {}
         }
     }
     let mut events = Vec::new();
