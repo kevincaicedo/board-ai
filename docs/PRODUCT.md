@@ -178,6 +178,9 @@ BoardAI draws on an infinite canvas in an Excalidraw-like hand-drawn style. Draw
 - State machines
 - Data structure and memory layouts: arrays, pages, trees, hash tables (like reference image 1)
 - Call graphs
+- **Detailed system diagrams**, as dense as a hand-made Excalidraw map: containers nested several levels deep (cloud › VPC › subnet › node group), color-coded categories with a legend, notes and numbered steps written inside the diagram, structs and memory layouts with their fields, labelled arrows, dashed boundaries. A single board can hold a hundred or more elements; BoardAI still draws them in a human order, a part at a time, as it explains.
+
+**Simple or detailed, and deeper on request.** BoardAI fits the drawing to the question: a quick sketch for "what's a cache?", a full map for "walk me through inf-alloc". Saying "more detail on the arena" drills into that part: the camera moves into it and a detail layer opens, anchored to it, with its internals. Each level can go deeper again, and "back out" returns. Large diagrams are planned whole before the first stroke, so nothing already drawn ever moves.
 
 **Later:** timelines, layered stacks (OSI, kernel layers) and plots.
 
@@ -206,8 +209,9 @@ Surfaces follow three rules:
 
 ### 7.3 Code understanding (on top of coding harnesses)
 
-- **Quick reads are native.** For "show me the retry policy", BoardAI reads and searches the open repo itself, read-only, in milliseconds.
-- **Deep work goes to a coding harness.** For deep research, code reviews and changes, BoardAI hands a precise brief to Claude Code (headless CLI) or pi (RPC mode) and narrates the progress while it runs.
+- **Understanding code goes through a coding harness.** Questions about a shared codebase, a crate, a module or a whole repo, go to Claude Code (headless CLI) or pi (RPC mode) as research. The harness reads the code and returns a brief: the components and how they relate, the main flows with `file:line`, and a diagram at the depth you asked for. BoardAI draws it and explains it step by step, and asks the harness again when you want to go deeper. While it reads, BoardAI says what it is looking at.
+- **Quick looks stay native.** Showing a file's lines in a code card, and checking every `file:line` a brief cites before its chip appears, are read-only native reads, in milliseconds.
+- **Reviews and changes go to the harness too.** BoardAI hands it a precise brief and narrates the progress while it runs.
   - Research and reviews are read-only.
   - A change runs only after you confirm it out loud, and always on a new git branch.
 - **Repo tours.** Saying "Walk me through this repo" makes BoardAI draw a module map on the canvas, then take you through the main paths one at a time.
@@ -257,6 +261,21 @@ Two controls cover the rest. "Forget that" removes the last memory. "Don't remem
 - **Export.** Diagrams export as PNG, SVG or `.excalidraw`, notes as Markdown, plus the transcript.
 
 ---
+
+### 7.7 Sources: what you want to understand
+
+You share what you want to learn from, and BoardAI keeps it at hand.
+
+- **What you can share:** a codebase, a crate or module folder, a single file, a Markdown or text document, or a PDF (a paper, a spec, a book chapter).
+- **How:** drop it on the window, add it from the Sources tray (the macOS chooser), or say it ("use the inf-alloc crate", resolved inside the code folders you allowed).
+- **For this session or for a project.** A source is for this session unless you keep it in the project ("keep this in the infinitydb project"). A project's sources are there in every session of that project, with what BoardAI already learned about them, so a second question about the same crate is fast.
+- **Code** is always understood through the coding harness (§7.3).
+- **Documents** are read without losing what matters:
+  - Text, headings, lists and tables are extracted on this Mac.
+  - Figures and diagrams are read too, by the talker model when it accepts files and images, or by the coding harness when the document is long or the question is deep.
+  - Each document gets a digest: its sections, its figures described as diagrams BoardAI can redraw, its tables, and its key claims with page numbers.
+  - A Doc card shows the passage or figure being discussed, with a `p. 5 · Figure 3` chip.
+- **Private by default.** Sources are read on this Mac. Their text goes only to the providers you configured (the talker, the harness), and the tray says which one.
 
 ## 8. Design language
 
@@ -370,7 +389,7 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
 
 - A desktop app for macOS 14+ on Apple silicon, with a light theme. Open source, bring your own keys.
 - **Providers, all swappable:**
-  - LLM: Claude, OpenRouter, or a local model through Ollama
+  - LLM: Claude, OpenRouter (any listed model; measured presets include gpt-oss-120b, Qwen3.8, DeepSeek V4.1 Flash, Claude Haiku 5.5, Gemini 3.8 Flash and GPT-6 Luna), or a local model through Ollama
   - Speech-to-text: local Whisper by default
   - Text-to-speech: a local voice model (Kokoro) by default, or ElevenLabs
   - Coding harness: Claude Code (headless CLI) or pi
@@ -380,14 +399,15 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
   - Captions
 - **The orb**, with every state and the orb-to-nib transition.
 - **Live canvas:**
-  - Architecture, flow, sequence and data-structure diagrams
+  - Architecture, flow, sequence and data-structure diagrams, from quick sketches to detailed nested system maps, with drill-down into any part
   - Human-like strokes synced to speech
   - Strike-and-rewrite corrections and annotations
   - Camera follow and depth of field
 - **Explanations:** the thread, nested detours and exact resume.
 - **Pointing:** hover or click while saying "this".
+- **Sources (§7.7):** codebases, crates, modules, files, Markdown and PDF documents, shared for a session or kept in a project, with document digests that keep figures.
 - **Code grounding:**
-  - Native read-only tools on a local repo, plus the coding harness for deep research, reviews and confirmed changes
+  - Code understanding through the coding harness (research briefs with diagrams), native read-only looks for code cards and citation checks, and the harness for reviews and confirmed changes
   - Module map
   - Code cards with synced highlights and source chips
   - Trace mode
