@@ -6,7 +6,7 @@ BoardAI is a voice-first desktop app for understanding software. You ask out lou
 
 It reads your real code through native tools and coding harnesses (Claude Code, pi), and it keeps notes, tasks and memories as plain files on your machine.
 
-> **Status:** MVP built (October 2026): voice loop with barge-in, live drawing in sync with speech, detours and resume, code grounding, memory and library. It runs end to end on local models. See [PLAN](docs/PLAN.md) for what is left before the exit criteria.
+> **Status:** MVP built (October 2026): voice loop with barge-in, live drawing in sync with speech, detours and resume, code grounding, memory and library. It runs end to end on local models.
 
 ## Principles
 
@@ -23,11 +23,9 @@ It reads your real code through native tools and coding harnesses (Claude Code, 
 | [Product](docs/PRODUCT.md) | What we're building and why |
 | [High-level design](docs/architecture/HLD.md) · [diagram](docs/architecture/hld.excalidraw) | The parts and how they fit |
 | [Low-level design](docs/architecture/LLD.md) · [diagrams](docs/architecture/lld.excalidraw) | Types, algorithms, limits, invariants |
-| [Decisions](docs/DECISIONS.md) | Why things are the way they are |
-| [Plan](docs/PLAN.md) | Where the work is |
 | [AGENTS.md](AGENTS.md) | How we work: rules for people and agents |
 
-The `.excalidraw` files open at [excalidraw.com](https://excalidraw.com) (menu → Open).
+The `.excalidraw` files open at [excalidraw.com](https://excalidraw.com) (menu → Open). Decisions are cited by id (`D-123`); the decision log and the plan are kept by the maintainer outside this repository.
 
 ## Run it
 

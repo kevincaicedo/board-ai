@@ -30,7 +30,7 @@ How each rule is enforced, using the strongest mechanism available:
 | No `unwrap`/`expect` on operational errors | `clippy::unwrap_used` and `clippy::expect_used` denied outside tests; an invariant-backed `expect` carries a `reason` |
 | Functions ≤ 70 lines, files ≤ 800 lines | `clippy::too_many_lines` (threshold 70). The file limit is checked in `just check`. |
 | Protocol types are generated, never hand-written | `just check` regenerates them and fails on any diff |
-| Dependencies are few and deliberate | A new crate or npm package needs a row in [DECISIONS.md](../DECISIONS.md); `cargo deny` checks licenses and advisories |
+| Dependencies are few and deliberate | A new crate or npm package needs a row in the decision log; `cargo deny` checks licenses and advisories |
 
 ## 2. Core
 
@@ -1030,7 +1030,7 @@ CI runs the same command on macOS.
 
 ## 10. Dependencies
 
-New entries need a row in [DECISIONS.md](../DECISIONS.md).
+New entries need a row in the decision log.
 
 | Where | Crates or packages |
 |---|---|

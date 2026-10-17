@@ -1,6 +1,6 @@
 # BoardAI · High-level design
 
-> Status: **draft for review** · 2026-10-15 · Diagram: [`hld.excalidraw`](hld.excalidraw) (open it at [excalidraw.com](https://excalidraw.com) → menu → Open) · Low level: [LLD.md](LLD.md) · Decisions: [../DECISIONS.md](../DECISIONS.md)
+> Status: **draft for review** · 2026-10-15 · Diagram: [`hld.excalidraw`](hld.excalidraw) (open it at [excalidraw.com](https://excalidraw.com) → menu → Open) · Low level: [LLD.md](LLD.md)
 
 ## 1. What this document covers
 
@@ -146,7 +146,7 @@ The runtime measures every stage, and the numbers show in a dev overlay and in e
 
 ## 10. Decisions this design depends on
 
-Each one has a row with its reason in [DECISIONS.md](../DECISIONS.md):
+Each one has a row with its reason in the decision log (cited by id):
 
 - Tauri
 - The core / runtime / app split

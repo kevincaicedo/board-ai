@@ -17,8 +17,10 @@ When documents conflict, the higher one wins. A document that the code contradic
 1. [docs/PRODUCT.md](docs/PRODUCT.md): what we build and why.
 2. The [design canvas](https://claude.ai/artifact/XY3ZrPFmFDA9gNw9Y6WuVJ): how it looks and moves. It is the source of truth for every screen. Agents with claude.ai access read it with the Artifact tool. Everyone else uses the tokens exported into `ui/src/styles/`.
 3. [docs/architecture/HLD.md](docs/architecture/HLD.md) and [LLD.md](docs/architecture/LLD.md): how it works.
-4. [docs/DECISIONS.md](docs/DECISIONS.md): why it works that way.
-5. [docs/PLAN.md](docs/PLAN.md): where the work is.
+4. The decision log (`DECISIONS.md`): why it works that way.
+5. The plan (`PLAN.md`): where the work is.
+
+The decision log and the plan are kept by the maintainer outside this repository, in `../records/` beside the checkout. Code and docs cite decisions by id (`D-123`). Contributors without access propose a decision in the PR description, and the maintainer records it.
 
 Before changing an area, read the HLD and the LLD sections it touches. Before UI work, read the canvas frame you're implementing.
 
@@ -26,13 +28,13 @@ Before changing an area, read the HLD and the LLD sections it touches. Before UI
 
 | Record | Updated when |
 |---|---|
-| `docs/DECISIONS.md` row | **Before** the code, whenever a seam, dependency, protocol, storage format or product scope changes |
-| `docs/PLAN.md` | In the same change that starts or finishes a task |
+| Decision log row (`../records/DECISIONS.md`) | **Before** the code, whenever a seam, dependency, protocol, storage format or product scope changes |
+| Plan (`../records/PLAN.md`) | When a task starts or finishes |
 | HLD / LLD | In the same change that makes them wrong |
 
 There are no tickets, journals or status reports. Commit messages and PR descriptions carry the rest.
 
-**The work loop:** read → write the decision row if one is needed → build a thin slice with tests → `just check` → commit → update PLAN.
+**The work loop:** read → write the decision row if one is needed → build a thin slice with tests → `just check` → commit → update the plan.
 
 **Steel thread first.** Build one thin path through every seam before polishing any of them.
 
@@ -141,4 +143,4 @@ The first time, run `npm --prefix ui install`. CI runs `just check` on macOS.
 - **Commits:** one short imperative line per logical change, for example `add narration parser`. Reasoning, measurements and commands go in the PR description.
 - **Implementation reports:** lead with what changed. List files, what ran, and what did **not** run.
 - **Reviews:** findings first, ordered by severity, each with `file:line`.
-- **Ownership:** Claude drives implementation and keeps PLAN current. The owner reviews architecture and product decisions.
+- **Ownership:** Claude drives implementation and keeps the plan current. The owner reviews architecture and product decisions.

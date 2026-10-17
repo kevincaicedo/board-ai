@@ -2,7 +2,7 @@
 
 > Status: pre-MVP · Last updated: 2026-10-15 · Open source (Apache-2.0)
 >
-> **Design (source of truth for every screen):** [BoardAI design canvas](https://claude.ai/artifact/XY3ZrPFmFDA9gNw9Y6WuVJ) · **Architecture:** [HLD](architecture/HLD.md) · [LLD](architecture/LLD.md) · **Decisions:** [DECISIONS.md](DECISIONS.md) · **Plan:** [PLAN.md](PLAN.md)
+> **Design (source of truth for every screen):** [BoardAI design canvas](https://claude.ai/artifact/XY3ZrPFmFDA9gNw9Y6WuVJ) · **Architecture:** [HLD](architecture/HLD.md) · [LLD](architecture/LLD.md)
 
 ## TL;DR
 
@@ -483,7 +483,7 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
 
 ## 15. Decisions
 
-The open questions from the first draft are answered. [DECISIONS.md](DECISIONS.md) records each decision with its reason.
+The open questions from the first draft are answered. The decision log (kept outside this repository, cited as `D-123`) records each decision with its reason.
 
 | Question | Decision |
 |---|---|
