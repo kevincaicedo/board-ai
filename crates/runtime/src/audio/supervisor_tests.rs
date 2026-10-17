@@ -247,9 +247,11 @@ async fn the_system_default_is_followed_as_it_changes() {
 
 #[tokio::test]
 async fn a_burst_of_notifications_rebuilds_once_and_no_change_rebuilds_nothing() {
+    // The settle window is 25 times the 20 ms gap: with 100 ms, a CI runner that stalled this
+    // thread between the two notifications let the first one settle alone.
     let timing = Timing {
-        settle: Duration::from_millis(100),
-        settle_max: Duration::from_millis(1_000),
+        settle: Duration::from_millis(500),
+        settle_max: Duration::from_millis(2_000),
         ..quick()
     };
     let mut rig = rig(
