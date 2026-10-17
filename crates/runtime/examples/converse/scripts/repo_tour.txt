@@ -1,0 +1,3 @@
+# A repo tour (PRODUCT "Repo tours", prompt v4): run with --repo pointed at a repository. Counts
+# real tool calls against calls written as words or tags, and module maps against the listing.
+Walk me through this repo.

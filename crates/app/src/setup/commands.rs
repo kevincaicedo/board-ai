@@ -93,6 +93,7 @@ pub async fn setup_key(
     let ledger = Arc::clone(&state.keys);
     let lock = Arc::clone(&state.settings);
     blocking(move || save_key(&KeychainSecrets, &ledger, &lock, name, value)).await?;
+    state.key_changed(name);
     let ollama = last_ollama(&state).await;
     current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }
@@ -124,7 +125,8 @@ pub async fn setup_download(
 
 /// The model picker's lists (D-153): OpenRouter's tool-capable models, one OpenRouter model's
 /// providers, or the local Ollama's models. Bounded by `MODEL_LIST_TIMEOUT_MS` (Ollama's by
-/// `OLLAMA_PROBE_TIMEOUT_MS`) and kept a while, so asking again is cheap. Needs no key.
+/// `OLLAMA_PROBE_TIMEOUT_MS`) and kept a while, so asking again is cheap. Needs no key; a
+/// provider list carries the saved OpenRouter key for its speeds (D-218).
 #[tauri::command]
 pub async fn setup_models(
     query: ModelQuery,
@@ -161,6 +163,7 @@ pub async fn setup_remove_key(
     let lock = Arc::clone(&state.settings);
     let ledger = Arc::clone(&state.keys);
     blocking(move || remove_key(&paths, &lock, &KeychainSecrets, &ledger, name)).await?;
+    state.key_changed(name);
     let ollama = last_ollama(&state).await;
     current_status(&app, &state, ollama, TalkerKey::AsSeen).await
 }

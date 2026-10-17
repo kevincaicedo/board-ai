@@ -320,8 +320,8 @@ mod tests {
     use std::path::Path;
 
     use boardai_core::setup::{
-        InputDevice, KeyName, KeyState, ModelInfo, ModelReasoning, OllamaStatus, SetupEdit,
-        TalkerProvider, VoiceEngine,
+        Drawing, InputDevice, KeyName, KeyState, ModelInfo, ModelReasoning, OllamaStatus,
+        SetupEdit, TalkerProvider, VoiceEngine,
     };
     use boardai_runtime::audio::InputChoice;
     use boardai_runtime::limits::SECRET_VALUE_MAX_BYTES;
@@ -474,9 +474,9 @@ mod tests {
         assert_eq!(qwen.route, QWEN_3_8_27B.route());
     }
 
-    #[test]
-    fn another_openrouter_model_thinks_as_little_as_its_listing_allows() {
-        let listing = |id: &str, reasoning: ModelReasoning| ModelInfo {
+    /// A model from OpenRouter's list that isn't a preset.
+    fn listing(id: &str, reasoning: ModelReasoning) -> ModelInfo {
+        ModelInfo {
             id: id.to_owned(),
             name: id.to_owned(),
             context_tokens: None,
@@ -484,7 +484,12 @@ mod tests {
             reasoning,
             preset: false,
             route: Vec::new(),
-        };
+            drawing: Drawing::NotMeasured,
+        }
+    }
+
+    #[test]
+    fn another_openrouter_model_thinks_as_little_as_its_listing_allows() {
         let optional = listing("x/optional", ModelReasoning::Optional);
         let (talker, _) = picked(&open_router(Some("x/optional")), Some(&optional));
         assert_eq!(talker.effort, Some(Effort::None));
@@ -603,15 +608,7 @@ mod tests {
         let other = SetupEdit::Scribe {
             model: "x/never-thinks".to_owned(),
         };
-        let listed = ModelInfo {
-            id: "x/never-thinks".to_owned(),
-            name: "x".to_owned(),
-            context_tokens: None,
-            price: None,
-            reasoning: ModelReasoning::Never,
-            preset: false,
-            route: Vec::new(),
-        };
+        let listed = listing("x/never-thinks", ModelReasoning::Never);
         let mut context = known(&open_router, &unreachable, KeyState::NotNeeded, &[]);
         context.open_router_model = Some(&listed);
         let Ok(SettingsEdit::Scribe(plain)) = settings_edit(&other, context) else {

@@ -23,7 +23,7 @@ quantization: string | null,
 tools: boolean, 
 /**
  * Time to the first token, median over OpenRouter's last 30 minutes, when its list gives
- * it. Its public list (no key) gives none (D-153, recorded 2026-10).
+ * it: asked with the saved key it does; without one it gives none (D-176, D-218).
  */
 latency_ms_p50: number | null, 
 /**

@@ -1,0 +1,228 @@
+{
+ "data": {
+  "id": "google/gemini-3.8-flash",
+  "name": "Google: Gemini 3.8 Flash",
+  "endpoints": [
+   {
+    "provider_name": "Google AI Studio",
+    "tag": "google-ai-studio/flex",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.000000375",
+     "completion": "0.000001875"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "seed",
+     "response_format",
+     "structured_outputs",
+     "tool_choice",
+     "tools",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 2566,
+     "p90": 5858.300000000009
+    },
+    "throughput_last_30m": {
+     "p50": 88,
+     "p90": 44
+    }
+   },
+   {
+    "provider_name": "Google",
+    "tag": "google-vertex/global/flex",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.000000375",
+     "completion": "0.000001875"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "seed",
+     "response_format",
+     "stop",
+     "structured_outputs",
+     "tools",
+     "tool_choice",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 12632,
+     "p90": 35040.40000000001
+    },
+    "throughput_last_30m": {
+     "p50": 37.5,
+     "p90": 5
+    }
+   },
+   {
+    "provider_name": "Google AI Studio",
+    "tag": "google-ai-studio",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.00000075",
+     "completion": "0.00000375"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "seed",
+     "response_format",
+     "structured_outputs",
+     "tool_choice",
+     "tools",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 2356.5,
+     "p90": 4252.800000000001
+    },
+    "throughput_last_30m": {
+     "p50": 85,
+     "p90": 38
+    }
+   },
+   {
+    "provider_name": "Google",
+    "tag": "google-vertex/global",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.00000075",
+     "completion": "0.00000375"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "seed",
+     "response_format",
+     "stop",
+     "structured_outputs",
+     "tools",
+     "tool_choice",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 2196,
+     "p90": 5658.800000000001
+    },
+    "throughput_last_30m": {
+     "p50": 85,
+     "p90": 36
+    }
+   },
+   {
+    "provider_name": "Google",
+    "tag": "google-vertex/us",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.000000825",
+     "completion": "0.000004125"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "seed",
+     "response_format",
+     "stop",
+     "structured_outputs",
+     "tools",
+     "tool_choice",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 1970,
+     "p90": 10591.5
+    },
+    "throughput_last_30m": {
+     "p50": 125.5,
+     "p90": 47.7
+    }
+   },
+   {
+    "provider_name": "Google AI Studio",
+    "tag": "google-ai-studio/priority",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.00000135",
+     "completion": "0.00000675"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "temperature",
+     "top_p",
+     "seed",
+     "response_format",
+     "structured_outputs",
+     "tool_choice",
+     "tools",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 1853,
+     "p90": 2415
+    },
+    "throughput_last_30m": {
+     "p50": 90,
+     "p90": 74
+    }
+   },
+   {
+    "provider_name": "Google",
+    "tag": "google-vertex/global/priority",
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "pricing": {
+     "prompt": "0.00000135",
+     "completion": "0.00000675"
+    },
+    "quantization": "unknown",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "seed",
+     "response_format",
+     "stop",
+     "structured_outputs",
+     "tools",
+     "tool_choice",
+     "reasoning_effort"
+    ],
+    "latency_last_30m": {
+     "p50": 3414.5,
+     "p90": 4738.300000000001
+    },
+    "throughput_last_30m": {
+     "p50": 109,
+     "p90": 75
+    }
+   }
+  ]
+ }
+}

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
 import { firstLaunch, keyStates, presetTransport, withKey } from "./fake.ts";
-import { RECORDED_QWEN_PROVIDERS } from "./fakeModels.ts";
+import { RECORDED_MODELS, RECORDED_QWEN_PROVIDERS } from "./fakeModels.ts";
 import {
   activeSection,
   drawsDiagrams,
@@ -73,8 +73,10 @@ test("the chosen model's panel says who serves it, how it thinks and if it draws
   assert.equal(thinkingLabel("Off"), "Off for speech");
   assert.equal(thinkingLabel("Low"), "Low");
   assert.equal(thinkingLabel("ExtraHigh"), "Extra high");
-  assert.equal(drawsDiagrams(true), "Checked ✓");
-  assert.equal(drawsDiagrams(false), "Not checked yet");
+  assert.equal(drawsDiagrams(status.talker.drawing), "Checked ✓ (11 of 12)");
+  assert.equal(drawsDiagrams(firstLaunch().talker.drawing), "Not measured");
+  const haiku = RECORDED_MODELS.find((model) => model.id === "anthropic/claude-haiku-5.5");
+  assert.equal(drawsDiagrams(haiku?.drawing ?? { kind: "NotMeasured" }), "Sometimes (5 of 12)");
   assert.equal(scribeLine(status), "Memory digests use qwen3.8-27b");
   assert.equal(scribeChangeable("Claude"), false);
   assert.equal(scribeChangeable("OpenRouter"), true);

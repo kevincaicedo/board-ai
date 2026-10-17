@@ -3,8 +3,9 @@
 //
 // Never a made-up number: a row's first token and speed come only from OpenRouter's provider
 // list (the provider a preset is routed to, else the fastest that takes tools), and the two
-// columns show only while a shown row has one. OpenRouter's public list gives none today, so
-// the table leaves them out and its order is presets first, then OpenRouter's (D-176).
+// columns show only while a shown row has one. The list gives them only when asked with the
+// saved OpenRouter key (D-218); without one the table leaves them out and its order is presets
+// first, then OpenRouter's (D-176).
 
 import type { ModelInfo } from "../protocol/generated/ModelInfo.ts";
 import type { ModelPrice } from "../protocol/generated/ModelPrice.ts";

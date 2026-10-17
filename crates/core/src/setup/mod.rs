@@ -90,9 +90,11 @@ pub struct TalkerSetup {
     /// OpenRouter only: the providers tried, in order, and no others (route slugs, `cerebras`;
     /// D-152). Empty: OpenRouter picks.
     pub route: Vec<String>,
-    /// A BoardAI preset (OpenRouter's two, D-152, or Ollama's default model): its voice and its
-    /// drawing were checked. Other models may draw less well.
+    /// A BoardAI preset (OpenRouter's, D-152 and D-216, or Ollama's default model): measured
+    /// with its route and thinking set for speed. How well it draws is [`Self::drawing`].
     pub preset: bool,
+    /// How the talker draws, as spike S5 measured it (D-219).
+    pub drawing: Drawing,
 }
 
 /// The talker's thinking as configured (`effort`). Claude can't turn it off, so its `none` is
@@ -431,6 +433,62 @@ pub struct ModelInfo {
     pub preset: bool,
     /// A preset's route (slugs, `cerebras`): the only providers tried. Empty: OpenRouter picks.
     pub route: Vec<String>,
+    /// How the model draws, as spike S5 measured it (D-219).
+    pub drawing: Drawing,
+}
+
+/// A model draws "checked" when at least this many of every 12 measured answers drew (D-219):
+/// gpt-oss-120b drew in 11 of 12, Qwen3.8 27B in 9 (HLD §11). Below it, it draws sometimes.
+pub const DRAWING_CHECKED_OF_12: u32 = 10;
+
+/// What spike S5 measured for a model (HLD §11): `converse` on the four standard scripts, two
+/// runs each.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DrawingMeasure {
+    /// Answers that drew at least one shape.
+    pub drew: u32,
+    /// Answers measured.
+    pub answers: u32,
+    /// From the request to the first stroke, median over the answers that drew.
+    pub first_stroke_ms_p50: u32,
+    /// The day it was measured, `2026-10-16`.
+    pub measured_on: String,
+}
+
+/// How a model draws, for the settings page (D-219). The core judges it from the measure, so
+/// the page only words it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind")]
+#[ts(export)]
+pub enum Drawing {
+    /// Never measured with BoardAI's drawing scripts.
+    NotMeasured,
+    /// Drew in at least [`DRAWING_CHECKED_OF_12`] of every 12 answers.
+    Checked { measure: DrawingMeasure },
+    /// Drew in fewer.
+    Sometimes { measure: DrawingMeasure },
+}
+
+impl Drawing {
+    /// The verdict on a measure; a measure of no answers is no measure.
+    #[must_use]
+    pub fn judge(measure: Option<DrawingMeasure>) -> Self {
+        let Some(measure) = measure.filter(|measure| measure.answers > 0) else {
+            return Self::NotMeasured;
+        };
+        debug_assert!(
+            measure.drew <= measure.answers,
+            "drew in more answers than measured"
+        );
+        let drew_of_12 = u64::from(measure.drew) * 12;
+        let needed = u64::from(DRAWING_CHECKED_OF_12) * u64::from(measure.answers);
+        if drew_of_12 >= needed {
+            Self::Checked { measure }
+        } else {
+            Self::Sometimes { measure }
+        }
+    }
 }
 
 /// Prices in millionths of a US dollar per million tokens (`240000` is $0.24 per million).
@@ -474,7 +532,7 @@ pub struct ModelProvider {
     /// The provider takes tool calls for this model.
     pub tools: bool,
     /// Time to the first token, median over OpenRouter's last 30 minutes, when its list gives
-    /// it. Its public list (no key) gives none (D-153, recorded 2026-10).
+    /// it: asked with the saved key it does; without one it gives none (D-176, D-218).
     pub latency_ms_p50: Option<u32>,
     /// Output speed, median over OpenRouter's last 30 minutes, when its list gives it.
     pub throughput_tokens_per_second_p50: Option<u32>,

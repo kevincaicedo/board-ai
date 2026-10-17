@@ -260,7 +260,7 @@ function Selected({ status, catalog }: ThinkingProps) {
         </div>
         <div>
           <dt>Draws diagrams</dt>
-          <dd>{drawsDiagrams(status.talker.preset)}</dd>
+          <dd>{drawsDiagrams(status.talker.drawing)}</dd>
         </div>
       </dl>
       <Providers providers={providers} route={status.talker.route} />

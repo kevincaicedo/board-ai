@@ -22,6 +22,8 @@ import {
 } from "../protocol/fields.ts";
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
 import type { DownloadProblem } from "../protocol/generated/DownloadProblem.ts";
+import type { Drawing } from "../protocol/generated/Drawing.ts";
+import type { DrawingMeasure } from "../protocol/generated/DrawingMeasure.ts";
 import type { ElevenLabsVoice } from "../protocol/generated/ElevenLabsVoice.ts";
 import type { FileState } from "../protocol/generated/FileState.ts";
 import type { HarnessesFound } from "../protocol/generated/HarnessesFound.ts";
@@ -125,6 +127,39 @@ const REASONING: Tagged<ModelReasoning, "kind"> = {
   },
 };
 
+function measure(value: unknown): DrawingMeasure | null {
+  const f = fields(value);
+  const drew = u32(f?.drew);
+  const answers = u32(f?.answers);
+  const firstStroke = u32(f?.first_stroke_ms_p50);
+  const measuredOn = text(f?.measured_on);
+  return drew === null ||
+    answers === null ||
+    answers === 0 ||
+    drew > answers ||
+    firstStroke === null ||
+    measuredOn === null
+    ? null
+    : { drew, answers, first_stroke_ms_p50: firstStroke, measured_on: measuredOn };
+}
+
+const DRAWING: Tagged<Drawing, "kind"> = {
+  NotMeasured: () => ({ kind: "NotMeasured" }),
+  Checked: (f) => {
+    const measured = measure(f.measure);
+    return measured === null ? null : { kind: "Checked", measure: measured };
+  },
+  Sometimes: (f) => {
+    const measured = measure(f.measure);
+    return measured === null ? null : { kind: "Sometimes", measure: measured };
+  },
+};
+
+/** How a model draws (D-219). A shell from before it sends none, which reads as not measured. */
+function drawing(value: unknown): Drawing | null {
+  return value === undefined ? { kind: "NotMeasured" } : tagged<Drawing>(DRAWING, "kind", value);
+}
+
 function talker(value: unknown): TalkerSetup | null {
   const f = fields(value);
   if (f === null) {
@@ -137,15 +172,17 @@ function talker(value: unknown): TalkerSetup | null {
   const thinking = oneOf(f.thinking, EFFORTS);
   const route = texts(f.route);
   const preset = flag(f.preset);
+  const draws = drawing(f.drawing);
   return provider === null ||
     model === null ||
     key === null ||
     ollama === null ||
     thinking === null ||
     route === null ||
-    preset === null
+    preset === null ||
+    draws === null
     ? null
-    : { provider, model, key, ollama, thinking, route, preset };
+    : { provider, model, key, ollama, thinking, route, preset, drawing: draws };
 }
 
 function keyStatus(value: unknown): KeyStatus | null {
@@ -288,15 +325,17 @@ function model(value: unknown): ModelInfo | null {
   const reasoning = tagged<ModelReasoning>(REASONING, "kind", f.reasoning);
   const preset = flag(f.preset);
   const route = f.route === undefined ? [] : texts(f.route);
+  const draws = drawing(f.drawing);
   return id === null ||
     name === null ||
     context === undefined ||
     cost === undefined ||
     reasoning === null ||
     preset === null ||
-    route === null
+    route === null ||
+    draws === null
     ? null
-    : { id, name, context_tokens: context, price: cost, reasoning, preset, route };
+    : { id, name, context_tokens: context, price: cost, reasoning, preset, route, drawing: draws };
 }
 
 /** A median OpenRouter may not give: a number, or unknown (never made up, D-176). */

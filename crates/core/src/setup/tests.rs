@@ -1,11 +1,11 @@
 //! The start rule and the wire shapes of the setup types.
 
 use super::{
-    ElevenLabsVoice, FileState, HarnessFound, HarnessName, HarnessesFound, InputDevice, KeyName,
-    KeyState, KeyStatus, MicChoice, MicPermission, ModelFileStatus, ModelInfo, ModelListing,
-    ModelPrice, ModelProvider, ModelQuery, ModelReasoning, OllamaStatus, SetupBlocker, SetupEdit,
-    SetupStatus, StartRule, TalkerKeyUse, TalkerProvider, TalkerSetup, ThinkingEffort, VoiceEngine,
-    blockers, start_rule, talker_key_use,
+    Drawing, DrawingMeasure, ElevenLabsVoice, FileState, HarnessFound, HarnessName, HarnessesFound,
+    InputDevice, KeyName, KeyState, KeyStatus, MicChoice, MicPermission, ModelFileStatus,
+    ModelInfo, ModelListing, ModelPrice, ModelProvider, ModelQuery, ModelReasoning, OllamaStatus,
+    SetupBlocker, SetupEdit, SetupStatus, StartRule, TalkerKeyUse, TalkerProvider, TalkerSetup,
+    ThinkingEffort, VoiceEngine, blockers, start_rule, talker_key_use,
 };
 
 fn file(id: &str, state: FileState) -> ModelFileStatus {
@@ -29,6 +29,7 @@ fn ready() -> SetupStatus {
             thinking: ThinkingEffort::Low,
             route: Vec::new(),
             preset: false,
+            drawing: Drawing::NotMeasured,
         },
         scribe_model: "claude-haiku-5-5".to_owned(),
         keys: vec![KeyStatus {
@@ -136,6 +137,7 @@ fn ollama_needs_to_answer_with_the_configured_model() {
         thinking: ThinkingEffort::Off,
         route: Vec::new(),
         preset: true,
+        drawing: Drawing::NotMeasured,
     };
     assert_eq!(blockers(&status), vec![SetupBlocker::OllamaUnreachable]);
     status.talker.ollama = OllamaStatus::Reachable {
@@ -218,6 +220,7 @@ fn model_queries_from_the_ui_are_parsed_and_unknown_ones_refused() {
             },
             preset: true,
             route: vec!["cerebras".to_owned()],
+            drawing: Drawing::judge(Some(measure(11, 12))),
         }],
         left_out: 0,
     };
@@ -291,4 +294,52 @@ fn an_unreadable_keychain_blocks_like_a_missing_key() {
             provider: TalkerProvider::Claude
         }]
     );
+}
+
+fn measure(drew: u32, answers: u32) -> DrawingMeasure {
+    DrawingMeasure {
+        drew,
+        answers,
+        first_stroke_ms_p50: 1_900,
+        measured_on: "2026-10-16".to_owned(),
+    }
+}
+
+/// D-219: "checked" from 10 of every 12 answers; below it "sometimes"; nothing measured is
+/// "not measured". 9 of 12 is the planted miss (Qwen3.8 27B's measure, HLD §11).
+#[test]
+fn drawing_is_checked_from_ten_of_twelve() {
+    for (drew, answers) in [(12, 12), (11, 12), (10, 12), (5, 6)] {
+        assert!(
+            matches!(
+                Drawing::judge(Some(measure(drew, answers))),
+                Drawing::Checked { .. }
+            ),
+            "{drew} of {answers}"
+        );
+    }
+    for (drew, answers) in [(9, 12), (5, 12), (0, 12), (4, 6)] {
+        assert!(
+            matches!(
+                Drawing::judge(Some(measure(drew, answers))),
+                Drawing::Sometimes { .. }
+            ),
+            "{drew} of {answers}"
+        );
+    }
+    assert_eq!(Drawing::judge(None), Drawing::NotMeasured);
+    assert_eq!(Drawing::judge(Some(measure(0, 0))), Drawing::NotMeasured);
+}
+
+#[test]
+fn drawing_goes_on_the_wire_tagged_with_its_measure() {
+    let wire = serde_json::to_value(Drawing::judge(Some(measure(5, 12)))).unwrap_or_default();
+    assert_eq!(
+        wire,
+        serde_json::json!({"kind": "Sometimes", "measure": {
+            "drew": 5, "answers": 12, "first_stroke_ms_p50": 1_900, "measured_on": "2026-10-16"
+        }})
+    );
+    let none = serde_json::to_value(Drawing::NotMeasured).unwrap_or_default();
+    assert_eq!(none, serde_json::json!({"kind": "NotMeasured"}));
 }

@@ -5,10 +5,11 @@
 //! check. No value is ever kept here: only `Saved`, `Missing` or `Unreadable` per name.
 
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use boardai_core::setup::{KeyName, KeyState, KeyStatus};
-use boardai_runtime::settings::{SecretName, SecretStore};
+use boardai_runtime::llm::catalog::ListKey;
+use boardai_runtime::settings::{Secret, SecretName, SecretStore};
 
 use super::input::secret_name;
 
@@ -128,6 +129,68 @@ fn presence(secrets: &dyn SecretStore, name: &SecretName) -> KeyState {
     }
 }
 
+/// The OpenRouter key for the model picker's provider lists (D-218), so OpenRouter answers with
+/// its providers' speeds. Read from the store only when this run has seen the key saved (never
+/// to find out, which could prompt for a key that isn't there), once, and kept until it is saved
+/// again or removed ([`Self::forget`]): the picker asks for several lists at once, and each
+/// Keychain read of an unsigned build can prompt.
+pub struct ProviderListKey {
+    store: Box<dyn SecretStore>,
+    ledger: Arc<KeyLedger>,
+    // Held through the store's read, on the blocking pool, so lists asked together read once.
+    read: Mutex<Option<Secret>>,
+}
+
+impl ProviderListKey {
+    pub fn new(store: Box<dyn SecretStore>, ledger: Arc<KeyLedger>) -> Self {
+        Self {
+            store,
+            ledger,
+            read: Mutex::new(None),
+        }
+    }
+
+    /// Drops the kept key: it was saved anew or removed.
+    pub fn forget(&self) {
+        *self
+            .read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
+impl std::fmt::Debug for ProviderListKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ProviderListKey")
+    }
+}
+
+impl ListKey for ProviderListKey {
+    fn open_router(&self) -> Option<Secret> {
+        if self.ledger.seen(KeyName::OpenRouter) != KeyState::Saved {
+            return None;
+        }
+        let mut read = self
+            .read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(secret) = read.as_ref() {
+            return Some(secret.clone());
+        }
+        let name = secret_name(KeyName::OpenRouter)?;
+        match self.store.get(&name) {
+            Ok(secret) => {
+                *read = Some(secret.clone());
+                Some(secret)
+            }
+            Err(error) => {
+                tracing::info!(%error, "the OpenRouter key wasn't read; provider lists go without it");
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use boardai_core::setup::{KeyName, KeyState};
@@ -135,7 +198,12 @@ mod tests {
         MemorySecretStore, Secret, SecretError, SecretName, SecretStore,
     };
 
-    use super::{KeyLedger, named, states};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use boardai_runtime::llm::catalog::ListKey;
+
+    use super::{KeyLedger, ProviderListKey, named, states};
 
     /// A Keychain that is locked: every read fails.
     struct Locked;
@@ -196,6 +264,68 @@ mod tests {
         assert_eq!(remembered, read);
         ledger.record(KeyName::OpenRouter, KeyState::Missing);
         assert_eq!(ledger.seen(KeyName::OpenRouter), KeyState::Missing);
+    }
+
+    /// A store that counts its reads and holds one OpenRouter key.
+    struct Counting {
+        reads: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        fails: bool,
+    }
+
+    impl SecretStore for Counting {
+        fn get(&self, name: &SecretName) -> Result<Secret, SecretError> {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fails {
+                return Locked.get(name);
+            }
+            Ok(Secret::new("sk-or-list".to_owned()))
+        }
+
+        fn set(&self, name: &SecretName, secret: &Secret) -> Result<(), SecretError> {
+            Locked.set(name, secret)
+        }
+
+        fn remove(&self, name: &SecretName) -> Result<(), SecretError> {
+            Locked.remove(name)
+        }
+    }
+
+    fn list_key(fails: bool) -> (ProviderListKey, Arc<KeyLedger>, Arc<AtomicU32>) {
+        let reads = Arc::new(AtomicU32::new(0));
+        let ledger = Arc::new(KeyLedger::default());
+        let store = Counting {
+            reads: Arc::clone(&reads),
+            fails,
+        };
+        let key = ProviderListKey::new(Box::new(store), Arc::clone(&ledger));
+        (key, ledger, reads)
+    }
+
+    /// D-218: provider lists carry the key only once this run has seen it saved, read it once
+    /// for all of them, and read it again after it is saved anew or removed.
+    #[test]
+    fn provider_lists_read_a_saved_key_once() {
+        let (key, ledger, reads) = list_key(false);
+        assert_eq!(key.open_router(), None, "never read to find out");
+        ledger.record(KeyName::OpenRouter, KeyState::Missing);
+        assert_eq!(key.open_router(), None);
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        ledger.record(KeyName::OpenRouter, KeyState::Saved);
+        for _ in 0..3 {
+            assert_eq!(
+                key.open_router().map(|secret| secret.expose().to_owned()),
+                Some("sk-or-list".to_owned())
+            );
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        key.forget();
+        assert!(key.open_router().is_some());
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        let (locked, ledger, reads) = list_key(true);
+        ledger.record(KeyName::OpenRouter, KeyState::Saved);
+        assert_eq!(locked.open_router(), None, "a locked Keychain sends no key");
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(format!("{locked:?}"), "ProviderListKey");
     }
 
     #[test]

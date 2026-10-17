@@ -6,6 +6,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use boardai_core::setup::{ModelListing, ModelQuery, ModelReasoning};
 use boardai_runtime::clock::FakeClock;
@@ -13,7 +14,8 @@ use boardai_runtime::limits::{
     MODEL_LIST_CACHE_MS, MODEL_LIST_MAX_BYTES, MODEL_PROVIDERS_CACHED_MAX, OLLAMA_LIST_CACHE_MS,
 };
 use boardai_runtime::llm::ProviderError;
-use boardai_runtime::llm::catalog::{CatalogError, ModelCatalog, OpenRouterModelId};
+use boardai_runtime::llm::catalog::{CatalogError, ListKey, ModelCatalog, OpenRouterModelId};
+use boardai_runtime::settings::Secret;
 use support::{Scripted, TestServer, fixture};
 
 fn json(body: &[u8]) -> Scripted {
@@ -259,4 +261,95 @@ async fn ollama_lists_its_models_with_the_default_first() {
     clock.advance_ms(1);
     assert!(catalog.ollama().await.is_ok());
     assert_eq!(server.requests().len(), 2);
+}
+
+/// A saved OpenRouter key, counting how often the catalog asks for it.
+#[derive(Debug, Default)]
+struct SavedKey {
+    asked: AtomicU32,
+}
+
+const KEY: &str = "sk-or-v1-catalog-test";
+
+impl ListKey for SavedKey {
+    fn open_router(&self) -> Option<Secret> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        Some(Secret::new(KEY.to_owned()))
+    }
+}
+
+fn keyed(server: &TestServer, clock: &FakeClock) -> (ModelCatalog, Arc<SavedKey>) {
+    let key = Arc::new(SavedKey::default());
+    let catalog = catalog(server, clock).with_list_key(Arc::clone(&key) as Arc<dyn ListKey>);
+    (catalog, key)
+}
+
+/// D-218: with a saved key, a provider list is asked with it and comes with OpenRouter's
+/// medians (recorded with a key, 2026-10-16); the model list never carries it, and a list
+/// answered from the cache doesn't read the key again.
+#[tokio::test]
+async fn a_provider_list_carries_the_saved_key_and_its_speeds() {
+    let server = TestServer::start(vec![
+        json(&fixture("openrouter/models_measured.json")),
+        json(&fixture("openrouter/endpoints_deepseek-v4.1-flash.json")),
+    ])
+    .await;
+    let clock = FakeClock::new();
+    let (catalog, key) = keyed(&server, &clock);
+    assert!(catalog.open_router().await.is_ok());
+    let deepseek = id("deepseek/deepseek-v4.1-flash");
+    let (providers, _) = catalog.providers(&deepseek).await.expect("a list");
+    assert!(catalog.providers(&deepseek).await.is_ok());
+    assert_eq!(key.asked.load(Ordering::SeqCst), 1, "asked only to fetch");
+    let requests = server.requests();
+    assert_eq!(
+        requests[0].header("authorization"),
+        None,
+        "the model list is public"
+    );
+    assert_eq!(
+        requests[1].header("authorization"),
+        Some(format!("Bearer {KEY}").as_str())
+    );
+    let together = providers
+        .iter()
+        .find(|provider| provider.slug == "together")
+        .expect("Together serves it");
+    assert_eq!(
+        (
+            together.latency_ms_p50,
+            together.throughput_tokens_per_second_p50
+        ),
+        (Some(312), Some(185))
+    );
+}
+
+/// A key OpenRouter refuses never costs the list: it is asked again without one. Neither the
+/// answer nor a failure ever quotes the key.
+#[tokio::test]
+async fn a_refused_key_falls_back_to_the_public_list_and_is_never_quoted() {
+    let refused = r#"{"error":{"message":"No auth credentials found","code":401}}"#;
+    let server = TestServer::start(vec![
+        Scripted::status(401, refused),
+        json(&fixture("openrouter/endpoints_qwen3.8-27b.json")),
+        Scripted::status(401, refused),
+        Scripted::status(401, refused),
+    ])
+    .await;
+    let clock = FakeClock::new();
+    let (catalog, _) = keyed(&server, &clock);
+    let (providers, _) = catalog
+        .providers(&id("qwen/qwen3.8-27b"))
+        .await
+        .expect("the public list");
+    assert_eq!(providers.len(), 20);
+    let requests = server.requests();
+    assert!(requests[0].header("authorization").is_some());
+    assert_eq!(requests[1].header("authorization"), None);
+    let error = catalog
+        .providers(&id("x/refused"))
+        .await
+        .expect_err("refused with and without the key");
+    assert!(matches!(error, ProviderError::Auth { .. }), "{error:?}");
+    assert!(!format!("{error:?} {error}").contains(KEY));
 }

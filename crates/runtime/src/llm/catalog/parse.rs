@@ -2,7 +2,7 @@
 //! `GET /models/{id}/endpoints` for one model's providers) into the picker's types. A malformed
 //! entry is left out and counted; only a body that isn't a list at all fails.
 
-use boardai_core::setup::{ModelInfo, ModelPrice, ModelProvider, ModelReasoning};
+use boardai_core::setup::{Drawing, ModelInfo, ModelPrice, ModelProvider, ModelReasoning};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -128,6 +128,7 @@ fn model(wire: &WireModel, parameters: &[String]) -> Option<ModelInfo> {
         reasoning: reasoning(wire.reasoning.as_ref(), parameters),
         preset: false,
         route: Vec::new(),
+        drawing: Drawing::NotMeasured,
     })
 }
 

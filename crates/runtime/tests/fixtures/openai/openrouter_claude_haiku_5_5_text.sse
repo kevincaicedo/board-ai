@@ -1,0 +1,22 @@
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"A load balancer is a system","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" that distributes incoming network","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" traffic across multiple serv","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"ers to","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":" impro","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"ve re","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"liability, availability, and perform","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"ance.","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"end_turn"}]}
+
+data: {"id":"gen-1792209771-tigALp1uo0thzNfRP7w6","object":"chat.completion.chunk","created":1792209771,"model":"anthropic/claude-haiku-5.5","provider":"Claude Platform on AWS","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"end_turn"}],"usage":{"prompt_tokens":375,"completion_tokens":41,"total_tokens":416,"cost":0.000058,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.000058,"upstream_inference_prompt_cost":0.0000375,"upstream_inference_completions_cost":0.0000205},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+data: [DONE]
+

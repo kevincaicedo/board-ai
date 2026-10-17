@@ -29,14 +29,15 @@ use boardai_runtime::llm::catalog::{ModelCatalog, OpenRouterModelId};
 use boardai_runtime::settings::{SecretStore, Settings, SettingsEdit, TtsKind};
 use tauri::{AppHandle, Manager};
 
+use crate::secrets::KeychainSecrets;
+
 pub use downloads::Downloads;
 pub use status::SetupPaths;
 
 use harnesses::HarnessVersions;
-use keys::KeyLedger;
+use keys::{KeyLedger, ProviderListKey};
 
 /// What the setup commands share.
-#[derive(Default)]
 pub struct SetupState {
     /// Serializes read-modify-write of `settings.toml`, and guards whether a change may land
     /// ([`SettingsGate`]). Locked only inside a blocking task, never across an await.
@@ -45,19 +46,50 @@ pub struct SetupState {
     /// The last Ollama answer, so a save doesn't wait on the probe again.
     // Held only to read or replace the value.
     ollama: Mutex<Option<OllamaStatus>>,
-    /// The model picker's lists, fetched on demand and kept a while (D-153).
+    /// The model picker's lists, fetched on demand and kept a while (D-153); provider lists
+    /// with the OpenRouter key from [`Self::list_key`] (D-218).
     catalog: Arc<ModelCatalog>,
     /// Which keys the Keychain held when this run last looked (names only, D-102).
     keys: Arc<KeyLedger>,
+    /// The OpenRouter key the catalog's provider lists carry, read once when saved.
+    list_key: Arc<ProviderListKey>,
     /// What each harness's `--version` answered this run.
     harness_versions: Arc<HarnessVersions>,
     /// The session was started (at launch, or by finishing setup); it starts once.
     started: AtomicBool,
 }
 
+impl Default for SetupState {
+    fn default() -> Self {
+        let keys = Arc::new(KeyLedger::default());
+        let list_key = Arc::new(ProviderListKey::new(
+            Box::new(KeychainSecrets),
+            Arc::clone(&keys),
+        ));
+        let catalog = ModelCatalog::default().with_list_key(Arc::clone(&list_key) as _);
+        Self {
+            settings: Arc::default(),
+            downloads: Downloads::default(),
+            ollama: Mutex::new(None),
+            catalog: Arc::new(catalog),
+            keys,
+            list_key,
+            harness_versions: Arc::default(),
+            started: AtomicBool::new(false),
+        }
+    }
+}
+
 impl SetupState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A key was saved or removed: the provider lists read it again (D-218).
+    fn key_changed(&self, key: KeyName) {
+        if key == KeyName::OpenRouter {
+            self.list_key.forget();
+        }
     }
 
     fn started(&self) -> bool {

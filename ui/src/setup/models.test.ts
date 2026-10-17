@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ModelProvider } from "../protocol/generated/ModelProvider.ts";
-import { OLLAMA_MODELS, RECORDED_MODELS, RECORDED_QWEN_PROVIDERS } from "./fakeModels.ts";
+import {
+  OLLAMA_MODELS,
+  RECORDED_DEEPSEEK_PROVIDERS,
+  RECORDED_MODELS,
+  RECORDED_QWEN_PROVIDERS,
+} from "./fakeModels.ts";
 import {
   contextLabel,
   dollars,
@@ -47,6 +52,10 @@ test("OpenRouter's recorded list gives rows with the presets first and no speeds
     [
       "openai/gpt-oss-120b",
       "qwen/qwen3.8-27b",
+      "deepseek/deepseek-v4.1-flash",
+      "openai/gpt-6-luna",
+      "anthropic/claude-haiku-5.5",
+      "google/gemini-3.8-flash",
       "xingchen-agi/xing4.0-29b-a4b:free",
       "unbiased/pareto-26.9",
       "meta/muse-wonder",
@@ -56,7 +65,8 @@ test("OpenRouter's recorded list gives rows with the presets first and no speeds
   assert.equal(oss?.servedBy, "Cerebras only");
   assert.equal(priceLabel(oss?.price ?? null), "$0.15 / $0.60");
   assert.equal(contextLabel(oss?.contextTokens ?? null), "131K");
-  assert.equal(rows[2]?.servedBy, "OpenRouter picks");
+  assert.equal(rows[2]?.servedBy, "Together only");
+  assert.equal(rows[6]?.servedBy, "OpenRouter picks");
   // OpenRouter's public list gives no first token or speed: the columns stay out (D-176).
   assert.equal(speedColumns(rows), false);
   assert.equal(orderNote(rows, "OpenRouter"), "tools only · presets first");
@@ -98,6 +108,10 @@ test("speeds show, and order the rows, only where OpenRouter gives them", () => 
     [
       "openai/gpt-oss-120b",
       "qwen/qwen3.8-27b",
+      "deepseek/deepseek-v4.1-flash",
+      "openai/gpt-6-luna",
+      "anthropic/claude-haiku-5.5",
+      "google/gemini-3.8-flash",
       "unbiased/pareto-26.9",
       "meta/muse-wonder",
       "xingchen-agi/xing4.0-29b-a4b:free",
@@ -108,6 +122,17 @@ test("speeds show, and order the rows, only where OpenRouter gives them", () => 
   assert.equal(speedLabel(pareto?.tokensPerSecond ?? null), "400 tok/s");
   assert.equal(latencyLabel(null), "–");
   assert.equal(speedLabel(null), "–");
+});
+
+test("with the key, a preset row shows its route's medians and the columns appear (D-218)", () => {
+  const providers = new Map([["deepseek/deepseek-v4.1-flash", RECORDED_DEEPSEEK_PROVIDERS]]);
+  const rows = modelRows(RECORDED_MODELS, "OpenRouter", providers);
+  const deepseek = rows.find((row) => row.id === "deepseek/deepseek-v4.1-flash");
+  // BaseTen US has the lower median, but the route is Together's, so Together's numbers show.
+  assert.equal(deepseek?.servedBy, "Together only");
+  assert.equal(latencyLabel(deepseek?.latencyMs ?? null), "0.31 s");
+  assert.equal(speedLabel(deepseek?.tokensPerSecond ?? null), "185 tok/s");
+  assert.equal(speedColumns(rows), true);
 });
 
 test("a routed model's numbers come from its route, never another provider", () => {
@@ -163,6 +188,7 @@ test("the table draws a bounded number of rows and keeps the chosen one", () => 
     reasoning: { kind: "Unknown" as const },
     preset: false,
     route: [],
+    drawing: { kind: "NotMeasured" as const },
   }));
   const rows = modelRows(many, "OpenRouter", NONE);
   const last = `author/model-${MODEL_ROWS_SHOWN_MAX + 4}`;

@@ -2,27 +2,36 @@
 //! providers, and the local Ollama's models. Each fetch is one bounded GET; answers are kept
 //! for [`MODEL_LIST_CACHE_MS`] (Ollama's for [`OLLAMA_LIST_CACHE_MS`]), so a picker opened
 //! again, or a save that needs a model's reasoning, doesn't ask again. The catalog lives as long
-//! as the app's setup state; no key is sent (OpenRouter's lists are public).
+//! as the app's setup state. The lists are public; a provider list is asked with the saved
+//! OpenRouter key when there is one ([`ListKey`], D-218), since only then does OpenRouter give
+//! its providers' latency and throughput medians. The model list never carries a key.
 
 mod parse;
+mod preset_fit;
+
+pub use preset_fit::{PresetMisfit, listing_misfit, route_misfit};
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use boardai_core::setup::{ModelInfo, ModelListing, ModelProvider, ModelQuery, ModelReasoning};
+use boardai_core::setup::{
+    Drawing, ModelInfo, ModelListing, ModelProvider, ModelQuery, ModelReasoning,
+};
 use boardai_core::time::SessionTime;
+use reqwest::header::HeaderValue;
 
-use super::http::{endpoint, get_bounded};
+use super::http::{bearer, endpoint, get_bounded};
 use super::ollama::{OLLAMA_DEFAULT_MODEL, ollama_models};
 use super::openai::{OLLAMA_BASE_URL, OPENROUTER_BASE_URL};
-use super::openrouter::{PRESETS, preset};
+use super::openrouter::{PRESETS, drawing, preset};
 use super::{Effort, ProviderError};
 use crate::clock::{Clock, MonotonicClock};
 use crate::limits::{
     MODEL_LIST_CACHE_MS, MODEL_LIST_MAX_BYTES, MODEL_LIST_TIMEOUT_MS, MODEL_PROVIDERS_CACHED_MAX,
     MODEL_PROVIDERS_MAX_BYTES, MODEL_TEXT_MAX_BYTES, OLLAMA_LIST_CACHE_MS,
 };
+use crate::settings::Secret;
 
 /// An OpenRouter model id from the picker (`qwen/qwen3.8-27b`, `openai/gpt-oss-120b:free`),
 /// parsed where it enters: ASCII letters, digits and `- _ . : ~ /`, an author and a name, no
@@ -86,11 +95,21 @@ struct Lists {
     providers: VecDeque<(OpenRouterModelId, Cached<Counted<ModelProvider>>)>,
 }
 
+/// Where the catalog gets OpenRouter's key for a provider list (D-218). Asked only when a
+/// provider list is fetched, never for the model list; it may block (the Keychain can prompt),
+/// so it is asked on the blocking pool.
+pub trait ListKey: Send + Sync + std::fmt::Debug {
+    /// The saved key, or `None`: the list is then fetched without one.
+    fn open_router(&self) -> Option<Secret>;
+}
+
 #[derive(Debug)]
 pub struct ModelCatalog {
     open_router_url: String,
     ollama_url: String,
     clock: Arc<dyn Clock>,
+    /// The OpenRouter key for provider lists; `None` sends none.
+    key: Option<Arc<dyn ListKey>>,
     /// Held only to read or replace an entry, never across a fetch.
     lists: Mutex<Lists>,
 }
@@ -112,8 +131,16 @@ impl ModelCatalog {
             open_router_url,
             ollama_url,
             clock,
+            key: None,
             lists: Mutex::new(Lists::default()),
         }
+    }
+
+    /// The catalog asking provider lists with `key` (D-218).
+    #[must_use]
+    pub fn with_list_key(mut self, key: Arc<dyn ListKey>) -> Self {
+        self.key = Some(key);
+        self
     }
 
     /// Answers the picker, from the cache while it is fresh.
@@ -151,9 +178,20 @@ impl ModelCatalog {
             return Ok(value);
         }
         let url = format!("{}?supported_parameters=tools", self.url("models")?);
-        let body = fetch(&url, MODEL_LIST_MAX_BYTES, "OpenRouter's model list").await?;
+        let body = fetch(&url, None, MODEL_LIST_MAX_BYTES, "OpenRouter's model list").await?;
         let (mut models, left_out) = parse::models(&body)?;
         mark_presets(&mut models, |model| preset(&model.id).is_some());
+        for model in &models {
+            if let Some(preset) = preset(&model.id)
+                && let Some(misfit) = listing_misfit(&preset, model)
+            {
+                tracing::warn!(
+                    model = preset.model,
+                    ?misfit,
+                    "a preset no longer fits its listing"
+                );
+            }
+        }
         let value = (models, left_out);
         self.lock().open_router = Some(Cached {
             at: self.clock.now(),
@@ -192,13 +230,17 @@ impl ModelCatalog {
             return Ok(value);
         }
         let url = self.url(&format!("models/{}/endpoints", model.0))?;
-        let body = fetch(
-            &url,
-            MODEL_PROVIDERS_MAX_BYTES,
-            "OpenRouter's provider list",
-        )
-        .await?;
+        let body = self.provider_list(&url).await?;
         let value = parse::providers(&body)?;
+        if let Some(preset) = preset(model.as_str())
+            && let Some(misfit) = route_misfit(&preset, &value.0)
+        {
+            tracing::warn!(
+                model = preset.model,
+                ?misfit,
+                "a preset's route no longer fits"
+            );
+        }
         let mut lists = self.lock();
         lists.providers.retain(|(id, _)| id != model);
         if lists.providers.len() >= MODEL_PROVIDERS_CACHED_MAX {
@@ -238,6 +280,7 @@ impl ModelCatalog {
                 reasoning: ModelReasoning::Unknown,
                 preset: false,
                 route: Vec::new(),
+                drawing: Drawing::NotMeasured,
             })
             .collect();
         mark_presets(&mut models, |model| model.id == OLLAMA_DEFAULT_MODEL);
@@ -246,6 +289,43 @@ impl ModelCatalog {
             value: models.clone(),
         });
         Ok(models)
+    }
+
+    /// A provider list's body: with the key when one is saved, else, or when OpenRouter refuses
+    /// the key, without one (the list is public; only its speeds need the key).
+    async fn provider_list(&self, url: &str) -> Result<Vec<u8>, ProviderError> {
+        const WHAT: &str = "OpenRouter's provider list";
+        let Some(authorization) = self.authorization().await else {
+            return fetch(url, None, MODEL_PROVIDERS_MAX_BYTES, WHAT).await;
+        };
+        match fetch(url, Some(&authorization), MODEL_PROVIDERS_MAX_BYTES, WHAT).await {
+            Err(ProviderError::Auth { .. }) => {
+                tracing::info!("OpenRouter refused the key for a provider list; asking without");
+                fetch(url, None, MODEL_PROVIDERS_MAX_BYTES, WHAT).await
+            }
+            answer @ (Ok(_)
+            | Err(
+                ProviderError::RateLimited { .. }
+                | ProviderError::Overloaded { .. }
+                | ProviderError::Network { .. }
+                | ProviderError::Timeout { .. }
+                | ProviderError::BadOutput { .. }
+                | ProviderError::InvalidRequest { .. }
+                | ProviderError::Server { .. }
+                | ProviderError::Provider { .. }
+                | ProviderError::NotConfigured { .. },
+            )) => answer,
+        }
+    }
+
+    /// The saved key's header, read on the blocking pool; `None` without one.
+    async fn authorization(&self) -> Option<HeaderValue> {
+        let source = Arc::clone(self.key.as_ref()?);
+        let key = tokio::task::spawn_blocking(move || source.open_router())
+            .await
+            .ok()
+            .flatten()?;
+        bearer(&key).ok()
     }
 
     fn url(&self, path: &str) -> Result<String, ProviderError> {
@@ -297,10 +377,15 @@ fn fresh(at: SessionTime, now: SessionTime, ttl_ms: u64) -> bool {
     now.ms_since(at) < ttl_ms
 }
 
-async fn fetch(url: &str, max_bytes: usize, what: &str) -> Result<Vec<u8>, ProviderError> {
+async fn fetch(
+    url: &str,
+    authorization: Option<&HeaderValue>,
+    max_bytes: usize,
+    what: &str,
+) -> Result<Vec<u8>, ProviderError> {
     get_bounded(
         url,
-        None,
+        authorization,
         max_bytes,
         Duration::from_millis(MODEL_LIST_TIMEOUT_MS),
         what,
@@ -308,8 +393,8 @@ async fn fetch(url: &str, max_bytes: usize, what: &str) -> Result<Vec<u8>, Provi
     .await
 }
 
-/// Marks the presets (with an OpenRouter preset's route) and moves them to the front, in
-/// [`PRESETS`] order for OpenRouter.
+/// Marks the presets (with an OpenRouter preset's route and how it draws, D-219) and moves them
+/// to the front, in [`PRESETS`] order for OpenRouter.
 fn mark_presets(models: &mut [ModelInfo], is_preset: impl Fn(&ModelInfo) -> bool) {
     for model in models.iter_mut() {
         model.preset = is_preset(model);
@@ -317,6 +402,11 @@ fn mark_presets(models: &mut [ModelInfo], is_preset: impl Fn(&ModelInfo) -> bool
             .filter(|_| model.preset)
             .map(|preset| preset.route.iter().map(|slug| (*slug).to_owned()).collect())
             .unwrap_or_default();
+        model.drawing = if model.preset {
+            drawing(&model.id)
+        } else {
+            Drawing::NotMeasured
+        };
     }
     let rank = |model: &ModelInfo| {
         PRESETS

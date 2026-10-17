@@ -12,7 +12,7 @@ import type { ModelListing } from "../protocol/generated/ModelListing.ts";
 import type { ModelQuery } from "../protocol/generated/ModelQuery.ts";
 import type { SetupEdit } from "../protocol/generated/SetupEdit.ts";
 import type { SetupStatus } from "../protocol/generated/SetupStatus.ts";
-import { recordedListing } from "./fakeModels.ts";
+import { GPT_OSS_DRAWING, recordedListing } from "./fakeModels.ts";
 import type { SetupTransport } from "./transport.ts";
 
 export type FakeCall =
@@ -194,6 +194,7 @@ export function firstLaunch(): SetupStatus {
       thinking: "Low",
       route: [],
       preset: false,
+      drawing: { kind: "NotMeasured" },
     },
     scribe_model: "claude-haiku-5-5",
     keys: keyStates([]),
@@ -279,6 +280,7 @@ function settingsStatus(base: SetupStatus): SetupStatus {
       thinking: "Low",
       route: ["cerebras"],
       preset: true,
+      drawing: GPT_OSS_DRAWING,
     },
     scribe_model: "qwen/qwen3.8-27b",
     keys: keyStates(["OpenRouter", "ElevenLabs"]),
@@ -378,6 +380,7 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
           thinking: "Off",
           route: [],
           preset: true,
+          drawing: { kind: "NotMeasured" },
         },
         scribe_model: "gemma4:latest",
       };
@@ -436,6 +439,7 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
           thinking: "Off",
           route: [],
           preset: true,
+          drawing: { kind: "NotMeasured" },
         },
         scribe_model: "gemma4:latest",
         keys: keyStates([]),

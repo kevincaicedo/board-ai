@@ -1,0 +1,12 @@
+data: {"id":"gen-1792209749-XsNgZwCyJl9sbkgLRNtY","object":"chat.completion.chunk","created":1792209749,"model":"google/gemini-3.8-flash","provider":"Google AI Studio","choices":[{"index":0,"delta":{"content":"A load balancer is a device or software that distributes incoming network traffic across multiple servers","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209749-XsNgZwCyJl9sbkgLRNtY","object":"chat.completion.chunk","created":1792209749,"model":"google/gemini-3.8-flash","provider":"Google AI Studio","choices":[{"index":0,"delta":{"content":" to optimize performance, prevent overload, and ensure high availability.","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209749-XsNgZwCyJl9sbkgLRNtY","object":"chat.completion.chunk","created":1792209749,"model":"google/gemini-3.8-flash","provider":"Google AI Studio","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null,"reasoning_details":[{"type":"reasoning.encrypted","data":"EmkKZwFpFH0Tsmhrx7LP7iTKU4DB1MyF8xBbQRdQtGh2Nm27JT1hc+vDByne+xscQ3l9GmUEj8saWQIHD6ueM5rqJxEI5pcAs77pdjWOrGt4HLN34KLdrPD5qy21DbhOdu1BV8gpFHH3e3Q=","format":"google-gemini-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1792209749-XsNgZwCyJl9sbkgLRNtY","object":"chat.completion.chunk","created":1792209749,"model":"google/gemini-3.8-flash","provider":"Google AI Studio","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"STOP"}]}
+
+data: {"id":"gen-1792209749-XsNgZwCyJl9sbkgLRNtY","object":"chat.completion.chunk","created":1792209749,"model":"google/gemini-3.8-flash","provider":"Google AI Studio","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"STOP"}],"usage":{"prompt_tokens":53,"completion_tokens":28,"total_tokens":81,"cost":0.00014475,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.00014475,"upstream_inference_prompt_cost":0.00003975,"upstream_inference_completions_cost":0.000105},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+
+data: [DONE]
+

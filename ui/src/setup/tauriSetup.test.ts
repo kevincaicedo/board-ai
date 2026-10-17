@@ -220,6 +220,8 @@ test("a status with a malformed nested field is from another build", () => {
     { talker: { ...base.talker, provider: "Gemini" } },
     { talker: { ...base.talker, thinking: "Lots" } },
     { talker: { ...base.talker, route: ["cerebras", 3] } },
+    { talker: { ...base.talker, drawing: { kind: "Always" } } },
+    { talker: { ...base.talker, drawing: { kind: "Checked" } } },
     { keys: [{ name: "Gemini", state: "Saved" }] },
     { hearing_files: [{ id: "silero-vad", state: "Halfway", have_bytes: 0, size_bytes: 1 }] },
     { voice_files: [{ id: "kokoro", state: "Ready", have_bytes: -1, size_bytes: 1 }] },
@@ -271,4 +273,46 @@ test("a model or provider row with a malformed field is left out; counts are who
     null,
   );
   assert.equal(parseModelListing({ kind: "OpenRouter", models: [], left_out: -1 }), null);
+});
+
+// D-219: how a model draws, as the core judged it. A shell from before the field sends none,
+// which reads as not measured; a measure that can't be (more drew than answered, no answers) or
+// an unknown verdict leaves the row out.
+test("a model's drawing is parsed with its measure, and a missing one is not measured", () => {
+  const measure = { drew: 11, answers: 12, first_stroke_ms_p50: 1_900, measured_on: "2026-10-16" };
+  const row = { name: "M", preset: true, reasoning: { kind: "Optional" }, route: [] };
+  const listing = parseModelListing({
+    kind: "OpenRouter",
+    models: [
+      { ...row, id: "a/checked", drawing: { kind: "Checked", measure } },
+      {
+        ...row,
+        id: "b/sometimes",
+        drawing: { kind: "Sometimes", measure: { ...measure, drew: 5 } },
+      },
+      { ...row, id: "c/older-shell" },
+      { ...row, id: "d/odd", drawing: { kind: "Checked", measure: { ...measure, drew: 13 } } },
+      { ...row, id: "e/odd", drawing: { kind: "Sometimes", measure: { ...measure, answers: 0 } } },
+      { ...row, id: "f/odd", drawing: { kind: "Mostly", measure } },
+      {
+        ...row,
+        id: "g/odd",
+        drawing: { kind: "Checked", measure: { ...measure, measured_on: 7 } },
+      },
+    ],
+    left_out: 0,
+  });
+  assert.deepEqual(
+    listing?.kind === "OpenRouter"
+      ? listing.models.map((model) => [model.id, model.drawing.kind])
+      : null,
+    [
+      ["a/checked", "Checked"],
+      ["b/sometimes", "Sometimes"],
+      ["c/older-shell", "NotMeasured"],
+    ],
+  );
+  const { drawing: _, ...talker } = firstLaunch().talker;
+  const older = parseSetupStatus({ ...firstLaunch(), talker });
+  assert.deepEqual(older?.talker.drawing, { kind: "NotMeasured" });
 });

@@ -11,7 +11,8 @@ use crate::llm::{CONTEXT_CLOSE, CONTEXT_OPEN, Effort, ProviderError, TalkerConfi
 #[derive(Clone, Debug)]
 pub(super) struct FrozenRequest {
     fields: Map<String, Value>,
-    system_prompt: String,
+    /// The frozen system prompt as a message; `None` when there is none.
+    system: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -36,7 +37,7 @@ impl FrozenRequest {
                     json!(reasoning_effort(config.effort)),
                 );
             }
-            Dialect::OpenRouter { route } => open_router_fields(config.effort, route, &mut fields),
+            Dialect::OpenRouter { route } => open_router_fields(config, route, &mut fields),
         }
         if !config.tools.is_empty() {
             let tools: Vec<Value> = config
@@ -58,7 +59,7 @@ impl FrozenRequest {
         }
         Self {
             fields,
-            system_prompt: config.system_prompt.clone(),
+            system: system_message(config, dialect),
         }
     }
 
@@ -71,9 +72,7 @@ impl FrozenRequest {
         fields.remove("stream_options");
         fields.insert("max_tokens".into(), json!(1));
         let mut messages = Vec::with_capacity(2);
-        if !self.system_prompt.is_empty() {
-            messages.push(json!({"role": "system", "content": self.system_prompt}));
-        }
+        messages.extend(self.system.clone());
         messages.push(json!({"role": "user", "content": "Hi."}));
         let body = Body {
             fields: &fields,
@@ -87,9 +86,7 @@ impl FrozenRequest {
 
     pub(super) fn body(&self, messages: &[Message]) -> Result<Vec<u8>, ProviderError> {
         let mut rendered = Vec::with_capacity(messages.len() + 1);
-        if !self.system_prompt.is_empty() {
-            rendered.push(json!({"role": "system", "content": self.system_prompt}));
-        }
+        rendered.extend(self.system.clone());
         let conversation = render_messages(messages)?;
         if conversation.is_empty() {
             return Err(invalid("the conversation is empty"));
@@ -122,17 +119,24 @@ impl FrozenRequest {
 /// provider outside it can be ten times slower to the first token (Near AI against Cerebras
 /// on gpt-oss-120b, 2026-10-16), and a voice is better told the route is down than slowed
 /// silently. `require_parameters` keeps a routed provider from ignoring `reasoning` (Qwen
-/// would think at its default, `xhigh`) or `tools`.
+/// would think at its default, `xhigh`) or `tools`. A preset whose provider caches only on
+/// request asks for it (D-215); the warm-up carries the same field, so it writes the cache.
 fn open_router_fields(
-    effort: Effort,
+    config: &TalkerConfig,
     route: &[openrouter::ProviderSlug],
     fields: &mut Map<String, Value>,
 ) {
-    let effort = openrouter::reasoning_effort(effort);
+    let effort = openrouter::reasoning_effort(config.effort);
     fields.insert(
         "reasoning".into(),
         json!({"effort": effort, "exclude": true}),
     );
+    match openrouter::prompt_cache(&config.model) {
+        openrouter::PromptCache::Automatic => {}
+        openrouter::PromptCache::OnRequest => {
+            fields.insert("cache_control".into(), json!({"type": "ephemeral"}));
+        }
+    }
     if !route.is_empty() {
         let order: Vec<&str> = route.iter().map(openrouter::ProviderSlug::as_str).collect();
         fields.insert(
@@ -140,6 +144,30 @@ fn open_router_fields(
             json!({"order": order, "allow_fallbacks": false, "require_parameters": true}),
         );
     }
+}
+
+/// The system prompt as its message. Where the provider caches only on request (D-215), it
+/// carries its own cache breakpoint: the request's top-level one caches up to the last block,
+/// which in the warm-up is its one-word question, so without this the warm-up wrote a prefix
+/// no answer read (Claude Haiku 5.5, 2026-10-16: the first answer wrote 5,583 tokens and read
+/// none; with it, the first answer reads the 3,701 the warm-up wrote).
+fn system_message(config: &TalkerConfig, dialect: &Dialect) -> Option<Value> {
+    if config.system_prompt.is_empty() {
+        return None;
+    }
+    let cached = match dialect {
+        Dialect::Standard => openrouter::PromptCache::Automatic,
+        Dialect::OpenRouter { .. } => openrouter::prompt_cache(&config.model),
+    };
+    let content = match cached {
+        openrouter::PromptCache::Automatic => json!(config.system_prompt),
+        openrouter::PromptCache::OnRequest => json!([{
+            "type": "text",
+            "text": config.system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }]),
+    };
+    Some(json!({"role": "system", "content": content}))
 }
 
 /// The standard levels; `xhigh` and `max` are Claude-only, so they ask for the most there is.

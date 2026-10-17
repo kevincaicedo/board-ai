@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use boardai_core::setup::{
-    FileState, HarnessFound, HarnessName, InputDevice, KeyName, KeyState, KeyStatus, MicChoice,
-    MicPermission, OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider,
+    Drawing, FileState, HarnessFound, HarnessName, InputDevice, KeyName, KeyState, KeyStatus,
+    MicChoice, MicPermission, OllamaStatus, SetupBlocker, SetupEdit, SetupStatus, TalkerProvider,
     ThinkingEffort, VoiceEngine,
 };
 use boardai_runtime::llm::catalog::ModelCatalog;
@@ -428,6 +428,12 @@ fn the_settings_page_sees_the_talker_scribe_folders_and_vault_as_configured() {
     assert_eq!(shown.talker.thinking, ThinkingEffort::Off);
     assert_eq!(shown.talker.route, ["cerebras"]);
     assert!(shown.talker.preset);
+    // Qwen3.8 27B drew in 9 of 12 answers (HLD §11): a preset, but not "checked" (D-219).
+    assert!(
+        matches!(&shown.talker.drawing, Drawing::Sometimes { measure } if measure.drew == 9),
+        "{:?}",
+        shown.talker.drawing
+    );
     assert_eq!(shown.scribe_model, "qwen/qwen3.8-27b");
     assert_eq!(shown.code_folders, ["~/code", "/opt/src"]);
     assert_eq!(shown.vault, "~/BoardAI");
@@ -464,6 +470,7 @@ fn the_settings_page_sees_the_talker_scribe_folders_and_vault_as_configured() {
         "Claude never turns it off"
     );
     assert!(!fresh.talker.preset);
+    assert_eq!(fresh.talker.drawing, Drawing::NotMeasured);
     assert_eq!(fresh.harnesses.default, Some(HarnessName::ClaudeCode));
 }
 

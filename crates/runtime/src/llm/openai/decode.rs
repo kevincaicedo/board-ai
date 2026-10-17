@@ -96,7 +96,8 @@ struct WireUsage {
     prompt_tokens: u64,
     #[serde(default)]
     completion_tokens: u64,
-    /// OpenRouter: how much of the prompt came from the provider's cache.
+    /// OpenRouter: how much of the prompt came from the provider's cache, and how much was
+    /// written to it.
     #[serde(default)]
     prompt_tokens_details: Option<PromptDetails>,
 }
@@ -105,6 +106,9 @@ struct WireUsage {
 struct PromptDetails {
     #[serde(default)]
     cached_tokens: Option<u64>,
+    /// Claude's cache writes (`cache_control`, D-215), billed above the plain input price.
+    #[serde(default)]
+    cache_write_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -162,13 +166,23 @@ impl Decoder for OpenAiDecoder {
             self.note_served_by(name);
         }
         if let Some(usage) = chunk.usage {
-            let cached = usage
-                .prompt_tokens_details
+            let details = usage.prompt_tokens_details;
+            let cached = details
+                .as_ref()
                 .and_then(|details| details.cached_tokens)
                 .unwrap_or(0);
-            // `input_tokens` is the uncached remainder, as Anthropic reports it.
-            self.usage.input_tokens = usage.prompt_tokens.saturating_sub(cached);
+            let written = details
+                .as_ref()
+                .and_then(|details| details.cache_write_tokens)
+                .unwrap_or(0);
+            // `input_tokens` is what was neither read from nor written to the cache, as
+            // Anthropic reports it.
+            self.usage.input_tokens = usage
+                .prompt_tokens
+                .saturating_sub(cached)
+                .saturating_sub(written);
             self.usage.cache_read_input_tokens = cached;
+            self.usage.cache_creation_input_tokens = written;
             self.usage.output_tokens = usage.completion_tokens;
         }
         for choice in chunk.choices {

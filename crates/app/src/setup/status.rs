@@ -6,8 +6,9 @@
 use std::path::{Path, PathBuf};
 
 use boardai_core::setup::{
-    ElevenLabsVoice, FileState, InputDevice, KeyState, MicChoice, MicPermission, ModelFileStatus,
-    OllamaStatus, SetupStatus, TalkerProvider, TalkerSetup, ThinkingEffort, VoiceEngine, blockers,
+    Drawing, ElevenLabsVoice, FileState, InputDevice, KeyState, MicChoice, MicPermission,
+    ModelFileStatus, OllamaStatus, SetupStatus, TalkerProvider, TalkerSetup, ThinkingEffort,
+    VoiceEngine, blockers,
 };
 use boardai_runtime::audio::InputChoice;
 use boardai_runtime::audio::devices::DeviceSnapshot;
@@ -186,6 +187,13 @@ fn talker(llm: &LlmSettings, key: KeyState, ollama: OllamaStatus) -> TalkerSetup
         TalkerProvider::Ollama => llm.model == OLLAMA_DEFAULT_MODEL,
         TalkerProvider::Claude | TalkerProvider::Other => false,
     };
+    // Only OpenRouter's presets were measured drawing (D-219).
+    let drawing = match provider {
+        TalkerProvider::OpenRouter => openrouter::drawing(&llm.model),
+        TalkerProvider::Ollama | TalkerProvider::Claude | TalkerProvider::Other => {
+            Drawing::NotMeasured
+        }
+    };
     TalkerSetup {
         provider,
         model: llm.model.clone(),
@@ -198,6 +206,7 @@ fn talker(llm: &LlmSettings, key: KeyState, ollama: OllamaStatus) -> TalkerSetup
             .map(|slug| slug.as_str().to_owned())
             .collect(),
         preset,
+        drawing,
     }
 }
 

@@ -2,6 +2,7 @@
 // components so the wording is tested and the components only lay it out. Every value comes
 // from the app's status or its lists; nothing here is a number the app didn't send.
 
+import type { Drawing } from "../protocol/generated/Drawing.ts";
 import type { HarnessFound } from "../protocol/generated/HarnessFound.ts";
 import type { IndexRebuilt } from "../protocol/generated/IndexRebuilt.ts";
 import type { InputDevice } from "../protocol/generated/InputDevice.ts";
@@ -198,9 +199,19 @@ export function servedBy(status: SetupStatus, providers: readonly ModelProvider[
   }
 }
 
-/** Whether it draws diagrams: checked for the presets (D-152), unknown for the rest. */
-export function drawsDiagrams(preset: boolean): string {
-  return preset ? "Checked ✓" : "Not checked yet";
+/**
+ * How it draws diagrams, as spike S5 measured it (D-219). The core judged it (checked from 10 of
+ * every 12 answers); the panel says how many drew, never more than was measured.
+ */
+export function drawsDiagrams(drawing: Drawing): string {
+  switch (drawing.kind) {
+    case "Checked":
+      return `Checked ✓ (${drawing.measure.drew} of ${drawing.measure.answers})`;
+    case "Sometimes":
+      return `Sometimes (${drawing.measure.drew} of ${drawing.measure.answers})`;
+    case "NotMeasured":
+      return "Not measured";
+  }
 }
 
 /** The talker's key is missing or can't be read: which key, and why it matters, in words. */

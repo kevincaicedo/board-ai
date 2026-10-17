@@ -61,19 +61,24 @@ test("OpenRouter's list loads, then who serves each preset", async () => {
   assert.deepEqual(
     lists.asked.slice(1),
     [
-      { kind: "Providers", model: "openai/gpt-oss-120b" },
-      { kind: "Providers", model: "qwen/qwen3.8-27b" },
-    ],
-    "only the presets' providers, for their route's numbers",
+      "openai/gpt-oss-120b",
+      "qwen/qwen3.8-27b",
+      "deepseek/deepseek-v4.1-flash",
+      "openai/gpt-6-luna",
+      "anthropic/claude-haiku-5.5",
+      "google/gemini-3.8-flash",
+    ].map((model) => ({ kind: "Providers", model })),
+    "only the six presets' providers, for their route's numbers",
   );
-  lists.answer("Providers");
-  lists.answer("Providers");
+  for (let preset = 0; preset < 6; preset += 1) {
+    lists.answer("Providers");
+  }
   await settle();
   assert.equal(catalog.value.providers.get("qwen/qwen3.8-27b")?.length, 4);
   await catalog.show("OpenRouter");
-  assert.equal(lists.asked.length, 3, "a list on show is not asked for again");
+  assert.equal(lists.asked.length, 7, "a list on show is not asked for again");
   await catalog.loadProviders("qwen/qwen3.8-27b");
-  assert.equal(lists.asked.length, 3, "nor is a provider list already here");
+  assert.equal(lists.asked.length, 7, "nor is a provider list already here");
 });
 
 test("switching provider drops the answer for the one left behind", async () => {
