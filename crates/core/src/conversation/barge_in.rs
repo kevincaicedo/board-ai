@@ -29,7 +29,7 @@ pub enum InterruptionReason {
     Cue,
     /// (b) Four or more words.
     Words,
-    /// (c) At least 700 ms of voice.
+    /// (c) At least `BARGE_IN_VOICE_MS` (1,200 ms) of voice.
     Voice,
     /// (d) A pointer target set within 1.5 s of the onset, and final words that are not a
     /// backchannel.

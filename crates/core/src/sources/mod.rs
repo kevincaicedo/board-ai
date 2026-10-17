@@ -371,7 +371,7 @@ pub enum PagesAnswer {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "why", rename_all = "snake_case")]
 pub enum PagesUnread {
-    /// Not read within the page read's bound (the runtime's `SOURCE_JOB_TIMEOUT_MS`).
+    /// Not read within the page read's bound (the runtime's `PAGE_READ_TIMEOUT_MS`, 4.5 s).
     TimedOut,
     /// As many source jobs run as may (the runtime's `SOURCE_JOBS_MAX`).
     Busy,

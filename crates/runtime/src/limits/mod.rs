@@ -533,7 +533,8 @@ pub const SPEECH_LOOKAHEAD_MS_MAX: u32 = 15_000;
 /// Playback positions are reported at most this often (latest wins, through a `watch`).
 pub const PLAYBACK_REPORT_INTERVAL_MS: u64 = 20;
 
-/// Commands waiting for the speech-out actor; a sender waits when it is full.
+/// Commands waiting for the speech-out actor. Senders use `try_send`: when it is full the
+/// command is refused, and the orchestrator answers a refused clause or stop itself.
 pub const SPEECH_OUT_COMMAND_QUEUE: usize = 64;
 
 /// Speech-out inputs (`ClauseReady`, `PlaybackDrained`, `VoiceStopped`) waiting for the
