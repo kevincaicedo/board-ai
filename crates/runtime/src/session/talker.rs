@@ -341,6 +341,7 @@ fn open_ai_compatible(
     let native = |clock| {
         let options = OllamaChatOptions {
             base_url: base_url.clone(),
+            api_key: secret.clone(),
             clock,
             policy: None,
         };
@@ -364,7 +365,6 @@ fn open_ai_compatible(
         CompatibleApi::Probed => Arc::new(MaybeOllama::new(
             native(Arc::clone(&clock))?,
             compatible(Dialect::Standard, clock)?,
-            base_url.clone(),
         )),
     };
     Ok(provider)

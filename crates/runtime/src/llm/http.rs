@@ -2,13 +2,14 @@
 
 use std::time::Duration;
 
-use reqwest::header::HeaderMap;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 
 use super::error::{ProviderError, bounded_detail};
 use crate::limits::{
     PROVIDER_CONNECT_TIMEOUT_MS, PROVIDER_ERROR_BODY_MAX_BYTES, PROVIDER_ERROR_BODY_TIMEOUT_MS,
     PROVIDER_RETRY_AFTER_MAX_MS,
 };
+use crate::settings::Secret;
 
 /// One request as it goes on the wire; rebuilt for each attempt from these parts.
 #[derive(Clone, Debug)]
@@ -40,25 +41,40 @@ fn install_crypto_provider() {
     }
 }
 
+/// `Authorization: Bearer <key>`, marked sensitive so no debug print of a request shows it.
+pub(crate) fn bearer(key: &Secret) -> Result<HeaderValue, ProviderError> {
+    let mut bearer = HeaderValue::from_str(&format!("Bearer {}", key.expose())).map_err(|_| {
+        ProviderError::NotConfigured {
+            detail: "the API key has characters that cannot be sent".to_owned(),
+        }
+    })?;
+    bearer.set_sensitive(true);
+    Ok(bearer)
+}
+
 /// One GET under one deadline (connect, status and the whole body), its body bounded: the
 /// model lists and Ollama's probes. `what` names the server in errors ("OpenRouter's model
-/// list"). A slow server fails as `Network`, a large answer as `BadOutput`.
+/// list"); `authorization` is the configured key's header, for a server that needs one. A slow
+/// server fails as `Network`, a large answer as `BadOutput`.
 pub(crate) async fn get_bounded(
     url: &str,
+    authorization: Option<&HeaderValue>,
     max_bytes: usize,
     deadline: Duration,
     what: &str,
 ) -> Result<Vec<u8>, ProviderError> {
     let client = build_client()?;
+    let mut request = client.get(url);
+    if let Some(authorization) = authorization {
+        request = request.header(AUTHORIZATION, authorization.clone());
+    }
     let fetched = tokio::time::timeout(deadline, async move {
-        let mut response =
-            client
-                .get(url)
-                .send()
-                .await
-                .map_err(|error| ProviderError::Network {
-                    detail: bounded_detail(&error.without_url().to_string()),
-                })?;
+        let mut response = request
+            .send()
+            .await
+            .map_err(|error| ProviderError::Network {
+                detail: bounded_detail(&error.without_url().to_string()),
+            })?;
         if !response.status().is_success() {
             return Err(error_from_response(response).await);
         }

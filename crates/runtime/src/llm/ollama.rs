@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use reqwest::header::HeaderValue;
 use serde::Deserialize;
 
 use super::error::{ProviderError, bounded_detail};
@@ -47,24 +48,64 @@ pub fn ollama_root(base_url: &str) -> &str {
 pub async fn ollama_models(base_url: &str) -> Result<Vec<String>, ProviderError> {
     let url = endpoint(ollama_root(base_url), "api/tags")?;
     let deadline = Duration::from_millis(OLLAMA_PROBE_TIMEOUT_MS);
-    let body = get_bounded(&url, OLLAMA_TAGS_MAX_BYTES, deadline, "Ollama's model list").await?;
+    let body = get_bounded(
+        &url,
+        None,
+        OLLAMA_TAGS_MAX_BYTES,
+        deadline,
+        "Ollama's model list",
+    )
+    .await?;
     parse_tags(&body)
 }
 
-/// Whether the server behind an OpenAI-compatible base URL is Ollama: its native API answers
-/// `GET /api/version` with a version, within [`OLLAMA_PROBE_TIMEOUT_MS`]. Anything else (an
-/// error status, another body, silence) means it is not, or not reachable as one.
-pub async fn is_ollama(base_url: &str) -> bool {
+/// What `GET /api/version` said about a server (D-156).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OllamaProbe {
+    /// It answered with a version.
+    Ollama,
+    /// It answered, and not as Ollama: another body, or a status that won't change when asked
+    /// again (404 from LM Studio, 401 for a key it doesn't take).
+    NotOllama,
+    /// No answer to go by: silence past [`OLLAMA_PROBE_TIMEOUT_MS`], a dropped connection, a 5xx,
+    /// 429. A busy or restarting Ollama answers this way, so it is asked again later instead of
+    /// being taken for another server.
+    Unknown,
+}
+
+/// Asks the server behind an OpenAI-compatible base URL (or its root) whether it is Ollama:
+/// its native API answers `GET /api/version` with a version. `authorization` is the configured
+/// key's header, sent where the chat requests go.
+pub async fn probe_ollama(base_url: &str, authorization: Option<&HeaderValue>) -> OllamaProbe {
     let Ok(url) = endpoint(ollama_root(base_url), "api/version") else {
-        return false;
+        return OllamaProbe::NotOllama;
     };
     let deadline = Duration::from_millis(OLLAMA_PROBE_TIMEOUT_MS);
-    match get_bounded(&url, OLLAMA_TAGS_MAX_BYTES, deadline, "Ollama's version").await {
-        Ok(body) => serde_json::from_slice::<Version>(&body)
-            .is_ok_and(|answer| !answer.version.trim().is_empty()),
+    let answer = get_bounded(
+        &url,
+        authorization,
+        OLLAMA_TAGS_MAX_BYTES,
+        deadline,
+        "Ollama's version",
+    )
+    .await;
+    match answer {
+        Ok(body) => {
+            let version = serde_json::from_slice::<Version>(&body);
+            if version.is_ok_and(|answer| !answer.version.trim().is_empty()) {
+                OllamaProbe::Ollama
+            } else {
+                OllamaProbe::NotOllama
+            }
+        }
+        // The same errors a chat request retries: asking again may get an answer.
+        Err(error) if error.is_retryable() => {
+            tracing::info!(%error, "Ollama's version did not come back");
+            OllamaProbe::Unknown
+        }
         Err(error) => {
             tracing::debug!(%error, "not Ollama's native API");
-            false
+            OllamaProbe::NotOllama
         }
     }
 }

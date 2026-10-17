@@ -46,6 +46,7 @@ fn provider(server: &TestServer, effort: Effort) -> OllamaChatProvider {
         &config(effort),
         OllamaChatOptions {
             base_url: format!("{}/v1", server.base_url),
+            api_key: None,
             clock: Arc::new(FakeClock::new()),
             policy: Some(RetryPolicy {
                 first_token_deadline: Duration::from_secs(5),

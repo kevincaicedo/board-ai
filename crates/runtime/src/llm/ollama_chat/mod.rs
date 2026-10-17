@@ -14,23 +14,25 @@
 
 mod decode;
 mod maybe;
+mod native_calls;
 mod request;
 
 use std::sync::Arc;
 
 use boardai_core::history::Conversation;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 use self::decode::OllamaDecoder;
 use self::request::FrozenRequest;
 use super::error::ProviderError;
-use super::http::{RequestSpec, build_client, endpoint, post_and_drain};
-use super::ollama::ollama_root;
+use super::http::{RequestSpec, bearer, build_client, endpoint, post_and_drain};
+use super::ollama::{OllamaProbe, ollama_root, probe_ollama};
 use super::session::{self, Framing, SessionParts};
 use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig, WarmUp};
 use crate::cancel::CancelToken;
 use crate::clock::Clock;
 use crate::limits::TALKER_WARM_UP_MAX_BYTES;
+use crate::settings::Secret;
 
 pub use maybe::MaybeOllama;
 
@@ -38,10 +40,13 @@ pub use maybe::MaybeOllama;
 const OLLAMA_PORT: u16 = 11434;
 
 /// How to reach Ollama: its OpenAI-compatible base URL (`http://localhost:11434/v1`) or its
-/// root. Local Ollama needs no key.
+/// root. Local Ollama needs no key; one configured for the base URL (Ollama behind a proxy that
+/// checks it) goes as `Authorization: Bearer` (D-193), on every request and on the probe, as the
+/// OpenAI-compatible adapter would send it to the same host.
 #[derive(Clone, Debug)]
 pub struct OllamaChatOptions {
     pub base_url: String,
+    pub api_key: Option<Secret>,
     pub clock: Arc<dyn Clock>,
     pub policy: Option<RetryPolicy>,
 }
@@ -49,9 +54,12 @@ pub struct OllamaChatOptions {
 #[derive(Debug)]
 pub struct OllamaChatProvider {
     client: reqwest::Client,
+    root: String,
     url: String,
     headers: HeaderMap,
     frozen: FrozenRequest,
+    /// The request's tool names, which calls written as text may name (D-191).
+    tools: Arc<[String]>,
     policy: RetryPolicy,
     clock: Arc<dyn Clock>,
 }
@@ -61,16 +69,27 @@ impl OllamaChatProvider {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT, HeaderValue::from_static("application/x-ndjson"));
+        if let Some(key) = &options.api_key {
+            headers.insert(AUTHORIZATION, bearer(key)?);
+        }
+        let root = ollama_root(&options.base_url).to_owned();
         Ok(Self {
             client: build_client()?,
-            url: endpoint(ollama_root(&options.base_url), "api/chat")?,
+            url: endpoint(&root, "api/chat")?,
+            root,
             headers,
             frozen: FrozenRequest::new(config),
+            tools: config.tools.iter().map(|tool| tool.name.clone()).collect(),
             policy: options
                 .policy
                 .unwrap_or_else(|| RetryPolicy::for_role(config.role)),
             clock: options.clock,
         })
+    }
+
+    /// Asks the server whether it is Ollama, where and as this adapter's requests would go.
+    pub(super) async fn probe(&self) -> OllamaProbe {
+        probe_ollama(&self.root, self.headers.get(AUTHORIZATION)).await
     }
 }
 
@@ -100,7 +119,7 @@ impl LlmProvider for OllamaChatProvider {
             provider: "ollama",
             framing: Framing::NdJson,
         };
-        session::open(parts, OllamaDecoder::default(), cancel)
+        session::open(parts, OllamaDecoder::new(&self.tools), cancel)
     }
 
     /// Loads the model with the session's context window (~4 s cold) and prefills the system

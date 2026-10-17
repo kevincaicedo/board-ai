@@ -2,9 +2,13 @@
 //!
 //! Each line carries a piece of the assistant message; tool calls arrive whole (arguments as a
 //! JSON object) and are delivered when the response is done, after the text. The last line says
-//! `done` with a reason and the token counts. `thinking` is never spoken and is ignored.
+//! `done` with a reason and the token counts. `thinking` is never spoken and is ignored. When
+//! the request offered tools, calls gemma4 wrote in its own syntax as text are read back into
+//! calls and taken out of the text ([`NativeCalls`], D-191); they are delivered with the others,
+//! in the order written, and stored in the native message as calls.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use boardai_core::history::{ProviderFamily, RawAssistant};
 use boardai_core::ids::ToolCallId;
@@ -13,16 +17,30 @@ use boardai_core::tools::{InvalidToolInput, ToolCall, ToolInvocation};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use super::native_calls::{NativeCall, NativeCalls};
 use super::request::{assistant_message, tool_call};
 use crate::llm::error::bounded_detail;
 use crate::llm::session::{Decoder, Flow};
 use crate::llm::sse::SseEvent;
 use crate::llm::{ChatEvent, ProviderError, Usage};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct OllamaDecoder {
     text: String,
     calls: Vec<WireToolCall>,
+    /// Reads gemma4's calls written as text; only when the request offered tools.
+    native: Option<NativeCalls>,
+}
+
+impl OllamaDecoder {
+    /// `tools` are the names of the request's tools.
+    pub(super) fn new(tools: &Arc<[String]>) -> Self {
+        Self {
+            text: String::new(),
+            calls: Vec::new(),
+            native: (!tools.is_empty()).then(|| NativeCalls::new(Arc::clone(tools))),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -80,15 +98,13 @@ impl Decoder for OllamaDecoder {
             });
         }
         if let Some(message) = line.message {
-            if !message.content.is_empty() {
-                self.text.push_str(&message.content);
-                out.push_back(ChatEvent::TextDelta(message.content));
-            }
+            self.on_content(message.content, out);
             self.calls.extend(message.tool_calls);
         }
         if !line.done {
             return Ok(Flow::Continue);
         }
+        self.finish_native(out);
         let usage = Usage {
             input_tokens: line.prompt_eval_count,
             output_tokens: line.eval_count,
@@ -106,11 +122,60 @@ impl Decoder for OllamaDecoder {
     }
 
     fn reset(&mut self) {
-        *self = Self::default();
+        self.text.clear();
+        self.calls.clear();
+        if let Some(native) = &mut self.native {
+            native.reset();
+        }
     }
 }
 
 impl OllamaDecoder {
+    /// Speaks what is text; a call written in gemma4's syntax becomes a call instead.
+    fn on_content(&mut self, content: String, out: &mut VecDeque<ChatEvent>) {
+        let text = match &mut self.native {
+            Some(native) => {
+                let mut text = String::new();
+                let mut calls = Vec::new();
+                native.push(&content, &mut text, &mut calls);
+                self.calls.extend(calls.into_iter().map(WireToolCall::from));
+                text
+            }
+            None => content,
+        };
+        self.speak(text, out);
+    }
+
+    /// The response is done: a call still open is decided, and what was read is logged.
+    fn finish_native(&mut self, out: &mut VecDeque<ChatEvent>) {
+        let Some(native) = &mut self.native else {
+            return;
+        };
+        let mut text = String::new();
+        native.finish(&mut text);
+        let (read, dropped) = (native.read(), native.dropped());
+        self.speak(text, out);
+        if dropped > 0 {
+            tracing::warn!(
+                read,
+                dropped,
+                "tool calls written in gemma4's syntax were dropped"
+            );
+        } else if read > 0 {
+            tracing::info!(
+                read,
+                "tool calls written in gemma4's syntax were read as calls"
+            );
+        }
+    }
+
+    fn speak(&mut self, text: String, out: &mut VecDeque<ChatEvent>) {
+        if !text.is_empty() {
+            self.text.push_str(&text);
+            out.push_back(ChatEvent::TextDelta(text));
+        }
+    }
+
     fn complete(
         &mut self,
         reason: Option<&str>,
@@ -167,6 +232,20 @@ impl OllamaDecoder {
         });
         out.push_back(ChatEvent::Done { stop, usage, raw });
         Ok(())
+    }
+}
+
+/// A call read from the text has no id; it gets one by its place, as Ollama's own calls
+/// without one do.
+impl From<NativeCall> for WireToolCall {
+    fn from(call: NativeCall) -> Self {
+        Self {
+            id: None,
+            function: WireFunction {
+                name: call.name,
+                arguments: Value::Object(call.arguments),
+            },
+        }
     }
 }
 

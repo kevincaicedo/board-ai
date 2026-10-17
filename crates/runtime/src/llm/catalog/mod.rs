@@ -300,6 +300,7 @@ fn fresh(at: SessionTime, now: SessionTime, ttl_ms: u64) -> bool {
 async fn fetch(url: &str, max_bytes: usize, what: &str) -> Result<Vec<u8>, ProviderError> {
     get_bounded(
         url,
+        None,
         max_bytes,
         Duration::from_millis(MODEL_LIST_TIMEOUT_MS),
         what,

@@ -1,5 +1,6 @@
 //! What the adapters send to ready a session's first request (D-154), and how a server that
-//! may be Ollama is probed once and then spoken to natively or as OpenAI-compatible (D-156).
+//! may be Ollama is probed and then spoken to natively or as OpenAI-compatible (D-156): a
+//! definite answer is kept, a probe that got none is asked again, within `OLLAMA_PROBES_MAX`.
 //! Local fake servers only.
 #![allow(clippy::expect_used, reason = "test setup fails loudly")]
 
@@ -11,13 +12,16 @@ use std::time::Duration;
 use boardai_core::history::{Conversation, Message, UserPart};
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::FakeClock;
-use boardai_runtime::limits::{OLLAMA_CONTEXT_TOKENS, OLLAMA_KEEP_ALIVE_SECONDS};
+use boardai_runtime::limits::{
+    OLLAMA_CONTEXT_TOKENS, OLLAMA_KEEP_ALIVE_SECONDS, OLLAMA_PROBES_MAX,
+};
 use boardai_runtime::llm::ollama_chat::{MaybeOllama, OllamaChatOptions, OllamaChatProvider};
 use boardai_runtime::llm::openai::{Dialect, OpenAiCompatibleProvider, OpenAiOptions};
 use boardai_runtime::llm::openrouter::ProviderSlug;
 use boardai_runtime::llm::{
     ChatEvent, Effort, LlmProvider, LlmRole, ProviderError, RetryPolicy, TalkerConfig, ToolSpec,
 };
+use boardai_runtime::settings::Secret;
 use futures_util::StreamExt;
 use serde_json::json;
 use support::{Scripted, TestServer, fixture};
@@ -46,10 +50,15 @@ fn policy() -> Option<RetryPolicy> {
 }
 
 fn native(base_url: &str) -> OllamaChatProvider {
+    native_with_key(base_url, None)
+}
+
+fn native_with_key(base_url: &str, api_key: Option<Secret>) -> OllamaChatProvider {
     OllamaChatProvider::new(
         &config(Effort::None),
         OllamaChatOptions {
             base_url: base_url.to_owned(),
+            api_key,
             clock: Arc::new(FakeClock::new()),
             policy: policy(),
         },
@@ -188,11 +197,7 @@ async fn ollama_elsewhere_is_found_by_its_version_and_spoken_to_natively() {
     ])
     .await;
     let base_url = format!("{}/v1", server.base_url);
-    let maybe = MaybeOllama::new(
-        native(&base_url),
-        compatible(&base_url, Dialect::Standard),
-        base_url.clone(),
-    );
+    let maybe = MaybeOllama::new(native(&base_url), compatible(&base_url, Dialect::Standard));
     assert!(!text(&maybe).await.is_empty());
     assert!(!text(&maybe).await.is_empty());
     let paths: Vec<String> = server
@@ -213,11 +218,7 @@ async fn another_server_keeps_the_compatible_api_after_the_probe() {
     ])
     .await;
     let base_url = format!("{}/v1", server.base_url);
-    let maybe = MaybeOllama::new(
-        native(&base_url),
-        compatible(&base_url, Dialect::Standard),
-        base_url.clone(),
-    );
+    let maybe = MaybeOllama::new(native(&base_url), compatible(&base_url, Dialect::Standard));
     let warm_up = maybe.warm_up().expect("the probe runs as the warm-up");
     assert_eq!(warm_up.await, Ok(()));
     assert!(!text(&maybe).await.is_empty());
@@ -239,11 +240,7 @@ async fn an_answer_without_a_version_is_not_ollama() {
     ])
     .await;
     let base_url = format!("{}/v1", server.base_url);
-    let maybe = MaybeOllama::new(
-        native(&base_url),
-        compatible(&base_url, Dialect::Standard),
-        base_url.clone(),
-    );
+    let maybe = MaybeOllama::new(native(&base_url), compatible(&base_url, Dialect::Standard));
     assert!(!text(&maybe).await.is_empty());
     let paths: Vec<String> = server
         .requests()
@@ -251,4 +248,95 @@ async fn an_answer_without_a_version_is_not_ollama() {
         .map(|request| request.path)
         .collect();
     assert_eq!(paths, ["/api/version", "/v1/chat/completions"]);
+}
+
+fn paths(server: &TestServer) -> Vec<String> {
+    server
+        .requests()
+        .into_iter()
+        .map(|request| request.path)
+        .collect()
+}
+
+/// A busy Ollama (503) or one that answers past `OLLAMA_PROBE_TIMEOUT_MS` gave no answer, so
+/// that use goes to the compatible API and the next one asks again; the answer it gets is kept.
+/// Review 2, finding 12: one failed probe used to be kept as "not Ollama" for the app's run,
+/// sending every request to `/v1` and Ollama's 4,096-token context.
+#[tokio::test]
+async fn a_probe_that_got_no_answer_is_asked_again_and_the_answer_kept() {
+    for unanswered in [
+        Scripted::status(503, r#"{"error":"server busy, please try again"}"#),
+        json_answer(r#"{"version":"0.40.5"}"#).hanging(),
+    ] {
+        let server = TestServer::start(vec![
+            unanswered,
+            json_answer(r#"{"version":"0.40.5"}"#),
+            ndjson("ollama_chat/text.ndjson"),
+            ndjson("ollama_chat/text.ndjson"),
+        ])
+        .await;
+        let base_url = format!("{}/v1", server.base_url);
+        let maybe = MaybeOllama::new(native(&base_url), compatible(&base_url, Dialect::Standard));
+        let warm_up = maybe.warm_up().expect("the probe runs as the warm-up");
+        assert_eq!(warm_up.await, Ok(()), "the compatible API has no warm-up");
+        assert!(!text(&maybe).await.is_empty());
+        assert!(!text(&maybe).await.is_empty());
+        assert_eq!(
+            paths(&server),
+            ["/api/version", "/api/version", "/api/chat", "/api/chat"]
+        );
+    }
+}
+
+/// A server that never answers the probe is asked `OLLAMA_PROBES_MAX` times, one request each;
+/// after that it keeps the compatible API without asking.
+#[tokio::test]
+async fn unanswered_probes_are_bounded() {
+    let probes = usize::try_from(OLLAMA_PROBES_MAX).expect("a small limit");
+    let mut script = Vec::new();
+    let mut expected = Vec::new();
+    for _ in 0..probes {
+        script.push(Scripted::status(503, r#"{"error":"server busy"}"#));
+        script.push(Scripted::sse(&fixture("openai/ollama_text.sse"), 2));
+        expected.extend(["/api/version", "/v1/chat/completions"]);
+    }
+    for _ in 0..2 {
+        script.push(Scripted::sse(&fixture("openai/ollama_text.sse"), 2));
+        expected.push("/v1/chat/completions");
+    }
+    let server = TestServer::start(script).await;
+    let base_url = format!("{}/v1", server.base_url);
+    let maybe = MaybeOllama::new(native(&base_url), compatible(&base_url, Dialect::Standard));
+    for _ in 0..probes + 2 {
+        assert!(!text(&maybe).await.is_empty());
+    }
+    assert_eq!(paths(&server), expected);
+}
+
+/// Review 2, finding 24b: a key configured for the base URL goes to the server the probe found
+/// to be Ollama, on the probe and on the native requests, as it would on `/v1`.
+#[tokio::test]
+async fn the_configured_key_goes_with_the_probe_and_the_native_requests() {
+    let server = TestServer::start(vec![
+        json_answer(r#"{"version":"0.40.5"}"#),
+        ndjson("ollama_chat/text.ndjson"),
+    ])
+    .await;
+    let base_url = format!("{}/v1", server.base_url);
+    let key = Secret::new("test-key-for-the-proxy".to_owned());
+    let maybe = MaybeOllama::new(
+        native_with_key(&base_url, Some(key)),
+        compatible(&base_url, Dialect::Standard),
+    );
+    assert!(!text(&maybe).await.is_empty());
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    for request in &requests {
+        assert_eq!(
+            request.header("authorization"),
+            Some("Bearer test-key-for-the-proxy"),
+            "{}",
+            request.path
+        );
+    }
 }

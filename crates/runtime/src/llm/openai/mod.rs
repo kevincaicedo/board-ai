@@ -14,7 +14,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValu
 use self::decode::OpenAiDecoder;
 use self::request::FrozenRequest;
 use super::error::ProviderError;
-use super::http::{RequestSpec, build_client, endpoint, post_and_drain};
+use super::http::{RequestSpec, bearer, build_client, endpoint, post_and_drain};
 use super::openrouter::ProviderSlug;
 use super::session::{self, Framing, SessionParts};
 use super::{ChatStream, LlmCapabilities, LlmProvider, RetryPolicy, TalkerConfig, WarmUp};
@@ -136,14 +136,7 @@ fn headers(api_key: Option<&Secret>) -> Result<HeaderMap, ProviderError> {
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
     if let Some(key) = api_key {
-        let mut bearer =
-            HeaderValue::from_str(&format!("Bearer {}", key.expose())).map_err(|_| {
-                ProviderError::NotConfigured {
-                    detail: "the API key has characters that cannot be sent".to_owned(),
-                }
-            })?;
-        bearer.set_sensitive(true);
-        headers.insert(AUTHORIZATION, bearer);
+        headers.insert(AUTHORIZATION, bearer(key)?);
     }
     Ok(headers)
 }

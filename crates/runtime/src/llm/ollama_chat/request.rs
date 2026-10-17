@@ -13,6 +13,40 @@ use crate::llm::{Effort, ProviderError, TalkerConfig};
 pub(super) struct FrozenRequest {
     fields: Map<String, Value>,
     system_prompt: String,
+    tool_turns: ToolTurns,
+}
+
+/// How an assistant turn that spoke and then called tools goes back to Ollama (D-190).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToolTurns {
+    /// One message with its text and its calls: Ollama's renderers for most models write the
+    /// text, then the calls, inside one assistant turn.
+    Joined,
+    /// The text in a message of its own, then the calls with no text. Ollama's gemma4 renderer
+    /// writes a message's text after the tool responses and then closes the model's turn, and
+    /// adds no new one for a request that ends with tool results: gemma4 then answered nothing
+    /// in 11 of 12 tool rounds (12 of 12 calls once split). Two assistant messages in a row
+    /// continue one model turn there, in the order said. Other renderers (qwen3.5) would make
+    /// them two turns, so they keep `Joined`.
+    TextThenCalls,
+}
+
+impl ToolTurns {
+    /// gemma4 under any tag (`gemma4:latest`, `gemma4:e4b`), or a pulled `gemma-4` build.
+    /// Ollama names a model's renderer only through `/api/show`, a request per session for
+    /// one bit, so the name decides.
+    fn for_model(model: &str) -> Self {
+        let name = model
+            .rsplit('/')
+            .next()
+            .unwrap_or(model)
+            .to_ascii_lowercase();
+        if name.starts_with("gemma4") || name.starts_with("gemma-4") {
+            Self::TextThenCalls
+        } else {
+            Self::Joined
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -57,6 +91,7 @@ impl FrozenRequest {
         Self {
             fields,
             system_prompt: config.system_prompt.clone(),
+            tool_turns: ToolTurns::for_model(&config.model),
         }
     }
 
@@ -90,7 +125,7 @@ impl FrozenRequest {
         if !self.system_prompt.is_empty() {
             rendered.push(json!({"role": "system", "content": self.system_prompt}));
         }
-        let conversation = render_messages(messages)?;
+        let conversation = render_messages(messages, self.tool_turns)?;
         if conversation.is_empty() {
             return Err(invalid("the conversation is empty"));
         }
@@ -118,7 +153,10 @@ impl FrozenRequest {
 
 /// System context stays a system message. A tool result names its tool (`tool_name`), which
 /// Ollama matches results by, and carries the call's id as well.
-fn render_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
+fn render_messages(
+    messages: &[Message],
+    tool_turns: ToolTurns,
+) -> Result<Vec<Value>, ProviderError> {
     let mut out = Vec::with_capacity(messages.len());
     let mut tool_names: HashMap<String, String> = HashMap::new();
     for message in messages {
@@ -133,7 +171,7 @@ fn render_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
                     }
                 }
                 if let Some(assistant) = render_assistant(parts, raw.as_ref())? {
-                    out.push(assistant);
+                    push_assistant(assistant, tool_turns, &mut out);
                 }
             }
         }
@@ -200,6 +238,28 @@ fn render_assistant(
         }
     }
     Ok(assistant_message(&texts.concat(), calls))
+}
+
+/// One assistant message, or two when its text must come before its calls (`TextThenCalls`).
+/// The stored message is unchanged; only how it is sent differs.
+fn push_assistant(mut message: Value, tool_turns: ToolTurns, out: &mut Vec<Value>) {
+    let speaks = message
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|content| !content.is_empty());
+    let calls = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|calls| !calls.is_empty());
+    match tool_turns {
+        ToolTurns::TextThenCalls if speaks && calls => {
+            let text = message["content"].take();
+            message["content"] = Value::String(String::new());
+            out.push(json!({"role": "assistant", "content": text}));
+            out.push(message);
+        }
+        ToolTurns::TextThenCalls | ToolTurns::Joined => out.push(message),
+    }
 }
 
 /// Ollama takes arguments as an object. Input that is not one (a malformed call, answered with
