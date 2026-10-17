@@ -3,7 +3,11 @@
 //!
 //! Options: `--text "…"` (one clause), `--voice <identifier>`, `--list-voices`,
 //! `--list-inputs` (the microphones and whether this process may record; never prompts),
-//! `--input builtin|default|<device name>` (which microphone the unit opens).
+//! `--list-devices` (every device, its directions, and the system defaults),
+//! `--input builtin|default|<device name>` (which microphone the unit opens),
+//! `--output default|<device name>` (which speaker), and `--watch <seconds>`: open the unit,
+//! speak nothing, and print what happens as devices come and go (unplug the chosen microphone,
+//! plug in headphones, change the default in System Settings).
 #![allow(clippy::print_stdout, reason = "a dev probe prints its findings")]
 
 use std::sync::Arc;
@@ -13,7 +17,8 @@ use std::time::{Duration, Instant};
 use boardai_core::ids::ClauseId;
 use boardai_core::input::Input;
 use boardai_runtime::audio::{
-    AudioConfig, AudioIo, InputChoice, input_device_names, microphone_access, run_main_loop_until,
+    AudioConfig, AudioIo, InputChoice, OutputChoice, device_snapshot, input_device_names,
+    microphone_access, run_main_loop_until,
 };
 use boardai_runtime::speech_out::{
     SpeechOut, SpeechOutCommand, SpeechOutConfig, SystemVoice, VoiceId, system_voices,
@@ -31,8 +36,12 @@ struct Options {
     clauses: Vec<String>,
     voice: VoiceId,
     input: InputChoice,
+    output: OutputChoice,
     list_voices: bool,
     list_inputs: bool,
+    list_devices: bool,
+    /// Watch device changes this long instead of speaking.
+    watch: Option<Duration>,
 }
 
 fn options() -> Result<Options, String> {
@@ -43,8 +52,11 @@ fn options() -> Result<Options, String> {
             .collect(),
         voice: VoiceId::default(),
         input: InputChoice::SystemDefault,
+        output: OutputChoice::SystemDefault,
         list_voices: false,
         list_inputs: false,
+        list_devices: false,
+        watch: None,
     };
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {
@@ -61,8 +73,23 @@ fn options() -> Result<Options, String> {
                     None => return Err("--input needs builtin, default or a name".to_owned()),
                 }
             }
+            "--output" => {
+                options.output = match arguments.next().as_deref() {
+                    Some("default") => OutputChoice::SystemDefault,
+                    Some(name) => OutputChoice::Named(name.to_owned()),
+                    None => return Err("--output needs default or a name".to_owned()),
+                }
+            }
+            "--watch" => {
+                let seconds: u64 = arguments
+                    .next()
+                    .and_then(|value| value.parse().ok())
+                    .ok_or("--watch needs a number of seconds")?;
+                options.watch = Some(Duration::from_secs(seconds));
+            }
             "--list-voices" => options.list_voices = true,
             "--list-inputs" => options.list_inputs = true,
+            "--list-devices" => options.list_devices = true,
             other => return Err(format!("unknown option {other}")),
         }
     }
@@ -78,6 +105,10 @@ fn main() -> Result<(), String> {
         }
         return Ok(());
     }
+    if options.list_devices {
+        list_devices();
+        return Ok(());
+    }
     if options.list_voices {
         for voice in system_voices() {
             println!(
@@ -87,8 +118,9 @@ fn main() -> Result<(), String> {
         }
         return Ok(());
     }
-    let (audio, _mic, output) = AudioIo::start(AudioConfig {
+    let (mut audio, _mic, output) = AudioIo::start(AudioConfig {
         input: options.input.clone(),
+        output: options.output.clone(),
     })
     .map_err(|error| format!("audio: {error}"))?;
     println!(
@@ -99,12 +131,17 @@ fn main() -> Result<(), String> {
     );
     let done = Arc::new(AtomicBool::new(false));
     let worker_done = Arc::clone(&done);
+    let events = audio.take_device_events();
     let worker = std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|error| error.to_string())?;
-        let outcome = runtime.block_on(speak(options, output));
+        let outcome = match (options.watch, events) {
+            (Some(period), Some(events)) => runtime.block_on(watch(period, events)),
+            (Some(_), None) => Err("no device events".to_owned()),
+            (None, _) => runtime.block_on(speak(options, output)),
+        };
         worker_done.store(true, Ordering::Release);
         outcome
     });
@@ -120,6 +157,51 @@ fn main() -> Result<(), String> {
         counters.callback_panics.get()
     );
     outcome
+}
+
+/// Every device with its directions, and the system defaults.
+fn list_devices() {
+    let snapshot = device_snapshot();
+    for device in &snapshot.devices {
+        println!(
+            "{:>4}  {}{}{}{}{}",
+            device.id.0,
+            device.name,
+            if device.has_input { "  [in]" } else { "" },
+            if device.has_output { "  [out]" } else { "" },
+            if device.built_in { "  (built in)" } else { "" },
+            if device.virtual_device {
+                "  (virtual)"
+            } else {
+                ""
+            },
+        );
+    }
+    println!(
+        "default input {:?}, default output {:?}",
+        snapshot.default_input.map(|id| id.0),
+        snapshot.default_output.map(|id| id.0)
+    );
+}
+
+/// Prints device events until `period` is over.
+async fn watch(
+    period: Duration,
+    mut events: tokio::sync::mpsc::Receiver<boardai_runtime::audio::DeviceEvent>,
+) -> Result<(), String> {
+    let started = Instant::now();
+    println!("watching devices for {} s", period.as_secs());
+    let deadline = tokio::time::sleep(period);
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            event = events.recv() => {
+                let Some(event) = event else { return Err("the unit stopped".to_owned()) };
+                println!("{:>6} ms  {event:?}", started.elapsed().as_millis());
+            }
+            () = &mut deadline => return Ok(()),
+        }
+    }
 }
 
 async fn speak(

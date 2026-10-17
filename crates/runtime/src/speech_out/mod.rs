@@ -7,12 +7,14 @@
 //! `VoiceStopped` on a bounded channel and the playback position on a `watch` (latest wins).
 
 mod actor;
+mod base64;
 mod elevenlabs;
 mod engine;
 mod kokoro;
 mod system;
 mod timeline;
 pub mod timings;
+mod websocket;
 
 use std::fmt;
 use std::time::Duration;
@@ -25,7 +27,8 @@ use crate::cancel::CancelToken;
 
 pub use actor::{SpeechOut, SpeechOutChannels, SpeechOutCommand, SpeechOutConfig};
 pub use elevenlabs::{
-    ELEVENLABS_BASE_URL, ELEVENLABS_DEFAULT_VOICE_ID, ElevenLabsOptions, ElevenLabsVoice,
+    ELEVENLABS_BASE_URL, ELEVENLABS_DEFAULT_MODEL, ELEVENLABS_DEFAULT_VOICE_ID, ElevenLabsOptions,
+    ElevenLabsRealtime, ElevenLabsVoice,
 };
 pub use engine::{ChosenVoice, KOKORO_QUANTIZED_MODEL, choose_voice, engine_for, kokoro_files};
 pub use kokoro::{KOKORO_VOICE, KokoroFiles, KokoroVoice};
@@ -85,6 +88,10 @@ pub trait TextToSpeech: Send + Sync {
     /// Synthesizes one clause. The stream ends after the last chunk or after an error, and
     /// stops early (with no further item) when `cancel` fires.
     fn synthesize(&self, clause: &ClauseText, voice: &VoiceId, cancel: CancelToken) -> TtsStream;
+
+    /// Gets ready to speak with `voice` (opens a connection, loads a voice) so the first clause
+    /// does not pay for it. Never blocks; failing here only means the first clause is slower.
+    fn prepare(&self, _voice: &VoiceId) {}
 }
 
 /// Why a synthesis failed; the category survives to the log and the fallback decision.

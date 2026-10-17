@@ -9,9 +9,13 @@
 //! - the target gain, which the renderer approaches per sample ([`VOICE_GAIN_RAMP_MS`]);
 //! - a stop request and its acknowledgement, numbered so an old answer is never mistaken for a
 //!   new one. The renderer fades out over [`VOICE_FADE_MS`], drops what is left in the ring and
-//!   publishes the counter at that point.
+//!   publishes the counter at that point;
+//! - the device's output latency, set again whenever the audio unit is rebuilt on another
+//!   device, and a count of render cycles, which shows whether a unit is still running.
 //!
-//! The renderer never allocates, locks, logs or blocks (law 7).
+//! The renderer never allocates, locks, logs or blocks (law 7). It outlives the audio unit that
+//! drives it: a rebuild moves it, with the ring and the counter, to the new unit, so positions
+//! keep their meaning across a device change.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -35,11 +39,12 @@ pub fn voice_ring(
         stop_requested: AtomicU64::new(0),
         stop_acknowledged: AtomicU64::new(0),
         stopped_at_frames: AtomicU64::new(0),
+        output_latency_frames: AtomicU64::new(output_latency_frames),
+        render_cycles: AtomicU64::new(0),
     });
     let output = VoiceOutput {
         producer,
         shared: Arc::clone(&shared),
-        output_latency_frames,
         stop_generation: 0,
     };
     let renderer = PlaybackRenderer {
@@ -63,6 +68,10 @@ struct PlaybackShared {
     /// `played_frames` when the stop numbered `stop_acknowledged` finished; written before the
     /// acknowledgement is published.
     stopped_at_frames: AtomicU64,
+    /// The current device's output latency in 24 kHz frames.
+    output_latency_frames: AtomicU64,
+    /// Device cycles rendered so far.
+    render_cycles: AtomicU64,
 }
 
 /// The speech-out side of the voice ring.
@@ -70,8 +79,29 @@ struct PlaybackShared {
 pub struct VoiceOutput {
     producer: rtrb::Producer<f32>,
     shared: Arc<PlaybackShared>,
-    output_latency_frames: u64,
     stop_generation: u64,
+}
+
+/// What the audio unit's owner sees of playback: whether the renderer still runs, and where to
+/// publish a new device's latency.
+#[derive(Clone, Debug)]
+pub struct PlaybackMonitor {
+    shared: Arc<PlaybackShared>,
+}
+
+impl PlaybackMonitor {
+    /// Device cycles rendered so far; a running unit renders one every few milliseconds.
+    #[must_use]
+    pub fn render_cycles(&self) -> u64 {
+        self.shared.render_cycles.load(Ordering::Relaxed)
+    }
+
+    /// Publishes the latency of the device the renderer now plays on.
+    pub fn set_output_latency_frames(&self, frames: u64) {
+        self.shared
+            .output_latency_frames
+            .store(frames, Ordering::Release);
+    }
 }
 
 /// The voice's gain, set from outside speech out. One atomic store; the renderer ramps to it.
@@ -107,10 +137,10 @@ impl VoiceOutput {
     /// The same output with the latency measured once the device runs.
     #[must_use]
     pub fn with_output_latency_frames(self, output_latency_frames: u64) -> Self {
-        Self {
-            output_latency_frames,
-            ..self
-        }
+        self.shared
+            .output_latency_frames
+            .store(output_latency_frames, Ordering::Release);
+        self
     }
 
     /// Copies as much of `samples` as fits and returns how many frames were taken.
@@ -132,10 +162,10 @@ impl VoiceOutput {
     }
 
     /// The device's output latency in 24 kHz frames: a frame counted as played is heard this
-    /// much later.
+    /// much later. It changes when the audio unit moves to another device.
     #[must_use]
-    pub const fn output_latency_frames(&self) -> u64 {
-        self.output_latency_frames
+    pub fn output_latency_frames(&self) -> u64 {
+        self.shared.output_latency_frames.load(Ordering::Acquire)
     }
 
     /// Sets the gain the renderer ramps to.
@@ -205,6 +235,13 @@ pub struct PlaybackRenderer {
 }
 
 impl PlaybackRenderer {
+    #[must_use]
+    pub fn monitor(&self) -> PlaybackMonitor {
+        PlaybackMonitor {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+
     /// Reads the controls once per device cycle, so a cycle sees one consistent gain target and
     /// stop request.
     pub fn begin_cycle(&mut self) {
@@ -268,6 +305,7 @@ impl PlaybackRenderer {
         self.shared
             .played_frames
             .store(self.played_frames, Ordering::Release);
+        self.shared.render_cycles.fetch_add(1, Ordering::Relaxed);
     }
 
     fn step_gain(&mut self) {
@@ -315,6 +353,18 @@ mod tests {
         assert!(out[..300].iter().all(|sample| (*sample - 0.5).abs() < 1e-6));
         assert!(out[300..].iter().all(|sample| *sample == 0.0));
         assert_eq!(output.played_frames(), 300);
+    }
+
+    #[test]
+    fn the_monitor_sees_cycles_and_publishes_a_new_latency() {
+        let (output, mut renderer) = voice_ring(100, 662);
+        let monitor = renderer.monitor();
+        assert_eq!(output.output_latency_frames(), 662);
+        render(&mut renderer, 10);
+        render(&mut renderer, 10);
+        assert_eq!(monitor.render_cycles(), 2);
+        monitor.set_output_latency_frames(4_800);
+        assert_eq!(output.output_latency_frames(), 4_800);
     }
 
     #[test]

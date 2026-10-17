@@ -185,6 +185,9 @@ struct Stopping {
 struct HeardClock {
     played: u64,
     since: Option<Instant>,
+    /// What was last reported heard. The latency grows when the audio unit moves to a slower
+    /// device (Bluetooth), and what was heard is never taken back.
+    heard: u64,
 }
 
 impl HeardClock {
@@ -195,7 +198,9 @@ impl HeardClock {
         }
         let elapsed = self.since.map_or(Duration::ZERO, |since| now - since);
         let elapsed_frames = elapsed.as_millis() as u64 * u64::from(VOICE_RATE_HZ) / 1_000;
-        played.saturating_sub(latency) + elapsed_frames.min(latency.min(played))
+        let heard = played.saturating_sub(latency) + elapsed_frames.min(latency.min(played));
+        self.heard = self.heard.max(heard);
+        self.heard
     }
 }
 

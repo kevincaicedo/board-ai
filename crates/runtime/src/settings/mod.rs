@@ -12,7 +12,7 @@ mod write;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::audio::InputChoice;
+use crate::audio::{InputChoice, OutputChoice};
 use crate::limits::SETTINGS_FILE_MAX_BYTES;
 use crate::llm::Effort;
 
@@ -106,12 +106,16 @@ pub struct VoiceSettings {
     pub id: String,
 }
 
-/// `[audio]`: which microphone BoardAI listens on.
+/// `[audio]`: which microphone BoardAI listens on and which speaker it plays on.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AudioSettings {
-    /// `input = "system_default"` (the default), `"built_in"`, or a device's name as macOS shows
-    /// it. A name that matches no device falls back to the system default, out loud.
+    /// `input = "system_default"` (the default, following macOS as it changes), `"built_in"`,
+    /// or a device's name as macOS shows it. While a chosen device is missing the system default
+    /// stands in, out loud, until it comes back.
     pub input: InputChoice,
+    /// `output = "system_default"` (the default, following macOS: headphones plugged in or out)
+    /// or a device's name, with the same fallback.
+    pub output: OutputChoice,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

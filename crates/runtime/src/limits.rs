@@ -526,9 +526,44 @@ pub const RESAMPLER_PHASES_MAX: u32 = 1_024;
 /// counted, never with an allocation on the real-time thread.
 pub const AUDIO_CALLBACK_FRAMES_MAX: usize = 8_192;
 
-/// Audio devices read when looking for the built-in microphone; devices past it are not
-/// considered (a Mac has a handful).
+/// Audio devices read in one snapshot; devices past it are not considered (a Mac has a
+/// handful).
 pub const AUDIO_DEVICES_MAX: usize = 256;
+
+/// Device notifications are collected until this much quiet before the unit is rebuilt: one
+/// plug fires several (the device list, the default input, the default output).
+pub const AUDIO_DEVICE_SETTLE_MS: u64 = 300;
+
+/// The unit is rebuilt at most this long after the first notification of a burst, however many
+/// follow.
+pub const AUDIO_DEVICE_SETTLE_MAX_MS: u64 = 2_000;
+
+/// How often the device supervisor checks that the playback callback still runs.
+pub const AUDIO_WATCHDOG_INTERVAL_MS: u64 = 500;
+
+/// A unit whose playback callback has not run for this long is rebuilt (its device went away
+/// without a notification). After [`AUDIO_REBUILD_ATTEMPTS_MAX`] such rebuilds in a row the
+/// audio is reported lost, and left alone until the devices change.
+pub const AUDIO_STALL_MS: u64 = 2_000;
+
+/// Starts tried per route when rebuilding, [`AUDIO_REBUILD_RETRY_MS`] apart. Past them the
+/// stand-ins (the system defaults, or the built-in devices when a default is virtual) are tried
+/// the same way; past those the audio is reported lost (no sound, no microphone) until the
+/// devices change.
+pub const AUDIO_REBUILD_ATTEMPTS_MAX: u32 = 3;
+
+/// The wait between two starts of a rebuild.
+pub const AUDIO_REBUILD_RETRY_MS: u64 = 250;
+
+/// Device notifications waiting for the supervisor; past it one is dropped (the one waiting
+/// already causes a full check).
+pub const AUDIO_DEVICE_SIGNALS_QUEUE: usize = 4;
+
+/// Device events waiting for the app; past it an event is dropped and logged.
+pub const AUDIO_DEVICE_EVENTS_QUEUE: usize = 16;
+
+/// Bytes of a device name kept for captions and logs; the rest is cut at a character.
+pub const AUDIO_DEVICE_NAME_MAX_BYTES: usize = 128;
 
 /// Largest audio file read as mic input; a larger one is refused before it is read.
 pub const AUDIO_FILE_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -569,6 +604,47 @@ pub const TTS_CLAUSE_AUDIO_MAX_MS: u32 = 40_000;
 /// Time to synthesize one clause; past it the engine fails with `Timeout` and the fallback
 /// voice is tried.
 pub const TTS_CLAUSE_TIMEOUT_MS: u64 = 15_000;
+
+/// The ElevenLabs realtime WebSocket's handshake (TCP, TLS, upgrade) must finish within this;
+/// past it the clause goes over HTTP and the WebSocket rests for
+/// [`ELEVENLABS_REALTIME_REST_MS`].
+pub const ELEVENLABS_CONNECT_TIMEOUT_MS: u64 = 3_000;
+
+/// After the realtime WebSocket fails to connect or breaks the protocol, clauses go over HTTP
+/// for this long before it is tried again, so a broken path never costs every clause a timeout.
+pub const ELEVENLABS_REALTIME_REST_MS: u64 = 30_000;
+
+/// A realtime clause waits at most this long for its next message (its first audio, more
+/// audio, its final message). Past it the clause fails with `Timeout`, the fallback voice speaks
+/// it, and the connection, which may be stalled, is closed. Flash answers in ~100–150 ms.
+pub const ELEVENLABS_CONTEXT_IDLE_TIMEOUT_MS: u64 = 2_000;
+
+/// One message written to the realtime WebSocket; past it the connection counts as broken and
+/// its clauses go over HTTP.
+pub const ELEVENLABS_SEND_TIMEOUT_MS: u64 = 2_000;
+
+/// Our side of the close handshake; past it the socket is dropped.
+pub const ELEVENLABS_CLOSE_TIMEOUT_MS: u64 = 500;
+
+/// Asked of the server as `inactivity_timeout` (its maximum): it closes a connection idle this
+/// long.
+pub const ELEVENLABS_INACTIVITY_TIMEOUT_SECONDS: u64 = 180;
+
+/// We close an idle realtime connection a little before the server would, so a clause never
+/// races its close; the next clause reconnects.
+pub const ELEVENLABS_IDLE_CLOSE_MS: u64 = 170_000;
+
+/// Contexts open at once on one realtime connection (ElevenLabs allows 5); past it the clause
+/// goes over HTTP. Speech out synthesizes one clause at a time, so this is a guard.
+pub const ELEVENLABS_CONTEXTS_MAX: usize = 5;
+
+/// Commands waiting for the realtime connection task; past it the clause goes over HTTP and a
+/// stop's notice is dropped (the context's late audio is then ignored when it arrives).
+pub const ELEVENLABS_COMMAND_QUEUE: usize = 16;
+
+/// Aligned characters kept per clause (a clause is at most 300 bytes); past it the clause gets
+/// estimated timings.
+pub const ELEVENLABS_ALIGNMENT_CHARACTERS_MAX: usize = 4_096;
 
 /// The macOS system voice must deliver its first audio within this time. Its callbacks run on
 /// the main thread, so a process whose main thread runs no event loop fails here, out loud,
@@ -640,11 +716,13 @@ pub const MODEL_DOWNLOAD_IDLE_TIMEOUT_MS: u64 = 30_000;
 /// Progress is reported at most every this many bytes (and at the end).
 pub const MODEL_PROGRESS_STEP_BYTES: u64 = 1024 * 1024;
 
-/// Bytes of one ElevenLabs response; past it the clause fails with `BadOutput` (a 300-byte
-/// clause is about 2 MB of base64 audio).
+/// Bytes of one clause's ElevenLabs audio (an HTTP response, or a realtime context's messages);
+/// past it the clause fails with `BadOutput` (a 300-byte clause is about 2 MB of base64 audio).
 pub const ELEVENLABS_RESPONSE_MAX_BYTES: usize = 16 * 1024 * 1024;
 
-/// Longest line of an ElevenLabs response; a longer line fails the clause with `BadOutput`.
+/// Longest line of an ElevenLabs HTTP response, and longest realtime WebSocket message or frame.
+/// A longer line fails the clause with `BadOutput`; a longer message ends the connection, and its
+/// clauses go over HTTP.
 pub const ELEVENLABS_LINE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 /// Longest ElevenLabs voice id (theirs are 20 characters); a longer or non-alphanumeric id is

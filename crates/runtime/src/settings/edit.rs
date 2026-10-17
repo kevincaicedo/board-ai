@@ -102,8 +102,11 @@ fn change(raw: &mut RawSettings, edit: &SettingsEdit) {
             );
         }
         SettingsEdit::Input(input) => {
+            // The output is not chosen on the first-run screen; a hand-written one stays.
+            let output = raw.audio.take().and_then(|audio| audio.output);
             raw.audio = Some(RawAudio {
                 input: Some(input.as_setting().to_owned()),
+                output,
             });
         }
         SettingsEdit::SetupComplete => raw.setup_complete = Some(true),

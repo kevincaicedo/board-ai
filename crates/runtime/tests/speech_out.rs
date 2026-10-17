@@ -4,7 +4,7 @@
 #![allow(clippy::expect_used, reason = "tests fail loudly")]
 
 use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -71,6 +71,8 @@ struct Harness {
     channels: SpeechOutChannels,
     device: Option<JoinHandle<()>>,
     rendered: Arc<Mutex<Vec<f32>>>,
+    /// While set, the device renders nothing: the audio unit is being rebuilt.
+    paused: Arc<AtomicBool>,
 }
 
 impl Harness {
@@ -91,6 +93,7 @@ impl Harness {
             channels,
             device: None,
             rendered: Arc::new(Mutex::new(Vec::new())),
+            paused: Arc::new(AtomicBool::new(false)),
         };
         (harness, renderer)
     }
@@ -98,9 +101,14 @@ impl Harness {
     /// Renders one 10 ms cycle every 10 ms, recording what it played.
     fn run_device(&mut self, mut renderer: PlaybackRenderer) {
         let rendered = Arc::clone(&self.rendered);
+        let paused = Arc::clone(&self.paused);
         self.device = Some(tokio::spawn(async move {
             let mut buffer = vec![0.0; CYCLE_FRAMES];
             loop {
+                if paused.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
                 renderer.begin_cycle();
                 renderer.render(&mut buffer);
                 renderer.end_cycle();
@@ -210,6 +218,46 @@ async fn positions_lag_by_the_output_latency() {
     // About 500 ms were sent to the device; 100 ms of it is still on its way to the speaker.
     let offset = i64::from(position.offset_ms);
     assert!((offset - 400).abs() <= 30, "{offset}");
+    harness.finish().await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_device_change_pauses_playback_and_positions_never_go_back() {
+    let (mut harness, renderer) = Harness::start(FakeVoice::new(2_000), 30 * FRAMES_PER_MS, None);
+    let monitor = renderer.monitor();
+    harness.say(1).await;
+    assert!(ready_clause(&harness.next_event().await).is_some());
+    let (positions, recorder) = harness.record_positions();
+    harness.run_device(renderer);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // The unit is rebuilt on a slower device (Bluetooth): a gap, then a longer latency.
+    harness.paused.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let before = (*harness.channels.playback.borrow()).expect("playing");
+    monitor.set_output_latency_frames(200 * FRAMES_PER_MS);
+    harness.paused.store(false, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let after = (*harness.channels.playback.borrow()).expect("playing");
+    assert!(
+        after.offset_ms >= before.offset_ms,
+        "{before:?} then {after:?}"
+    );
+    assert_eq!(harness.next_event().await, Input::PlaybackDrained);
+    recorder.abort();
+    let offsets: Vec<u32> = positions
+        .lock()
+        .expect("lock")
+        .iter()
+        .map(|p| p.offset_ms)
+        .collect();
+    assert!(
+        offsets.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{offsets:?}"
+    );
+    // Nothing in the ring was lost to the gap.
+    let rendered = harness.rendered.lock().expect("lock").clone();
+    let voiced = rendered.iter().filter(|sample| **sample > 0.49).count();
+    assert_eq!(voiced, 2_000 * FRAMES_PER_MS as usize);
     harness.finish().await;
 }
 

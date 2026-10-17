@@ -138,6 +138,7 @@ fn main() -> Result<(), String> {
         WhisperStt::new(&model(ModelId::WhisperBaseEn)?).map_err(|error| error.to_string())?;
     let (audio, mic, output) = AudioIo::start(AudioConfig {
         input: options.input.clone(),
+        ..AudioConfig::default()
     })
     .map_err(|error| error.to_string())?;
     println!(

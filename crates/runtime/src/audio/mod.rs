@@ -7,18 +7,25 @@
 //!   [`VoiceOutput`]; the playback callback reads it through [`PlaybackRenderer`], which owns the
 //!   played-frames counter, the duck gain and the stop fade.
 //!
-//! [`AudioIo::start`] opens the unit and returns both ring ends. Tests and the conversation
+//! [`AudioIo::start`] opens the unit and returns both ring ends. The unit follows the devices:
+//! a supervisor thread rebuilds it when the system default changes or a chosen device comes or
+//! goes (see [`devices`] and `supervisor`), and the app hears about it as [`DeviceEvent`]s.
+//! Tests and the conversation
 //! simulator build the same rings with [`mic_ring`] and [`voice_ring`] and drive the renderer
 //! themselves, so everything above the device runs without hardware. [`FileMic`] speaks audio
 //! files into the mic ring and [`NullOutput`] plays the voice ring nowhere, both in real time:
 //! the end-to-end test runs the whole pipeline with them (LLD §7).
 
 pub(crate) mod coreaudio;
+pub mod devices;
 mod file;
 mod file_mic;
 mod mic;
 mod null_output;
 pub mod resample;
+mod supervisor;
+#[cfg(test)]
+mod supervisor_tests;
 mod voice;
 
 use std::fmt;
@@ -26,14 +33,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use coreaudio::run_main_loop_until;
+pub use devices::{Absence, DeviceEvent, DeviceKind, OutputChoice};
 pub use file::{AudioFileError, decode_audio, read_audio_file};
 pub use file_mic::{ClipPlayed, FILE_MIC_CHUNK_MS, FileMic, FileMicError};
 pub use mic::{MicReader, MicWriter, mic_ring};
 pub use null_output::{NULL_OUTPUT_CYCLE_MS, NullOutput};
-pub use voice::{PlaybackRenderer, StopAcknowledged, VoiceGain, VoiceOutput, voice_ring};
+pub use voice::{
+    PlaybackMonitor, PlaybackRenderer, StopAcknowledged, VoiceGain, VoiceOutput, voice_ring,
+};
 
 use self::resample::ResamplerError;
-use crate::limits::{MIC_RING_MS, VOICE_RING_MS};
+use self::supervisor::{SharedFacts, Supervisor, SupervisorHandle, Timing, UnitFacts, UnitParts};
+use crate::limits::{
+    AUDIO_DEVICE_EVENTS_QUEUE, AUDIO_DEVICE_SIGNALS_QUEUE, MIC_RING_MS, VOICE_RING_MS,
+};
 
 /// The mic ring's rate: what the VAD and Whisper take.
 pub const MIC_RATE_HZ: u32 = 16_000;
@@ -88,6 +101,7 @@ impl InputChoice {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AudioConfig {
     pub input: InputChoice,
+    pub output: OutputChoice,
 }
 
 /// Whether this process may record (macOS asks the user once).
@@ -126,21 +140,28 @@ pub fn input_device_names() -> Vec<String> {
     coreaudio::input_device_names()
 }
 
+/// Every device, its directions, and the system defaults, as macOS has them now.
+#[must_use]
+pub fn device_snapshot() -> devices::DeviceSnapshot {
+    coreaudio::device_snapshot()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AudioError {
     /// The system has no VoiceProcessingIO unit.
     VoiceProcessingUnavailable,
-    /// The built-in microphone was asked for and none was found.
-    NoBuiltInInput,
-    /// No input device has the configured name; `available` lists the ones that do exist.
-    NoSuchInput {
-        name: String,
-        available: Vec<String>,
-    },
+    /// macOS has no default input device to fall back on.
+    NoInputDevice,
+    /// macOS has no default output device to fall back on.
+    NoOutputDevice,
+    /// The unit stopped rendering and rebuilding it did not help.
+    Stalled,
     /// The unit runs at a rate the converter cannot handle.
     UnsupportedRate { rate_hz: u32 },
     /// A CoreAudio call failed with this status.
     Os { call: &'static str, status: i32 },
+    /// The device supervisor's thread could not start.
+    Thread { detail: String },
 }
 
 impl fmt::Display for AudioError {
@@ -149,12 +170,12 @@ impl fmt::Display for AudioError {
             Self::VoiceProcessingUnavailable => {
                 formatter.write_str("the voice processing audio unit is not available")
             }
-            Self::NoBuiltInInput => formatter.write_str("this Mac has no built-in microphone"),
-            Self::NoSuchInput { name, available } => write!(
-                formatter,
-                "no microphone is named \"{name}\" (there are: {})",
-                available.join(", ")
-            ),
+            Self::NoInputDevice => formatter.write_str("there is no microphone to listen on"),
+            Self::NoOutputDevice => formatter.write_str("there is no speaker to play on"),
+            Self::Stalled => formatter.write_str("the audio device stopped and did not restart"),
+            Self::Thread { detail } => {
+                write!(formatter, "the audio thread did not start: {detail}")
+            }
             Self::UnsupportedRate { rate_hz } => {
                 write!(
                     formatter,
@@ -205,57 +226,89 @@ pub struct AudioCounters {
     pub callback_panics: Counter,
 }
 
-/// The running audio unit. Dropping it stops the unit; the ring ends stay valid but go quiet.
+/// The running audio unit and the supervisor that keeps it on the right devices. Dropping it
+/// stops both; the ring ends stay valid but go quiet.
 pub struct AudioIo {
-    unit: coreaudio::VoiceProcessingUnit,
+    // Fields drop in order: the listeners stop signalling before the supervisor stops the unit.
+    _listeners: Option<coreaudio::DeviceListeners>,
+    _supervisor: SupervisorHandle,
+    facts: SharedFacts,
     counters: Arc<AudioCounters>,
+    events: Option<tokio::sync::mpsc::Receiver<DeviceEvent>>,
 }
 
 impl fmt::Debug for AudioIo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AudioIo")
-            .field("facts", &self.unit.facts())
+            .field("facts", &self.facts())
             .finish_non_exhaustive()
     }
 }
 
 impl AudioIo {
-    /// Opens VoiceProcessingIO and starts it. Needs microphone permission: without it macOS
-    /// delivers silence rather than an error.
+    /// Opens VoiceProcessingIO on the configured devices (or the system defaults standing in for
+    /// missing ones) and starts following device changes. Needs microphone permission: without
+    /// it macOS delivers silence rather than an error.
     pub fn start(config: AudioConfig) -> Result<(Self, MicReader, VoiceOutput), AudioError> {
-        let (mic_writer, mic_reader) = mic_ring(MIC_RING_FRAMES);
+        let (mic, mic_reader) = mic_ring(MIC_RING_FRAMES);
+        // The latency is only known once a unit runs; the supervisor publishes it.
+        let (output, renderer) = voice_ring(VOICE_RING_FRAMES, 0);
         let counters = Arc::new(AudioCounters::default());
-        // The latency is only known once the unit runs; the voice output is rebuilt with it.
-        let (pending_output, renderer) = voice_ring(VOICE_RING_FRAMES, 0);
-        let unit = coreaudio::VoiceProcessingUnit::start(
-            &config.input,
-            mic_writer,
-            renderer,
-            Arc::clone(&counters),
+        let (signals, signal_receiver) = std::sync::mpsc::sync_channel(AUDIO_DEVICE_SIGNALS_QUEUE);
+        // Listening before the first snapshot, so a change during startup is not missed.
+        let listeners = coreaudio::DeviceListeners::register(signals.clone())
+            .inspect_err(|error| tracing::warn!(%error, "audio device changes won't be followed"))
+            .ok();
+        let (events_sender, events) = tokio::sync::mpsc::channel(AUDIO_DEVICE_EVENTS_QUEUE);
+        let facts = SharedFacts::default();
+        let supervisor = Supervisor::start(
+            coreaudio::CoreAudioBackend::new(Arc::clone(&counters)),
+            (config.input, config.output),
+            UnitParts { mic, renderer },
+            events_sender,
+            Arc::clone(&facts),
+            Timing::from_limits(),
         )?;
-        let latency_seconds = unit.facts().output_latency_seconds;
-        let latency_frames = (latency_seconds * f64::from(VOICE_RATE_HZ)).round() as u64;
-        let output = pending_output.with_output_latency_frames(latency_frames);
-        Ok((Self { unit, counters }, mic_reader, output))
+        let supervisor = SupervisorHandle::spawn(supervisor, signals, signal_receiver)?;
+        let audio = Self {
+            _listeners: listeners,
+            _supervisor: supervisor,
+            facts,
+            counters,
+            events: Some(events),
+        };
+        Ok((audio, mic_reader, output))
     }
 
-    /// The unit's client rate; capture and playback are converted from and to it.
+    /// What happened to the devices: a chosen one missing or back, a rebuild, the audio lost.
+    /// Given once; later calls return `None`.
+    pub fn take_device_events(&mut self) -> Option<tokio::sync::mpsc::Receiver<DeviceEvent>> {
+        self.events.take()
+    }
+
+    fn facts(&self) -> Option<UnitFacts> {
+        self.facts.lock().ok().and_then(|facts| *facts)
+    }
+
+    /// The running unit's client rate; capture and playback are converted from and to it.
     #[must_use]
     pub fn unit_rate_hz(&self) -> u32 {
-        self.unit.facts().unit_rate_hz
+        self.facts().map_or(0, |facts| facts.unit_rate_hz)
     }
 
-    /// From a voice frame leaving the ring to the speaker.
+    /// From a voice frame leaving the ring to the speaker, on the current device.
     #[must_use]
     pub fn output_latency_ms(&self) -> f64 {
-        self.unit.facts().output_latency_seconds * 1_000.0
+        self.facts()
+            .map_or(0.0, |facts| facts.output_latency_seconds * 1_000.0)
     }
 
     /// Whether macOS accepted the request to duck other apps' audio as little as possible.
     #[must_use]
     pub fn other_audio_ducking_minimized(&self) -> bool {
-        self.unit.facts().other_audio_ducking_minimized
+        self.facts()
+            .is_some_and(|facts| facts.other_audio_ducking_minimized)
     }
 
     #[must_use]

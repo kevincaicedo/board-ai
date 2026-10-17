@@ -21,8 +21,12 @@ pub(super) fn to_toml(raw: &RawSettings) -> String {
     if let Some(RawVoice { id }) = &raw.voice {
         table(&mut out, "voice", &[("id", id.as_deref())]);
     }
-    if let Some(RawAudio { input }) = &raw.audio {
-        table(&mut out, "audio", &[("input", input.as_deref())]);
+    if let Some(RawAudio { input, output }) = &raw.audio {
+        table(
+            &mut out,
+            "audio",
+            &[("input", input.as_deref()), ("output", output.as_deref())],
+        );
     }
     if let Some(talker) = &raw.talker {
         llm(&mut out, "talker", talker);

@@ -7,12 +7,17 @@
 //! way, replay included. The first-run screen asks for the microphone before the session
 //! starts; an undetermined permission (a dev script skipped setup) is asked for here, once,
 //! through the same `crate::permission`.
+//!
+//! The devices follow macOS: the runtime rebuilds the audio unit when the default changes or a
+//! chosen microphone or speaker comes or goes, and each change the user should know about
+//! becomes a `Problem` caption here ("Shure MV7+ was unplugged — using MacBook Pro
+//! Microphone").
 
 use std::path::PathBuf;
 
 use boardai_core::setup::MicPermission;
 use boardai_runtime::audio::{
-    AudioConfig, AudioError, AudioIo, InputChoice, MicReader, VoiceOutput,
+    Absence, AudioConfig, AudioIo, DeviceEvent, DeviceKind, MicReader, VoiceOutput,
 };
 use boardai_runtime::models::ModelStore;
 use boardai_runtime::session::{
@@ -28,17 +33,21 @@ use crate::secrets::KeychainSecrets;
 
 /// What keeps real audio running; dropped after the session closes.
 pub struct RunningAudio {
-    /// Dropping it stops the unit.
-    _unit: AudioIo,
+    /// Dropping it stops the unit and its device supervisor.
+    unit: AudioIo,
     listener: Option<LiveListener>,
+    /// Turns device events into captions; it ends when the unit's events end.
+    devices: tauri::async_runtime::JoinHandle<()>,
 }
 
 impl RunningAudio {
-    /// Stops speech in's threads, then the unit.
+    /// Stops speech in's threads, then the unit (which ends the device captions).
     pub async fn stop(self) {
         if let Some(listener) = self.listener {
             listener.shutdown().await;
         }
+        drop(self.unit);
+        let _ = self.devices.await;
     }
 }
 
@@ -61,9 +70,14 @@ pub async fn start(
         return virtual_voice(channels, &problems, "no voice could start");
     };
     let access = permission::ask_once().await;
-    let Some((unit, mic, output)) = open_unit(settings.audio.input.clone(), &problems).await else {
+    let config = AudioConfig {
+        input: settings.audio.input.clone(),
+        output: settings.audio.output.clone(),
+    };
+    let Some((mut unit, mic, output)) = open_unit(config).await else {
         return virtual_voice(channels, &problems, "the audio device would not start");
     };
+    let devices = follow_devices(&mut unit, problems.clone());
     let speech = LiveVoice::spawn(channels.speech_out(), voice.engine, voice.config, output);
     let listener = listen(settings, channels, mic, models, access, &problems).await;
     tracing::info!(
@@ -73,8 +87,9 @@ pub async fn start(
         "real audio started"
     );
     let running = RunningAudio {
-        _unit: unit,
+        unit,
         listener,
+        devices,
     };
     (Box::new(speech), Some(running))
 }
@@ -129,24 +144,10 @@ async fn choose(
     }
 }
 
-/// Opens VoiceProcessingIO on the configured microphone, or on the system default when no
-/// device has that name.
-async fn open_unit(
-    input: InputChoice,
-    problems: &ProblemLink,
-) -> Option<(AudioIo, MicReader, VoiceOutput)> {
-    let open =
-        |input| tauri::async_runtime::spawn_blocking(move || AudioIo::start(AudioConfig { input }));
-    let opened = match open(input).await {
-        Ok(Err(error @ AudioError::NoSuchInput { .. })) => {
-            problems.report(
-                "I can't find that microphone, so I'm listening on the system default.",
-                error.to_string(),
-            );
-            open(InputChoice::SystemDefault).await
-        }
-        other => other,
-    };
+/// Opens VoiceProcessingIO on the configured devices; the runtime stands the system defaults in
+/// for missing ones and says so through the device events.
+async fn open_unit(config: AudioConfig) -> Option<(AudioIo, MicReader, VoiceOutput)> {
+    let opened = tauri::async_runtime::spawn_blocking(move || AudioIo::start(config)).await;
     match opened {
         Ok(Ok(started)) => Some(started),
         Ok(Err(error)) => {
@@ -157,6 +158,63 @@ async fn open_unit(
             tracing::error!(%error, "opening the audio unit failed");
             None
         }
+    }
+}
+
+/// Captions the device changes the user should know about; the rest is logged by the runtime.
+fn follow_devices(
+    unit: &mut AudioIo,
+    problems: ProblemLink,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let events = unit.take_device_events();
+    tauri::async_runtime::spawn(async move {
+        let Some(mut events) = events else {
+            return;
+        };
+        while let Some(event) = events.recv().await {
+            if let Some((caption, detail)) = device_caption(&event) {
+                problems.report(caption, detail);
+            }
+        }
+    })
+}
+
+/// What a device event says on screen, if anything.
+fn device_caption(event: &DeviceEvent) -> Option<(String, String)> {
+    let doing = |kind: &DeviceKind| match kind {
+        DeviceKind::Input => "listening on",
+        DeviceKind::Output => "playing on",
+    };
+    match event {
+        DeviceEvent::Missing {
+            kind,
+            wanted,
+            using,
+            why,
+        } => {
+            let what = match why {
+                Absence::Unplugged => "was unplugged",
+                Absence::NotConnected => "isn't connected",
+                Absence::WontStart => "won't start",
+            };
+            Some((
+                format!("{wanted} {what} — using {using}"),
+                format!(
+                    "BoardAI is {} {using}, the system default, and goes back to {wanted} when \
+                     it returns.",
+                    doing(kind)
+                ),
+            ))
+        }
+        DeviceEvent::Returned { kind, name } => Some((
+            format!("{name} is back — {} it again", doing(kind)),
+            String::new(),
+        )),
+        DeviceEvent::Lost { error } => Some((
+            "I lost the audio device, so I can't speak or hear until it's back.".to_owned(),
+            error.to_string(),
+        )),
+        DeviceEvent::Switched { .. } => None,
     }
 }
 

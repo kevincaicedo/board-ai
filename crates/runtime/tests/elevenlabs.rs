@@ -1,5 +1,5 @@
-//! The ElevenLabs adapter against the local test server, with a fixture in the documented
-//! `stream/with-timestamps` shape (no key exists here to record a real one). No network.
+//! The ElevenLabs HTTP engine (the realtime engine's fallback) against the local test server,
+//! with a fixture in the documented `stream/with-timestamps` shape. No network.
 #![allow(clippy::expect_used, reason = "tests fail loudly")]
 
 mod support;
@@ -112,7 +112,11 @@ async fn samples_are_converted_from_signed_16_bit() {
     assert_eq!(chunks.len(), 1);
     let request = &server.requests()[0];
     assert!(request.path.starts_with("/v1/text-to-speech/abcDEF123/"));
-    assert!(request.json().get("model_id").is_none());
+    assert_eq!(
+        request.json()["model_id"],
+        "eleven_flash_v2_5",
+        "Flash by default"
+    );
 }
 
 #[tokio::test]

@@ -6,10 +6,12 @@
 //! the callbacks convert at the ring boundaries.
 //!
 //! Each callback owns its state through a raw pointer made from a `Box` at start and freed in
-//! `Drop` only after the unit is disposed, when CoreAudio can no longer call it. CoreAudio calls
-//! each callback serially, so each state is only ever touched by one call at a time.
+//! `stop` or `Drop` only after the unit is disposed, when CoreAudio can no longer call it.
+//! CoreAudio calls each callback serially, so each state is only ever touched by one call at a
+//! time. `stop` hands the ring ends back, so the device supervisor can move them to a new unit.
 
 use std::ffi::c_void;
+use std::mem::ManuallyDrop;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -34,28 +36,18 @@ use objc2_core_audio_types::{
 };
 
 use super::OsStatus;
-use super::device::{
-    built_in_input_device, input_device_named, input_device_names, output_latency_seconds,
-};
+use super::device::output_latency_seconds;
+use crate::audio::devices::Route;
 use crate::audio::resample::Resampler;
+use crate::audio::supervisor::{UnitFacts, UnitParts};
 use crate::audio::{
-    AudioCounters, AudioError, InputChoice, MIC_RATE_HZ, MicWriter, PlaybackRenderer, VOICE_RATE_HZ,
+    AudioCounters, AudioError, MIC_RATE_HZ, MicWriter, PlaybackRenderer, VOICE_RATE_HZ,
 };
 use crate::limits::AUDIO_CALLBACK_FRAMES_MAX;
 
 /// The unit's input element (the mic) and output element (the speaker).
 const INPUT_ELEMENT: u32 = 1;
 const OUTPUT_ELEMENT: u32 = 0;
-
-/// What the unit measured when it started.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct UnitFacts {
-    pub unit_rate_hz: u32,
-    /// From a frame leaving the voice ring to the speaker, conversion included.
-    pub output_latency_seconds: f64,
-    /// Whether other apps' audio is ducked as little as macOS allows.
-    pub other_audio_ducking_minimized: bool,
-}
 
 pub(crate) struct VoiceProcessingUnit {
     unit: AudioUnit,
@@ -85,56 +77,91 @@ pub(super) struct PlaybackState {
 }
 
 impl VoiceProcessingUnit {
+    /// Starts a unit on `route`. A failure disposes what was built and hands the parts back.
     pub(crate) fn start(
-        input: &InputChoice,
-        writer: MicWriter,
-        renderer: PlaybackRenderer,
+        route: &Route,
+        parts: UnitParts,
         counters: Arc<AudioCounters>,
-    ) -> Result<Self, AudioError> {
-        let unit = new_unit()?;
-        let mut owned = OwnedUnit(unit);
-        configure(unit, input)?;
-        let unit_rate_hz = client_rate_hz(unit)?;
+    ) -> Result<Self, (AudioError, UnitParts)> {
+        let prepared = new_unit().and_then(|unit| {
+            let owned = OwnedUnit(unit);
+            configure(unit, route)?;
+            let rate_hz = client_rate_hz(unit)?;
+            let capture = Resampler::new(rate_hz, MIC_RATE_HZ)?;
+            let playback = Resampler::new(VOICE_RATE_HZ, rate_hz)?;
+            Ok((owned, rate_hz, capture, playback))
+        });
+        let (mut owned, unit_rate_hz, capture_resampler, playback_resampler) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return Err((error, parts)),
+        };
+        let unit = owned.0;
         let other_audio_ducking_minimized = minimize_other_audio_ducking(unit);
+        let conversion_seconds =
+            f64::from(playback_resampler.delay_input_frames()) / f64::from(VOICE_RATE_HZ);
         let capture = Box::new(CaptureState {
             unit,
             rendered: vec![0.0; AUDIO_CALLBACK_FRAMES_MAX].into_boxed_slice(),
             converted: vec![0.0; AUDIO_CALLBACK_FRAMES_MAX].into_boxed_slice(),
-            resampler: Resampler::new(unit_rate_hz, MIC_RATE_HZ)?,
-            writer,
+            resampler: capture_resampler,
+            writer: parts.mic,
             counters: Arc::clone(&counters),
         });
         let playback = Box::new(PlaybackState {
-            renderer,
-            resampler: Resampler::new(VOICE_RATE_HZ, unit_rate_hz)?,
+            renderer: parts.renderer,
+            resampler: playback_resampler,
             counters,
         });
-        let conversion_seconds =
-            f64::from(playback.resampler.delay_input_frames()) / f64::from(VOICE_RATE_HZ);
-        let capture = Box::into_raw(capture);
-        let playback = Box::into_raw(playback);
-        // From here `Drop` owns the states, and disposes the unit before freeing them.
+        // From here `stop` or `Drop` owns the states, and disposes the unit before freeing them.
         let mut started = Self {
             unit: owned.release(),
-            capture,
-            playback,
+            capture: Box::into_raw(capture),
+            playback: Box::into_raw(playback),
             facts: UnitFacts {
                 unit_rate_hz,
                 output_latency_seconds: 0.0,
                 other_audio_ducking_minimized,
             },
         };
-        started.install_callbacks()?;
+        match started.run(conversion_seconds) {
+            Ok(()) => Ok(started),
+            Err(error) => Err((error, started.stop())),
+        }
+    }
+
+    /// Installs the callbacks, initializes and starts the unit, and measures its latency.
+    fn run(&mut self, conversion_seconds: f64) -> Result<(), AudioError> {
+        self.install_callbacks()?;
         check("AudioUnitInitialize", {
             // SAFETY: `unit` is a live instance with formats and callbacks set.
-            unsafe { AudioUnitInitialize(unit) }
+            unsafe { AudioUnitInitialize(self.unit) }
         })?;
-        started.facts.output_latency_seconds = output_latency(unit) + conversion_seconds;
+        self.facts.output_latency_seconds = output_latency(self.unit) + conversion_seconds;
         check("AudioOutputUnitStart", {
-            // SAFETY: `unit` is initialized; the callback states outlive it (see `Drop`).
-            unsafe { AudioOutputUnitStart(unit) }
-        })?;
-        Ok(started)
+            // SAFETY: `unit` is initialized; the callback states outlive it (see `stop`).
+            unsafe { AudioOutputUnitStart(self.unit) }
+        })
+    }
+
+    /// Stops and disposes the unit, then hands back the ring ends its callbacks drove.
+    pub(crate) fn stop(self) -> UnitParts {
+        // `Drop` must not run too: the states are freed here.
+        let this = ManuallyDrop::new(self);
+        // SAFETY: `unit` is live. Stop, uninitialize and dispose in that order; once disposed,
+        // CoreAudio never calls the callbacks again, so taking their states back is sound.
+        unsafe {
+            AudioOutputUnitStop(this.unit);
+            AudioUnitUninitialize(this.unit);
+            AudioComponentInstanceDispose(this.unit);
+        }
+        // SAFETY: both pointers came from `Box::into_raw` in `start`, and `ManuallyDrop` keeps
+        // `Drop` from freeing them again.
+        let (capture, playback) =
+            unsafe { (Box::from_raw(this.capture), Box::from_raw(this.playback)) };
+        UnitParts {
+            mic: capture.writer,
+            renderer: playback.renderer,
+        }
     }
 
     pub(crate) const fn facts(&self) -> UnitFacts {
@@ -298,29 +325,23 @@ fn mono_float(rate_hz: f64) -> AudioStreamBasicDescription {
     }
 }
 
-/// Picks the mic, turns gain control on, and sets mono `f32` at the unit's own rate on both
+/// Pins the route's chosen devices (a system default is left to the unit, which opens it the
+/// way it always has), turns gain control on, and sets mono `f32` at the unit's own rate on both
 /// client sides.
-fn configure(unit: AudioUnit, input: &InputChoice) -> Result<(), AudioError> {
-    let device = match input {
-        InputChoice::SystemDefault => None,
-        InputChoice::BuiltIn => Some(built_in_input_device().ok_or(AudioError::NoBuiltInInput)?),
-        InputChoice::Named(name) => {
-            Some(
-                input_device_named(name).ok_or_else(|| AudioError::NoSuchInput {
-                    name: name.clone(),
-                    available: input_device_names(),
-                })?,
-            )
+fn configure(unit: AudioUnit, route: &Route) -> Result<(), AudioError> {
+    for (endpoint, element) in [
+        (&route.input, INPUT_ELEMENT),
+        (&route.output, OUTPUT_ELEMENT),
+    ] {
+        if endpoint.pinned {
+            set_property(
+                unit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                element,
+                &endpoint.device.0,
+            )?;
         }
-    };
-    if let Some(device) = device {
-        set_property(
-            unit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            INPUT_ELEMENT,
-            &device,
-        )?;
     }
     let enabled: u32 = 1;
     set_property(

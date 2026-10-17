@@ -1,5 +1,6 @@
 //! Audio device queries through the HAL (`AudioObjectGetPropertyData`): the output latency
-//! that turns the played-frames counter into what is heard, and the built-in microphone.
+//! that turns the played-frames counter into what is heard, and a snapshot of the devices and
+//! the system defaults, from which the supervisor plans the unit's route.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -13,16 +14,19 @@ use objc2_core_audio::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyLatency,
     kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
     kAudioDevicePropertyStreams, kAudioDevicePropertyTransportType,
-    kAudioDeviceTransportTypeBuiltIn, kAudioHardwarePropertyDevices,
+    kAudioDeviceTransportTypeAggregate, kAudioDeviceTransportTypeBuiltIn,
+    kAudioDeviceTransportTypeVirtual, kAudioHardwarePropertyDefaultInputDevice,
+    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal,
     kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject,
     kAudioStreamPropertyLatency,
 };
 
 use super::OsStatus;
+use crate::audio::devices::{Device, DeviceId, DeviceSnapshot};
 use crate::limits::AUDIO_DEVICES_MAX;
 
-fn address(
+pub(super) fn address(
     selector: AudioObjectPropertySelector,
     scope: AudioObjectPropertyScope,
 ) -> AudioObjectPropertyAddress {
@@ -142,56 +146,66 @@ pub(crate) fn output_latency_seconds(device: AudioObjectID) -> f64 {
     f64::from(total) / rate_hz
 }
 
-/// The Mac's own microphone, when it has one: a device with input streams whose transport is
-/// built-in. Used when the system default input is a virtual device that hears nothing.
-pub(crate) fn built_in_input_device() -> Option<AudioObjectID> {
-    input_devices().into_iter().find(|device| {
-        let transport = read(
-            *device,
-            kAudioDevicePropertyTransportType,
-            kAudioObjectPropertyScopeGlobal,
-            0_u32,
-        );
-        transport == Ok(kAudioDeviceTransportTypeBuiltIn)
-    })
-}
-
-/// The input device whose name is `name`, ignoring case.
-pub(crate) fn input_device_named(name: &str) -> Option<AudioObjectID> {
-    input_devices().into_iter().find(|device| {
-        device_name(*device).is_some_and(|candidate| candidate.eq_ignore_ascii_case(name.trim()))
-    })
-}
-
-/// The names of the devices that can record, for settings and error messages.
-pub(crate) fn input_device_names() -> Vec<String> {
-    input_devices()
-        .into_iter()
-        .filter_map(device_name)
-        .collect()
-}
-
-/// Devices with at least one input stream.
-fn input_devices() -> Vec<AudioObjectID> {
+/// Every device with its name and directions, and the system's default input and output.
+/// A device whose name cannot be read is left out (nothing could choose it).
+pub(crate) fn snapshot() -> DeviceSnapshot {
     let Ok(system) = AudioObjectID::try_from(kAudioObjectSystemObject) else {
-        return Vec::new();
+        return DeviceSnapshot::default();
     };
-    let devices = read_ids(
+    let ids = read_ids(
         system,
         kAudioHardwarePropertyDevices,
         kAudioObjectPropertyScopeGlobal,
     )
     .unwrap_or_default();
-    devices
-        .into_iter()
-        .filter(|device| {
-            read_ids(
-                *device,
-                kAudioDevicePropertyStreams,
-                kAudioObjectPropertyScopeInput,
-            )
+    let has_streams = |device, scope| {
+        read_ids(device, kAudioDevicePropertyStreams, scope)
             .is_ok_and(|streams| !streams.is_empty())
+    };
+    let devices = ids
+        .into_iter()
+        .filter_map(|id| {
+            let transport = read(
+                id,
+                kAudioDevicePropertyTransportType,
+                kAudioObjectPropertyScopeGlobal,
+                0_u32,
+            );
+            let virtual_device = transport.is_ok_and(|transport| {
+                transport == kAudioDeviceTransportTypeVirtual
+                    || transport == kAudioDeviceTransportTypeAggregate
+            });
+            Some(Device {
+                id: DeviceId(id),
+                name: device_name(id)?,
+                has_input: has_streams(id, kAudioObjectPropertyScopeInput),
+                has_output: has_streams(id, kAudioObjectPropertyScopeOutput),
+                built_in: transport == Ok(kAudioDeviceTransportTypeBuiltIn),
+                virtual_device,
+            })
         })
+        .collect();
+    // `kAudioObjectUnknown` (0) means there is no default.
+    let default = |selector| {
+        read(system, selector, kAudioObjectPropertyScopeGlobal, 0_u32)
+            .ok()
+            .filter(|id| *id != 0)
+            .map(DeviceId)
+    };
+    DeviceSnapshot {
+        devices,
+        default_input: default(kAudioHardwarePropertyDefaultInputDevice),
+        default_output: default(kAudioHardwarePropertyDefaultOutputDevice),
+    }
+}
+
+/// The names of the devices that can record, for settings and error messages.
+pub(crate) fn input_device_names() -> Vec<String> {
+    snapshot()
+        .devices
+        .into_iter()
+        .filter(|device| device.has_input)
+        .map(|device| device.name)
         .collect()
 }
 

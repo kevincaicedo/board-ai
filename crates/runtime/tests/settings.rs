@@ -5,7 +5,7 @@ mod support;
 
 use std::path::{Path, PathBuf};
 
-use boardai_runtime::audio::InputChoice;
+use boardai_runtime::audio::{InputChoice, OutputChoice};
 use boardai_runtime::llm::Effort;
 use boardai_runtime::settings::{
     HarnessChoice, LlmChoice, LlmKind, MicMode, SecretName, Settings, SettingsEdit, SettingsError,
@@ -57,9 +57,24 @@ fn the_microphone_is_chosen_by_name_or_one_of_two_words() {
     );
     assert_eq!(invalid_field("[audio]\ninput = \"  \""), "audio.input");
     assert!(
-        parse("[audio]\noutput = \"x\"").is_err(),
+        parse("[audio]\nspeaker = \"x\"").is_err(),
         "unknown keys are refused"
     );
+}
+
+#[test]
+fn the_speaker_follows_the_system_unless_one_is_named() {
+    let output = |text: &str| parse(text).expect("parses").audio.output;
+    assert_eq!(output(""), OutputChoice::SystemDefault);
+    assert_eq!(
+        output("[audio]\noutput = \"system_default\""),
+        OutputChoice::SystemDefault
+    );
+    assert_eq!(
+        output("[audio]\noutput = \"AirPods Pro\""),
+        OutputChoice::Named("AirPods Pro".to_owned())
+    );
+    assert_eq!(invalid_field("[audio]\noutput = \"\""), "audio.output");
 }
 
 #[test]
@@ -313,9 +328,17 @@ fn edits_switch_back_to_the_defaults_and_pick_a_microphone_by_name() {
     assert_eq!(back.talker, Settings::defaults(home).talker);
     assert_eq!(back.scribe, Settings::defaults(home).scribe);
     let named = InputChoice::Named("Studio Display Microphone".to_owned());
+    let speaker = "AirPods Pro";
+    let text = std::fs::read_to_string(&path).expect("written");
+    std::fs::write(&path, format!("{text}\n[audio]\noutput = \"{speaker}\"\n")).expect("write");
     let picked =
         Settings::edit(&path, home, &[SettingsEdit::Input(named.clone())]).expect("edited");
     assert_eq!(picked.audio.input, named);
+    assert_eq!(
+        picked.audio.output,
+        OutputChoice::Named(speaker.to_owned()),
+        "picking a microphone keeps a hand-written speaker"
+    );
     assert_eq!(
         Settings::load(&path, home).expect("reloads").audio.input,
         named

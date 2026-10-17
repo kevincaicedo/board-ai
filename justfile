@@ -27,6 +27,14 @@ files:
 live:
     BOARDAI_LIVE=1 cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1
 
+# The ElevenLabs live check, never part of `check`: three short clauses over the realtime
+# WebSocket (the first on a cold connection) and one over HTTP, about 150 characters billed.
+# Prints time to first audio, the alignment against the audio and the characters sent, and
+# records the server's message shapes (audio redacted) in target/elevenlabs-live. Needs
+# ELEVENLABS_API_KEY in the environment; it is never printed.
+live-elevenlabs:
+    BOARDAI_LIVE=1 cargo test -q -p boardai-runtime --lib elevenlabs_realtime_live -- --ignored --nocapture
+
 # Model files (Whisper, Silero, Kokoro, lexicon) in the app's data folder: status, or download
 # and verify the named ones (`all` for every one). `BOARDAI_MODELS_DIR` overrides the folder.
 models *names:
@@ -34,9 +42,13 @@ models *names:
 
 # Plays two clauses through VoiceProcessingIO with the system voice and prints the reported
 # playback positions. Options: --text "…", --voice <id>, --list-voices, --input builtin|<name>,
-# --list-inputs (the microphones by name, and whether this process may record; never prompts).
+# --output <name>, --list-inputs (the microphones by name, and whether this process may record;
+# never prompts), --list-devices (every device and the defaults), --watch <seconds> (open the
+# unit silently and print device events while you unplug, plug in or switch devices).
+# Positional arguments keep quoted device names whole (`just audio-probe --input "Shure MV7+"`).
+[positional-arguments]
 audio-probe *args:
-    cargo run -q -p boardai-runtime --example audio_probe -- {{args}}
+    cargo run -q -p boardai-runtime --example audio_probe -- "$@"
 
 # Spike S4 (HLD §11): Whisper partial cadence and final latency on `say` speech.
 spike-s4:

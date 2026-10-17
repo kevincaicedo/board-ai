@@ -9,7 +9,7 @@ use super::{
     AudioSettings, HarnessChoice, HarnessSettings, LlmKind, LlmSettings, MicMode, SecretName,
     Settings, SettingsError, SttKind, SttSettings, TtsKind, TtsSettings, VoiceSettings,
 };
-use crate::audio::InputChoice;
+use crate::audio::{InputChoice, OutputChoice};
 use crate::limits::{LLM_MAX_TOKENS_MAX, SCRIBE_MAX_TOKENS_DEFAULT, TALKER_MAX_TOKENS_DEFAULT};
 use crate::llm::openai::OLLAMA_BASE_URL;
 use crate::llm::{DEFAULT_SCRIBE_MODEL, DEFAULT_TALKER_MODEL, Effort};
@@ -74,6 +74,7 @@ pub(super) struct RawVoice {
 #[serde(deny_unknown_fields)]
 pub(super) struct RawAudio {
     pub(super) input: Option<String>,
+    pub(super) output: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -151,10 +152,7 @@ fn parse_raw(raw: RawSettings, home: &Path) -> Result<Settings, SettingsError> {
             id: non_empty("voice.id", raw.voice.and_then(|voice| voice.id))?
                 .unwrap_or_else(|| DEFAULT_VOICE.to_owned()),
         },
-        audio: AudioSettings {
-            input: non_empty("audio.input", raw.audio.and_then(|audio| audio.input))?
-                .map_or_else(InputChoice::default, |input| InputChoice::parse(&input)),
-        },
+        audio: audio(raw.audio.unwrap_or_default())?,
         vault: match raw.vault {
             Some(vault) => path("vault", &vault, home)?,
             None => home.join("BoardAI"),
@@ -265,6 +263,15 @@ fn max_tokens(field: &str, value: Option<i64>, default: u32) -> Result<u32, Sett
                 &format!("must be between 1 and {LLM_MAX_TOKENS_MAX}"),
             )
         })
+}
+
+fn audio(raw: RawAudio) -> Result<AudioSettings, SettingsError> {
+    Ok(AudioSettings {
+        input: non_empty("audio.input", raw.input)?
+            .map_or_else(InputChoice::default, |input| InputChoice::parse(&input)),
+        output: non_empty("audio.output", raw.output)?
+            .map_or_else(OutputChoice::default, |output| OutputChoice::parse(&output)),
+    })
 }
 
 fn stt(raw: RawProvider) -> Result<SttSettings, SettingsError> {

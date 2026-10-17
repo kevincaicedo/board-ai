@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::{
-    ElevenLabsOptions, ElevenLabsVoice, KokoroFiles, KokoroVoice, SpeechOutConfig, SystemVoice,
+    ElevenLabsOptions, ElevenLabsRealtime, KokoroFiles, KokoroVoice, SpeechOutConfig, SystemVoice,
     TextToSpeech, TtsError, VoiceId,
 };
 use crate::models::{ModelId, ModelStatus, ModelStore};
@@ -44,7 +44,8 @@ pub fn engine_for(
                 api_key,
                 model: settings.model.clone(),
             };
-            Ok(Arc::new(ElevenLabsVoice::new(options)?))
+            // The realtime WebSocket, with the HTTP engine behind it for a clause it can't carry.
+            Ok(Arc::new(ElevenLabsRealtime::new(options)?))
         }
     }
 }
@@ -85,14 +86,17 @@ pub fn choose_voice(
     system.warm_up(&VoiceId::default());
     let system: Arc<dyn TextToSpeech> = Arc::new(system);
     Ok(match configured {
-        Ok(engine) => ChosenVoice {
-            engine,
-            config: SpeechOutConfig {
-                voice: VoiceId::new(voice),
-                fallback: Some((system, VoiceId::default())),
-            },
-            replaced: None,
-        },
+        Ok(engine) => {
+            engine.prepare(&VoiceId::new(voice));
+            ChosenVoice {
+                engine,
+                config: SpeechOutConfig {
+                    voice: VoiceId::new(voice),
+                    fallback: Some((system, VoiceId::default())),
+                },
+                replaced: None,
+            }
+        }
         Err(error) => ChosenVoice {
             engine: system,
             config: SpeechOutConfig {
