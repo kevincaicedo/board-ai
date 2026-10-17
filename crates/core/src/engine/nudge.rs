@@ -10,14 +10,20 @@
 //! - **A drawing was asked for** ("draw", "show me", "diagram": `draw_cues`) and the reply drew
 //!   nothing and showed no card or view. The owner: "sometimes it keeps explaining without
 //!   drawing even when I ask it to draw things".
+//! - **The reply read but drew nothing** (D-249): a map, a walkthrough of a whole thing or a
+//!   drawing was asked for, a repo read of the reply returned, and nothing was shown. gemma4 read
+//!   once, then announced its next read and stopped, its one retry spent: 2 of 10 tours drew
+//!   (T-033). This note has its own allowance, `READ_DRAW_NUDGES_PER_TURN_MAX`, and comes first:
+//!   once something was read, the drawing is what is missing, and it is drawn from those reads.
 //!
-//! A read comes first: what a tour draws of the repo must come from what it read (D-180). The
-//! core asks the talker once more within the same turn. What it said stays in the history as
-//! it was, a short bracketed note follows it on the user's side (accepted by every provider,
-//! unlike a trailing system message), and the next stream continues the spoken reply. At most
-//! `NUDGES_PER_TURN_MAX` times a turn, only when a stream ended the turn normally, never while
-//! a proposed change waits to be asked about or a stop settles, and never once the user has the
-//! floor (drawing takes it: the reply stops, and no request goes out while they draw, I14).
+//! Otherwise a read comes first: what a tour draws of the repo must come from what it read
+//! (D-180). The core asks the talker once more within the same turn. What it said stays in the
+//! history as it was, a short bracketed note follows it on the user's side (accepted by every
+//! provider, unlike a trailing system message), and the next stream continues the spoken reply.
+//! At most `NUDGES_PER_TURN_MAX` times a turn (plus the note above), only when a stream ended the
+//! turn normally, never while a proposed change waits to be asked about or a stop settles, and
+//! never once the user has the floor (drawing takes it: the reply stops, and no request goes out
+//! while they draw, I14).
 
 use crate::conversation::ConversationState;
 use crate::effect::Effect;
@@ -26,7 +32,7 @@ use crate::engine::gate::ChangeGate;
 use crate::engine::reply::Stream;
 use crate::engine::written::written_calls;
 use crate::history::{Message, UserPart};
-use crate::limits::NUDGES_PER_TURN_MAX;
+use crate::limits::{NUDGES_PER_TURN_MAX, READ_DRAW_NUDGES_PER_TURN_MAX};
 use crate::narration::ops::NarrationOp;
 use crate::time::SessionTime;
 use crate::tools::ToolCall;
@@ -76,10 +82,43 @@ pub(super) fn is_view(call: &ToolCall) -> bool {
     }
 }
 
+/// How every note that asks again starts: it is BoardAI's, on the user's side of the history.
+pub const NOTE_PREFIX: &str = "[A note from BoardAI, not the user's words:";
+
 /// The note that asks again.
 pub const DRAW_NOTE: &str = "[A note from BoardAI, not the user's words: they asked for a \
     drawing and your reply drew nothing. Draw it on the board now while you explain it in a \
     few sentences; don't repeat what you already said.]";
+
+/// The note for a reply that read the repo for a map or a walkthrough and drew nothing (D-249).
+pub const READ_DRAW_NOTE: &str = "[A note from BoardAI, not the user's words: you read the repo \
+    this turn but drew nothing, and they asked for a map, a walkthrough or a drawing. Draw it now \
+    from what your reads returned, with the real names they gave, while you explain it. Don't \
+    announce more reads: call one only after drawing.]";
+
+/// What a reply missed, and so the note that asks again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Missed {
+    /// Repo reads written as words or tags instead of called.
+    Written(Vec<&'static str>),
+    /// A repo read the speech announced and the stream didn't make; the tool it implies.
+    Announced(&'static str),
+    /// A map or a walkthrough read the repo and drew nothing (D-249).
+    DrawingAfterReads,
+    /// A drawing was asked for and nothing was shown.
+    Drawing,
+}
+
+impl Missed {
+    fn note(&self) -> String {
+        match self {
+            Self::Written(reads) => written_note(reads),
+            Self::Announced(tool) => announced_note(tool),
+            Self::DrawingAfterReads => READ_DRAW_NOTE.to_owned(),
+            Self::Drawing => DRAW_NOTE.to_owned(),
+        }
+    }
+}
 
 /// The note for reads a stream wrote instead of calling.
 fn written_note(reads: &[&str]) -> String {
@@ -160,40 +199,76 @@ impl Core {
             ConversationState::Thinking | ConversationState::Speaking
         );
         let change_waits = matches!(self.gate, ChangeGate::Proposed { .. });
-        let Some(reply) = self
-            .reply
-            .as_ref()
-            .filter(|reply| reply.nudges < NUDGES_PER_TURN_MAX)
-            .filter(|_| floor_is_ours && !change_waits && self.stop.is_none())
-        else {
+        if !floor_is_ours || change_waits || self.stop.is_some() {
             return false;
-        };
-        let Some(stream) = reply.streams.get(index) else {
-            return false;
-        };
-        let reads = if stream.has_calls() {
-            Vec::new()
-        } else {
-            repo_reads_written(stream)
-        };
-        let note = if !reads.is_empty() {
-            written_note(&reads)
-        } else if let Some(tool) = self.announced_read(index) {
-            announced_note(tool)
-        } else if reply.asks_drawing && !reply.shown {
-            DRAW_NOTE.to_owned()
-        } else {
+        }
+        let Some(missed) = self.missed(index) else {
             return false;
         };
         if let Some(reply) = self.reply.as_mut() {
-            reply.nudges += 1;
+            match missed {
+                Missed::DrawingAfterReads => reply.read_draw_nudges += 1,
+                Missed::Written(_) | Missed::Announced(_) | Missed::Drawing => reply.nudges += 1,
+            }
             reply.done = false;
         }
+        let note = missed.note();
+        debug_assert!(note.starts_with(NOTE_PREFIX), "a note is BoardAI's: {note}");
         self.flush_user();
         self.conversation.push(Message::User {
             parts: vec![UserPart::Text { text: note }],
         });
         self.request_talk(now, effects);
         true
+    }
+
+    /// What the reply missed when stream `index` ended the turn, within each note's allowance:
+    /// the drawing after reads first (its own allowance), then a read written or announced, then
+    /// a drawing asked for.
+    fn missed(&self, index: usize) -> Option<Missed> {
+        let reply = self.reply.as_ref()?;
+        let stream = reply.streams.get(index)?;
+        let wants_drawing = reply.asks_map || reply.asks_drawing;
+        if wants_drawing
+            && reply.read_repo
+            && !reply.shown
+            && reply.read_draw_nudges < READ_DRAW_NUDGES_PER_TURN_MAX
+        {
+            return Some(Missed::DrawingAfterReads);
+        }
+        if reply.nudges >= NUDGES_PER_TURN_MAX {
+            return None;
+        }
+        let reads = if stream.has_calls() {
+            Vec::new()
+        } else {
+            repo_reads_written(stream)
+        };
+        if !reads.is_empty() {
+            return Some(Missed::Written(reads));
+        }
+        if let Some(tool) = self.announced_read(index) {
+            return Some(Missed::Announced(tool));
+        }
+        (reply.asks_drawing && !reply.shown).then_some(Missed::Drawing)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DRAW_NOTE, Missed, NOTE_PREFIX};
+
+    /// The simulator counts a turn's nudges by this prefix (`sim::check::nudges`).
+    #[test]
+    fn every_note_starts_with_the_prefix() {
+        for missed in [
+            Missed::Written(vec!["list_dir"]),
+            Missed::Announced("read_file"),
+            Missed::DrawingAfterReads,
+            Missed::Drawing,
+        ] {
+            assert!(missed.note().starts_with(NOTE_PREFIX), "{missed:?}");
+        }
+        assert!(DRAW_NOTE.starts_with(NOTE_PREFIX));
     }
 }

@@ -53,6 +53,8 @@ use ops::OpQueue;
 use reply::{ContextTracker, Reply};
 use stop::PendingStop;
 
+#[cfg(feature = "sim")]
+pub(crate) use nudge::NOTE_PREFIX as NUDGE_NOTE_PREFIX;
 pub use nudge::RepoReads;
 
 /// How the microphone is used (D-011).
@@ -389,7 +391,7 @@ impl Core {
         // Before the reply can finish: its last clause may be the change question that just
         // played.
         self.arm_change_gate(now);
-        self.maybe_finish_reply(effects);
+        self.maybe_finish_reply(now, effects);
         self.maybe_report(now, effects);
         self.settle_hint(effects);
         self.update_orb(now, effects);

@@ -15,10 +15,31 @@ use crate::narration::tags::bounded;
 use crate::protocol::{MicAction, PointerTarget, Speaker, UiEvent};
 use crate::time::SessionTime;
 
-/// What a request for a detailed map carries (D-187): a reminder to stage it, which the prompt
-/// alone didn't always get across.
-const STAGE_HINT: &str = "[BoardAI: this asks for a detailed map: say one short sentence, then \
-     stage it in one <diagram> block and <reveal> its parts as you explain them.]";
+/// What "more detail on X" carries (D-238, D-247), whether or not its words opened a detail
+/// layer: a drill-down goes deeper than the map. Live, gpt-oss-120b drew 3 to 12 parts for "more
+/// detail on the buffer pool" when its map had no such part to open a layer on.
+pub const DETAIL_HINT: &str = "[BoardAI: this asks for more detail on one part, deeper than the \
+     map. Stage its internals in one block: the parts inside it, its structs as <record> with \
+     their real fields, its states as pills, the steps of its main operation numbered (n=\"1\"), \
+     and a <note> where a rule matters; 20 to 60 parts. Write it as <detail of=\"id\"> anchored \
+     to the drawn part it drills into (a detail layer opened by their words takes it), else as a \
+     <diagram>. Then <reveal> each part as you explain it.]";
+
+/// What a request for a detailed map, or a walkthrough of a whole thing, carries (D-239): a
+/// reminder to stage it, which the prompt alone didn't get across, and what a map holds (D-247).
+/// Live, with the reminder alone, models staged 5 to 30 parts for a map and sketched a whole
+/// system's walkthrough tag by tag (T-035); the owner's own maps hold about 120. Asked for real
+/// fields on a repo, Gemini and DeepSeek read a file or two per round until the turn's tool
+/// rounds ran out and drew nothing, so the line bounds the reading.
+pub const STAGE_HINT: &str = "[BoardAI: this asks for a map of a whole thing, not a sketch. Say \
+     one short sentence, then write all of it in one <diagram> block, every part inside it. Give \
+     it 3 to 6 sections, each a container (kind=\"group\"), and fill each with 5 to 10 parts \
+     (in=): its components, its key structs as <record> with their real fields, its states as \
+     pills, a <note> where a rule matters; join them with labelled edges for the main flows. Aim \
+     for 40 to 100 parts in all. Then explain it part by part, each part's words starting with its \
+     <reveal id=\"…\"/>: outside the block, draw only with <reveal>. On a repo, read first, \
+     several files per round of calls and three rounds at most, then draw only what your reads \
+     returned.]";
 
 /// The user's message for the turn being answered. It enters the history right before the first
 /// assistant content of the turn, so words added before anything was heard can still join it.
@@ -482,7 +503,9 @@ impl Core {
         if !text.trim().is_empty() {
             lines.push(text.to_owned());
         }
-        if crate::conversation::draw_cues::asks_for_map(text) {
+        if crate::conversation::detail_cues::detail_cue(text).is_some() {
+            lines.push(DETAIL_HINT.to_owned());
+        } else if crate::conversation::draw_cues::asks_for_map(text) {
             lines.push(STAGE_HINT.to_owned());
         }
         if let Some(pointer) = self.describe_pointer() {

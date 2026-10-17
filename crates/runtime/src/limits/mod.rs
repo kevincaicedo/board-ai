@@ -422,8 +422,9 @@ pub const SCRIPT_LINES_MAX: usize = 1_000;
 pub const SCRIPT_LINE_MAX_BYTES: usize = 4 * 1024;
 
 /// A dev script waits at most this long for BoardAI to finish or start speaking; past it the
-/// next line is said anyway, with a warning.
-pub const SCRIPT_WAIT_MAX_MS: u64 = 120_000;
+/// next line is said anyway, with a warning. A staged map of a whole system is spoken for two to
+/// four minutes (T-035): at 120 s the next line barged into it, and the session closed on it.
+pub const SCRIPT_WAIT_MAX_MS: u64 = 300_000;
 
 // ---------------------------------------------------------------------------------------------
 // Logs (owner: runtime::logging)

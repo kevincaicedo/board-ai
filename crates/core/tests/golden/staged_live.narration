@@ -1,0 +1,13 @@
+A B-tree storage engine keeps its pages on disk and a cache of them in memory.
+<diagram id="btree" title="B-tree storage engine">
+  <node id="mem" kind="group" label="In-memory structures" cat="memory"/>
+  <node id="hdr" kind="record" label="PageHeader" fields="type|count|next|prev" in="mem"/>
+  <struct id="frame" label="Frame" members="page_id|pin_count|dirty" in="mem"/>
+  <pill id="dirty" label="Dirty" in="mem"/>
+  <state id="clean" label="Clean" in="mem"/>
+  <section id="ops" label="Operations" cat="process"/>
+  <node id="split" label="Split" in="ops"/>
+  <annotate target="split" mark="circle" text="when full"/>
+  <edge from="clean" to="dirty" label="write"/>
+</diagram>
+<reveal id="mem"/>The top-level <node id="mem"/>memory section holds the cache, <reveal id="dirty"/>and a page written to turns <node id="dirty"/>dirty.

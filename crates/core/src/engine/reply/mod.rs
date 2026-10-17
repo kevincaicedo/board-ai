@@ -11,7 +11,8 @@ mod tools;
 use std::collections::BTreeSet;
 
 use crate::board::summary::summary;
-use crate::conversation::draw_cues::asks_for_drawing;
+use crate::conversation::detail_cues::detail_cue;
+use crate::conversation::draw_cues::{asks_for_drawing, asks_for_map};
 use crate::effect::{Dropped, Effect, LogRecord, Milestone, TalkRequest};
 use crate::engine::nudge::shows;
 use crate::engine::ops::{Anchor, QueuedOp};
@@ -53,6 +54,15 @@ impl Stream {
     pub(super) fn has_calls(&self) -> bool {
         !self.calls.is_empty()
     }
+
+    /// The stream ended as the talker meant it to: its turn's end, a tool round or its length
+    /// limit, not a refusal or a failure.
+    pub(super) fn ended_normally(&self) -> bool {
+        matches!(
+            self.stop,
+            Some(StopReason::EndTurn | StopReason::ToolUse | StopReason::MaxTokens)
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,10 +84,20 @@ pub(super) struct Reply {
     pub cited: BTreeSet<(String, u32)>,
     /// The turn's words asked for a drawing (D-178).
     pub asks_drawing: bool,
+    /// The turn's words asked for a map, a walkthrough of a whole thing, or more detail on a part
+    /// (D-239, D-247).
+    pub asks_map: bool,
     /// The reply drew something, or showed a card or a view.
     pub shown: bool,
     /// How many times the core asked the talker once more this turn (D-178).
     pub nudges: usize,
+    /// A repo read of this reply returned (a listing, a file or search hits): what a map or a
+    /// tour draws can come from it (D-249).
+    pub read_repo: bool,
+    /// How many times this turn the core asked for the drawing after reads (D-249).
+    pub read_draw_nudges: usize,
+    /// The parts its diagrams still held when everything was said were queued (D-237, D-250).
+    pub leftovers_queued: bool,
     /// The reply called a repo read, or wrote one instead of calling it: a tour, whose module
     /// names are checked (D-180).
     pub touring: bool,
@@ -127,14 +147,18 @@ impl Core {
         milestone(effects, Milestone::TalkerRequested);
         self.marks.first_token = false;
         let op_base = self.queue.next_op;
-        let asks_drawing = new_turn
-            && self
-                .user
-                .pending
-                .as_ref()
-                .is_some_and(|pending| asks_for_drawing(&pending.text));
+        let words = self
+            .user
+            .pending
+            .as_ref()
+            .filter(|_| new_turn)
+            .map(|pending| pending.text.as_str());
+        let asks_drawing = words.is_some_and(asks_for_drawing);
+        let asks_map =
+            words.is_some_and(|words| asks_for_map(words) || detail_cue(words).is_some());
         let reply = self.reply.get_or_insert_with(Reply::default);
         reply.asks_drawing |= asks_drawing;
+        reply.asks_map |= asks_map;
         reply.in_flight = true;
         reply.done = false;
         reply.streams.push(Stream {
@@ -260,13 +284,11 @@ impl Core {
             StopReason::EndTurn | StopReason::ToolUse => {
                 self.finish_stream(index);
                 if !self.maybe_nudge(now, index, effects) {
-                    self.reveal_brief_leftovers(index);
                     self.ask_change(effects);
                 }
             }
             StopReason::MaxTokens => {
                 self.finish_stream(index);
-                self.reveal_brief_leftovers(index);
                 self.ask_change(effects);
                 self.context.notice(
                     "Your last reply hit its length limit and stopped at the end of its last \

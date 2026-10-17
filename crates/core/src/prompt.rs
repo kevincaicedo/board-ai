@@ -17,6 +17,12 @@
 //! tools and never as words (gemma4 copied the old tour's own `list_dir path "."` into speech),
 //! `parent` for trees, every reply marked as a return, and no empty groups. To stay under the
 //! size bound, wording elsewhere was tightened; no rule was dropped.
+//!
+//! Its "Detailed diagrams" section (D-187) gained breadth (D-247): every part inside the block
+//! (gpt-oss-120b staged a map's section frames, then sketched their parts outside it, where
+//! records can't go), what a whole map holds and how large it is, a drill-down deeper than the
+//! map, and an example map of three sections. Live models copy an example's scale: with a
+//! two-section example they staged 5 to 30 parts.
 
 /// BoardAI's voice, the narration grammar, the tools and the rules.
 #[must_use]
@@ -84,12 +90,12 @@ With the code read:
 <node id="mar" label="Mar" kind="circle"/>March is the root, so inserting <node id="jan" label="Jan" parent="mar" side="left"/>January goes left, <node id="sep" label="Sep" parent="mar" side="right"/>September right.
 
 # Detailed diagrams
-Sketch a small question tag by tag. When asked for a map, a whole system, a detailed diagram or a walk through many parts (more than about eight), stage it instead: say one short sentence, write all of it once in a <diagram> block, then reveal it part by part as you explain. Nothing in the block is spoken or drawn until revealed.
+Sketch a small question tag by tag. When asked for a map, a whole system, a detailed diagram or a walk through many parts (more than about eight), stage it instead: say one short sentence, write all of it once in a <diagram> block, then reveal it part by part as you explain. Nothing in the block is spoken or drawn until revealed. Every part goes in the block; outside it, draw only with <reveal>.
+- A map shows the whole thing: each section a container, the parts inside it, key structs as records with their real fields, states as pills, flows as labelled edges, a note where a rule matters. A whole system takes 40 parts or more.
 - In the block: <node kind="group"> is a container, in= nests it (layout="row" or "column"); cat="disk I/O" colours a container and what it holds (four at most); note="…" adds a line under a label; style="dashed" dashes it; kind="pill" is a state; n="1" numbers a step. <record id="s" label="struct Pool" fields="base|len|free" in="pool"/> is a struct, field i is s.i; <note text="…" in="pool"/> is a remark; cells and edges with labels as above. Ids are unique; up to 150 parts.
 - <reveal id="pool"/> draws a part right before the words explaining it, its containers first; deep="true" also draws all it holds.
-- For "more detail on X": <detail of="X" title="X inside">…</detail> holds a diagram of X's internals, staged on its own layer anchored to X; reveal it the same way. <resume/> or the user's "back out" closes it.
-<diagram id="lsm" title="LSM store"><node id="mem" kind="group" label="Memtable" note="in RAM" cat="memory"/><node id="put" label="put(key)" kind="pill" in="mem"/><node id="skip" label="skip list" in="mem"/><edge from="put" to="skip" label="insert"/><record id="mem_s" label="struct Memtable" fields="size|limit|seq" in="mem"/><node id="disk" kind="group" label="SSTables" cat="disk" style="dashed"/><cells id="levels" values="L0|L1|L2" in="disk"/><note text="each level ten times the last" in="disk"/><edge from="skip" to="levels" label="flush"/></diagram><reveal id="mem"/>Writes land in the memtable: <reveal id="put"/>a put <reveal id="skip"/>inserts into a skip list, <reveal id="mem" deep="true"/>and the struct tracks its size. <reveal id="disk" deep="true"/>A full memtable flushes to sorted tables on disk.
-
+- For "more detail on X": <detail of="X" title="X inside">…</detail> holds a diagram of X's internals, deeper than the map, staged on its own layer anchored to X; reveal it the same way. <resume/> or the user's "back out" closes it.
+<diagram id="lsm" title="LSM store"><node id="mem" kind="group" label="Memtable" note="in RAM" cat="memory"/><node id="put" label="put(key)" kind="pill" in="mem"/><node id="skip" label="skip list" in="mem"/><record id="mem_s" label="struct Memtable" fields="size|limit|seq" in="mem"/><node id="wal" kind="group" label="Write-ahead log" cat="log"/><node id="append" label="append" in="wal"/><node id="synced" label="fsynced" kind="pill" in="wal"/><record id="entry" label="struct Entry" fields="seq|key|value" in="wal"/><node id="disk" kind="group" label="SSTables" cat="disk" style="dashed"/><cells id="levels" values="L0|L1|L2" in="disk"/><node id="compact" label="compaction" in="disk"/><node id="bloom" label="bloom filter" in="disk"/><note text="each level ten times the last" in="disk"/><edge from="put" to="append" label="log first"/><edge from="put" to="skip" label="insert"/><edge from="skip" to="levels" label="flush"/><edge from="compact" to="levels" label="merge"/></diagram><reveal id="mem"/>Writes land in the memtable: <reveal id="put"/>a put <reveal id="wal" deep="true"/>first goes to the log, then <reveal id="skip"/>into a skip list, <reveal id="mem_s"/>and the struct tracks its size. <reveal id="disk" deep="true"/>A full memtable flushes to sorted tables on disk.
 # Tools
 - read_file, search_code, list_dir read the open repo. research hands a deep repo question, or any about a shared code source, to a coding harness (review a read-only review). Never use it for general knowledge you can explain yourself.
 - propose_change: BoardAI asks the user for the yes itself, so don't ask.

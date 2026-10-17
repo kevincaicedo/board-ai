@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 use crate::engine::Core;
 use crate::limits::REPO_NAMES_MAX;
+use crate::narration::diagram::{DiagramSpec, SpecPart};
 use crate::protocol::NodeShape;
 use crate::tools::ToolOutput;
 
@@ -80,6 +81,20 @@ impl RepoNames {
         self.seen = true;
     }
 
+    /// The paths a research brief's checked citations name (D-252): its diagram is harness
+    /// output, and its labels are held to what the core read of it. With none, every label that
+    /// reads as a path names something unread.
+    pub(super) fn of_paths<'a>(paths: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut names = Self {
+            seen: true,
+            ..Self::default()
+        };
+        for path in paths {
+            names.add(path);
+        }
+        names
+    }
+
     fn add(&mut self, path: &str) {
         let path = normalized(path);
         let mut folder = String::new();
@@ -140,6 +155,62 @@ impl Core {
              read first."
         ));
         (format!("{label}{UNVERIFIED_MARK}"), Some(NodeShape::Note))
+    }
+
+    /// A staged diagram's labels, held to what was read as a sketch's are (D-180, D-252): a
+    /// container, box, record or row whose label names a repo path no tool returned is marked
+    /// " ?" where it stands, and the talker is told once for the diagram. Live, gemma4 staged a
+    /// repo map before reading anything, with `executor.rs`, `state_manager.rs` and
+    /// `task_queue.rs`, none of them in the repo (T-035).
+    pub(super) fn checked_spec(&mut self, spec: &DiagramSpec) -> DiagramSpec {
+        let touring = self.reply.as_ref().is_some_and(|reply| reply.touring);
+        let names = &self.repo_names;
+        let (checked, unknown) = marked_unread(spec, |label| names.verdict(label, touring));
+        if !unknown.is_empty() {
+            self.context.notice(format!(
+                "In your diagram \"{}\", {} marked \"?\": no repo tool returned {} this session. \
+                 Draw only folders and files a tool returned, with their real names; list or read \
+                 first.",
+                spec.title,
+                parts_were(unknown.len()),
+                unknown.join(", ")
+            ));
+        }
+        checked
+    }
+}
+
+/// `spec` with each container, box, record or row whose label `verdict` finds unread marked
+/// " ?", and the paths they named. The part keeps its kind and place: a container made a note
+/// would leave what it holds without a frame.
+pub(super) fn marked_unread(
+    spec: &DiagramSpec,
+    verdict: impl Fn(&str) -> Verdict,
+) -> (DiagramSpec, Vec<String>) {
+    let mut checked = spec.clone();
+    let mut unknown = Vec::new();
+    for item in &mut checked.items {
+        let label = match &mut item.part {
+            SpecPart::Container { label, .. }
+            | SpecPart::Node { label, .. }
+            | SpecPart::Record { label, .. }
+            | SpecPart::Cells { label, .. } => label,
+            SpecPart::Note { .. } | SpecPart::Edge { .. } => continue,
+        };
+        if let Verdict::Unknown(path) = verdict(label) {
+            unknown.push(path);
+            label.push_str(UNVERIFIED_MARK);
+        }
+    }
+    (checked, unknown)
+}
+
+/// "1 part was", "3 parts were".
+pub(super) fn parts_were(count: usize) -> String {
+    if count == 1 {
+        "1 part was".to_owned()
+    } else {
+        format!("{count} parts were")
     }
 }
 

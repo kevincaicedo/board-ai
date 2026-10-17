@@ -1,0 +1,5 @@
+# A whole system walked through from general knowledge (T-035): a staged map with its sections,
+# the parts inside each, key structs with their fields, flows and notes; then a drill-down, which
+# should open a detail layer on the buffer pool with a richer diagram of its internals.
+Walk me through how a B-tree storage engine works.
+More detail on the buffer pool.

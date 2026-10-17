@@ -235,8 +235,9 @@ impl Core {
         }
     }
 
-    /// The talker is done and everything it said has played: commit it and go idle.
-    pub(super) fn maybe_finish_reply(&mut self, effects: &mut Vec<Effect>) {
+    /// The talker is done and everything it said has played: commit it and go idle. The parts
+    /// its diagrams still hold are revealed first (D-237, D-250).
+    pub(super) fn maybe_finish_reply(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         let finished = self.stop.is_none()
             && self
                 .reply
@@ -246,6 +247,13 @@ impl Core {
             && self.queue.is_empty();
         if !finished {
             return;
+        }
+        if self.queue_leftovers() {
+            self.advance_ops(now, effects);
+            // Waiting for its drawing slot: `advance_ops` wakes the core then.
+            if !self.queue.is_empty() {
+                return;
+            }
         }
         self.reply_asked = self
             .voice

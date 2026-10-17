@@ -22,13 +22,12 @@ use std::fmt::Write as _;
 use crate::board::ElementState;
 use crate::effect::{Dropped, Effect, LogRecord};
 use crate::engine::Core;
-use crate::engine::ops::{Anchor, QueuedOp};
+use crate::engine::repo_names::{RepoNames, marked_unread, parts_were};
 use crate::engine::reveal::{StagedHere, not_staged_because};
 use crate::engine::shared::BriefTask;
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::limits::{BRIEF_DIAGRAMS_WAITING_MAX, DETOUR_DEPTH_MAX, TITLE_MAX_BYTES};
 use crate::narration::diagram::{DiagramSpec, WrittenDiagram};
-use crate::narration::ops::NarrationOp;
 use crate::narration::tags::bounded;
 use crate::protocol::{DiagramProvenance, StagedPart};
 use crate::sources::brief::Brief;
@@ -67,6 +66,9 @@ pub(in crate::engine) struct WaitingDiagram {
     dropped: u32,
     provenance: DiagramProvenance,
     carried: Carried,
+    /// The paths of the brief's citations the core read and checked: what its labels are held
+    /// to (D-252).
+    read: Vec<String>,
 }
 
 impl Core {
@@ -125,6 +127,7 @@ impl Core {
                 files_read: (!cached).then_some(brief_task.files_read),
             },
             carried,
+            read: checked_paths(brief),
         };
         self.keep_waiting(waiting, effects);
         BriefDiagram::Staged(carried)
@@ -201,13 +204,23 @@ impl Core {
             BriefTopic::Overview => None,
             BriefTopic::Component { name } => self.detail_for(waiting.source, name, effects),
         };
+        let read = RepoNames::of_paths(waiting.read.iter().map(String::as_str));
+        let (spec, unread) = marked_unread(&waiting.spec, |label| read.verdict(label, false));
         let op = self.fresh_op();
-        let staged = self.stage_here(op, &waiting.spec, Some(waiting.provenance.clone()), effects);
+        let staged = self.stage_here(op, &spec, Some(waiting.provenance.clone()), effects);
         match staged {
             Ok(here) => {
                 self.staging
                     .brief_staged(here.layer, here.staged.id.clone());
-                let note = self.staged_note(&waiting, &here, detail.as_deref());
+                let mut note = self.staged_note(&waiting, &here, detail.as_deref());
+                if !unread.is_empty() {
+                    let _ = write!(
+                        note,
+                        " {} marked \"?\": the brief's checked citations name none of {}.",
+                        parts_were(unread.len()),
+                        unread.join(", ")
+                    );
+                }
                 self.context.notice(note);
             }
             Err(refused) => self.context.notice(format!(
@@ -350,44 +363,22 @@ impl Core {
         Some(label)
     }
 
-    /// The reply ended normally: what it left planned of the briefs' diagrams it was given is
-    /// revealed next, after its other ops, as its last words play. Not when an op still queued
-    /// would change the layer in front (a detour, a resume, a page): the parts stay planned and
-    /// the summary names them.
-    pub(in crate::engine) fn reveal_brief_leftovers(&mut self, stream: usize) {
-        let staged = self.staging.take_briefs();
-        let moves = self.queue.ops().any(|queued| {
-            matches!(
-                queued.op,
-                NarrationOp::Detour { .. }
-                    | NarrationOp::Detail { .. }
-                    | NarrationOp::Resume
-                    | NarrationOp::Page { .. }
-            )
-        });
-        if moves {
-            return;
-        }
-        for (layer, id) in staged {
-            if layer != self.thread.active_layer() {
-                continue;
-            }
-            let op = self.fresh_op();
-            self.queue.push(QueuedOp::new(
-                op,
-                NarrationOp::Reveal {
-                    target: id,
-                    deep: true,
-                },
-                Anchor::Immediate { stream },
-            ));
-        }
-    }
-
-    /// An op id no stream uses: the core's own ops (a brief's staging, its leftover reveal).
-    fn fresh_op(&mut self) -> OpId {
+    /// An op id no stream uses: the core's own ops (a brief's staging, a leftover reveal).
+    pub(in crate::engine) fn fresh_op(&mut self) -> OpId {
         let op = OpId(self.queue.next_op);
         self.queue.next_op = self.queue.next_op.saturating_add(1);
         op
     }
+}
+
+/// The paths of a brief's citations, once checked: only what the core read is left (D-185).
+fn checked_paths(brief: &Brief) -> Vec<String> {
+    let mut paths: Vec<String> = brief
+        .all_citations()
+        .into_iter()
+        .map(|citation| citation.path)
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
 }

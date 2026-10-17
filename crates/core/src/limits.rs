@@ -152,8 +152,10 @@ pub const SPOKEN_CALL_MAX_BYTES: usize = 240;
 /// reached through its OpenAI-compatible endpoint working. Staged diagrams' section (D-187) took
 /// it from 14,375 to 16,421 bytes: gemma4 on the native API (M4 Pro) counts 4,224 prompt tokens
 /// instead of 3,638 and prefills them cold in 3.39 s instead of 2.90 s (+17 %, within the 25 %
-/// the owner allowed); a prompt past this must be measured again.
-pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 16_500;
+/// the owner allowed). Maps with breadth (D-247, D-248) took it to 17,230: at 17,256 bytes,
+/// 4,467 tokens with the first question, prefilled cold in 3.55 s instead of 3.39 s (+5 %, median
+/// of five on the M4 Pro). A prompt past this must be measured again.
+pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 17_500;
 
 /// Source chips one reply shows; later citations in the reply show none (the talker still
 /// says them).
@@ -234,6 +236,12 @@ pub const TOOL_CALLS_PER_RESPONSE_MAX: usize = 16;
 /// ends as it is: one more ask that still misses means the model can't, and a loop would hold
 /// the floor.
 pub const NUDGES_PER_TURN_MAX: usize = 1;
+
+/// Times a turn the core asks for the drawing a map or a walkthrough wanted after the reply read
+/// the repo and drew nothing (D-249), on top of [`NUDGES_PER_TURN_MAX`]: gemma4 read once, then
+/// announced its next read and stopped with the one retry spent (2 of 10 tours drew, T-033). A
+/// turn asks again at most `NUDGES_PER_TURN_MAX + READ_DRAW_NUDGES_PER_TURN_MAX` times.
+pub const READ_DRAW_NUDGES_PER_TURN_MAX: usize = 1;
 
 /// Tool rounds in one turn. Past it the calls get error results, the turn ends, and the user
 /// hears a failure line.

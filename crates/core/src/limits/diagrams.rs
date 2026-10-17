@@ -37,6 +37,11 @@ pub const DIAGRAMS_PER_LAYER_MAX: usize = 8;
 /// is drawn faster.
 pub const REVEAL_BUDGET_MAX_MS: u32 = 20_000;
 
+/// A reveal with nothing more said to time it by (the parts a reply's diagrams still hold when
+/// it ends, D-237, D-250) is drawn at this pace per part, up to [`REVEAL_BUDGET_MAX_MS`]: 40
+/// parts in 8 s, a hand filling in what the explanation didn't name, rather than at once.
+pub const LEFTOVER_REVEAL_MS_PER_PART: u32 = 200;
+
 /// The span a staged diagram may add to a page that already has drawing, in world units: two
 /// boards' worth at 1440 × 900. Past it the diagram goes on a fresh page (D-177); on a detour or
 /// detail layer, or with no page left, it is laid out anyway and the camera shows it smaller,

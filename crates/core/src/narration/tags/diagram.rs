@@ -115,7 +115,10 @@ pub fn part(tag: &RawTag) -> Result<SpecItem, BadTag> {
         .iter()
         .find_map(|key| attributes.hint(key));
     let part = match tag.name.as_str() {
-        "node" => node(&attributes)?,
+        "node" => node(&attributes, None)?,
+        "pill" | "state" => node(&attributes, Some(NodeShape::Pill))?,
+        "group" | "section" | "container" => node(&attributes, Some(NodeShape::Group))?,
+        "struct" => record(&attributes)?,
         "edge" => edge(&attributes)?,
         "cells" => strip(tag)?,
         "record" => record(&attributes)?,
@@ -125,7 +128,21 @@ pub fn part(tag: &RawTag) -> Result<SpecItem, BadTag> {
     Ok(SpecItem { parent, part })
 }
 
-fn node(attributes: &Attributes<'_>) -> Result<SpecPart, BadTag> {
+/// A part's kind written as its tag's name (`<pill id="dirty" …/>`, `<section …/>`, `<struct
+/// …/>`; gpt-oss-120b live, T-035, D-251): read as the node or record it names inside a block,
+/// and, like any unknown tag, dropped outside one.
+pub const PART_KIND_TAG_NAMES: &[&str] =
+    &["pill", "state", "group", "section", "container", "struct"];
+
+fn node(attributes: &Attributes<'_>, kind: Option<NodeShape>) -> Result<SpecPart, BadTag> {
+    // A struct written as a node with its fields (`<node kind="record" fields="…"/>`, gpt-oss-120b
+    // live, T-035, D-251) is a record: read as a box, its fields were lost.
+    if ["fields", "members"]
+        .iter()
+        .any(|key| attributes.get(key).is_some())
+    {
+        return record(attributes);
+    }
     let id = attributes.id("id")?;
     let label = bounded(
         attributes.get("label").unwrap_or(id.as_str()),
@@ -139,7 +156,8 @@ fn node(attributes: &Attributes<'_>) -> Result<SpecPart, BadTag> {
         .find_map(|key| attributes.get(key))
         .map(|name| bounded(name, LABEL_MAX_BYTES));
     let dashed = dashed(attributes);
-    let shape = lenient(NODE_KINDS, attributes.get("kind"), NodeShape::Service);
+    let shape =
+        kind.unwrap_or_else(|| lenient(NODE_KINDS, attributes.get("kind"), NodeShape::Service));
     if shape == NodeShape::Group {
         return Ok(SpecPart::Container {
             id,
@@ -374,6 +392,56 @@ mod tests {
                 style: LineStyle::Dashed,
                 ..
             })
+        ));
+    }
+
+    /// Parts as live models wrote them (T-035): a part's kind as its tag's name, and a struct as
+    /// a node with fields.
+    #[test]
+    fn parts_written_as_live_models_write_them() {
+        // gpt-oss-120b wrote a part's kind as its tag's name (T-035).
+        for (name, shape) in [("pill", NodeShape::Pill), ("state", NodeShape::Pill)] {
+            let kind_tag = part(&tag(name, &[("id", "dirty"), ("in", "mem")])).expect("a node");
+            assert!(
+                matches!(kind_tag.part, SpecPart::Node { shape: found, .. } if found == shape),
+                "{name}"
+            );
+        }
+        for name in ["group", "section", "container"] {
+            let kind_tag = part(&tag(name, &[("id", "ops"), ("label", "Operations")]));
+            assert!(
+                matches!(
+                    kind_tag.map(|item| item.part),
+                    Ok(SpecPart::Container { .. })
+                ),
+                "{name}"
+            );
+        }
+        let kind_tag = part(&tag("struct", &[("id", "f"), ("members", "page_id|dirty")]));
+        assert!(matches!(
+            kind_tag.map(|item| item.part),
+            Ok(SpecPart::Record { fields, .. }) if fields == ["page_id", "dirty"]
+        ));
+        // gpt-oss-120b wrote its structs as nodes with fields (T-035).
+        let written_as_node = part(&tag(
+            "node",
+            &[
+                ("id", "hdr"),
+                ("kind", "record"),
+                ("label", "PageHeader"),
+                ("fields", "type|count|next"),
+                ("in", "inner"),
+            ],
+        ))
+        .expect("a record");
+        assert_eq!(
+            written_as_node.parent.as_ref().map(|id| id.as_str()),
+            Some("inner")
+        );
+        assert!(matches!(
+            written_as_node.part,
+            SpecPart::Record { label, fields, .. }
+                if label == "PageHeader" && fields == ["type", "count", "next"]
         ));
     }
 

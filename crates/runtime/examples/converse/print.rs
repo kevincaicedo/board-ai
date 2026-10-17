@@ -14,9 +14,7 @@ use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::narration::quality::{NarrationQuality, assess};
 use boardai_core::narration::tags::TAG_NAMES;
-use boardai_core::protocol::{
-    ChipKind, DrawOp, OrbState, SourceRef, Speaker, StagedPart, Surface, UiEvent,
-};
+use boardai_core::protocol::{ChipKind, DrawOp, OrbState, SourceRef, Speaker, Surface, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::logging::bound;
@@ -24,6 +22,8 @@ use boardai_runtime::session::{
     MemoryStore, SessionClose, SessionOpened, StoreLink, StoreRead, StoreSink,
 };
 use futures_util::future::BoxFuture;
+
+use crate::staged::{StagedCounts, elements_of, written_parts};
 
 /// Characters of a tool call or result printed; the rest is cut.
 const PRINTED_DETAIL_MAX_BYTES: usize = 160;
@@ -50,6 +50,9 @@ pub struct Answer {
     pub reveals: u32,
     pub dropped_parts: u32,
     pub reveal_end_ms: Option<u64>,
+    /// What the staged diagrams held (T-035): diagrams staged and their top-level sections,
+    /// then the parts revealed by kind.
+    pub staged: StagedCounts,
 }
 
 impl Answer {
@@ -77,8 +80,11 @@ impl Answer {
     fn drew(&mut self, at: SessionTime, op: &DrawOp, budget_ms: u32) {
         self.ops += 1;
         self.elements_drawn += elements_of(op);
-        if let DrawOp::Reveal { .. } = op {
+        if let DrawOp::Reveal { parts, .. } = op {
             self.reveals += 1;
+            for part in parts {
+                self.staged.count(part);
+            }
             let end = self
                 .requested_at
                 .map(|requested| at.ms_since(requested) + u64::from(budget_ms));
@@ -211,6 +217,7 @@ impl Printer {
         );
         line(at, "done", &summary);
         if answer.reveals > 0 || answer.dropped_parts > 0 {
+            let staged = answer.staged;
             line(
                 at,
                 "staged",
@@ -224,8 +231,24 @@ impl Printer {
                     answer.dropped_parts
                 ),
             );
+            line(at, "parts", &staged.line(written_parts(&answer.text)));
         }
         state.answers.push(answer);
+    }
+
+    /// A staged diagram's staging, or a detail layer opening: counted for the answer.
+    fn count_staged(&self, event: &UiEvent) {
+        if let UiEvent::Diagram { part: 0, parts, .. } = event {
+            self.with_answer(|answer| {
+                answer.staged.diagrams += 1;
+                answer.staged.sections += u32::from(*parts);
+            });
+        } else if let UiEvent::LayerPush {
+            anchor: Some(_), ..
+        } = event
+        {
+            self.with_answer(|answer| answer.staged.details += 1);
+        }
     }
 
     fn print_event(&self, at: SessionTime, event: &UiEvent) {
@@ -405,6 +428,7 @@ impl StoreSink for Printer {
     }
 
     fn ui_event(&self, at: SessionTime, event: &UiEvent) {
+        self.count_staged(event);
         self.print_event(at, event);
         if let UiEvent::Orb {
             state: OrbState::Idle,
@@ -559,35 +583,6 @@ fn chip_line(kind: ChipKind, text: &str, source: &Option<SourceRef>) -> String {
         format!(" (opens {}:{})", source.path, source.line)
     });
     format!("{kind:?} {text}{opens}")
-}
-
-/// The elements an op draws: a reveal's parts with their fields and cells, a row's cells and
-/// the row, one for anything else.
-fn elements_of(op: &DrawOp) -> u32 {
-    let count = |items: usize| u32::try_from(items).unwrap_or(u32::MAX);
-    match op {
-        DrawOp::Reveal { parts, .. } => parts
-            .iter()
-            .map(|part| match part {
-                StagedPart::Record { fields, .. } => count(fields.len()) + 1,
-                StagedPart::Cells { cells, .. } => count(cells.len()) + 1,
-                StagedPart::Frame { .. }
-                | StagedPart::Node { .. }
-                | StagedPart::Note { .. }
-                | StagedPart::Edge { .. }
-                | StagedPart::Legend { .. } => 1,
-            })
-            .sum(),
-        DrawOp::Cells { cells, .. } => count(cells.len()) + 1,
-        DrawOp::Node { .. }
-        | DrawOp::Edge { .. }
-        | DrawOp::Annotate { .. }
-        | DrawOp::Strike { .. }
-        | DrawOp::Trace { .. }
-        | DrawOp::Participant { .. }
-        | DrawOp::Message { .. }
-        | DrawOp::Write { .. } => 1,
-    }
 }
 
 fn ms(value: Option<u64>) -> String {

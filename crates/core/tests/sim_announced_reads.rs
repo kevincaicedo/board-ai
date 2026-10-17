@@ -202,8 +202,9 @@ fn a_tour_that_only_announced_marks_what_it_never_read() {
     assert!(marked, "{:?}", op_starts(&sim));
 }
 
-/// A tour that read once and then announced its next read and stopped: that stream called no
-/// tool, so it is asked (once).
+/// A reply that read once and then announced its next read and stopped: that stream called no
+/// tool, so it is asked (once). Words asking for no map or walkthrough: one that did is asked for
+/// the drawing from what it read first (D-249, `sim_read_draw`).
 #[test]
 fn a_later_stream_that_announces_its_next_read_is_asked() {
     let mut sim = tour(repo_open());
@@ -215,7 +216,7 @@ fn a_later_stream_that_announces_its_next_read_is_asked() {
     sim.talker
         .push(ScriptedReply::says("Looking.").calls("list_dir", r#"{"path":"crates"}"#));
     sim.talker.push(ScriptedReply::says(DRAWS_CRATES));
-    sim.user_says(0, "Walk me through this repo");
+    sim.user_says(0, "What is in this repo?");
     sim.run_until(60_000);
     assert_clean(&sim);
     assert_eq!(talks(&sim), 4);

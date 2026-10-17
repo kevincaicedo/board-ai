@@ -5,6 +5,7 @@
 
 mod args;
 mod print;
+mod staged;
 
 use std::fs::File;
 use std::io::{BufWriter, Write as _};

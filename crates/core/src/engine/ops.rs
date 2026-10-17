@@ -398,8 +398,8 @@ impl Core {
         let Some((layer, placed)) = queued.placed.clone() else {
             return;
         };
-        let budget_ms = match placed {
-            Placed::Reveal(_) => self.reveal_budget(now),
+        let budget_ms = match &placed {
+            Placed::Reveal(reveal) => self.reveal_budget(now, reveal.entries.len()),
             Placed::New { .. }
             | Placed::Strike { .. }
             | Placed::Write { .. }
@@ -589,9 +589,13 @@ impl Core {
                 true
             }
             NarrationOp::Page { title } => self.page_by_tag(title.as_deref(), effects),
-            NarrationOp::Diagram(spec) => self.stage_diagram(queued.id, spec, effects),
+            NarrationOp::Diagram(spec) => {
+                let spec = self.checked_spec(spec);
+                self.stage_diagram(queued.id, &spec, effects)
+            }
             NarrationOp::Detail { of, title, spec } => {
-                self.open_detail(queued.id, of, title.as_deref(), spec.as_deref(), effects)
+                let spec = spec.as_deref().map(|spec| self.checked_spec(spec));
+                self.open_detail(queued.id, of, title.as_deref(), spec.as_ref(), effects)
             }
             NarrationOp::Node { .. }
             | NarrationOp::Edge { .. }

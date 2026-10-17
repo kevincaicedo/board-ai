@@ -100,6 +100,7 @@ impl OpenBlock {
     /// dropped); any other tag ends the block first.
     pub(super) fn takes(tag: &RawTag) -> bool {
         PART_TAG_NAMES.contains(&tag.name.as_str())
+            || diagram::PART_KIND_TAG_NAMES.contains(&tag.name.as_str())
             || MISPLACED_TAG_NAMES.contains(&tag.name.as_str())
     }
 

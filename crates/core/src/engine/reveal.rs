@@ -24,7 +24,8 @@ use crate::engine::ops::{Anchor, QueuedOp};
 use crate::geometry::Rect;
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::limits::{
-    CAMERA_MARGIN_UNITS, DIAGRAM_OVERVIEW_PARTS_MIN, OP_BUDGET_MIN_MS, REVEAL_BUDGET_MAX_MS,
+    CAMERA_MARGIN_UNITS, DIAGRAM_OVERVIEW_PARTS_MIN, LEFTOVER_REVEAL_MS_PER_PART, OP_BUDGET_MIN_MS,
+    REVEAL_BUDGET_MAX_MS,
 };
 use crate::narration::diagram::DiagramSpec;
 use crate::narration::ops::NarrationOp;
@@ -220,6 +221,9 @@ impl Core {
         layer: LayerId,
         queued: &QueuedOp,
     ) -> Option<Result<Placed, Rejected>> {
+        if self.names_drawn_part(layer, &queued.op) {
+            return Some(Ok(Placed::Unchanged));
+        }
         let (target, deep) = self.reveal_target(layer, &queued.op)?;
         let reveal = match self.board.plan_reveal(layer, queued.id, &target, deep) {
             Ok(reveal) => reveal,
@@ -234,19 +238,35 @@ impl Core {
         Some(Ok(Placed::Reveal(Box::new(reveal))))
     }
 
+    /// A drawing tag naming a staged part that is already drawn points at it and changes nothing
+    /// (D-251): live, gpt-oss-120b wrote `<reveal id="mod"/>` then `<node id="mod"/>`, and a bare
+    /// node's label is its id, so each struck the part's real label ("harness/mod.rs") and wrote
+    /// "mod ?" (D-180) over it, 13 times in one map. A staged part's label is corrected by
+    /// `<strike>`.
+    fn names_drawn_part(&self, layer: LayerId, op: &NarrationOp) -> bool {
+        let Some(named) = drawing_tag_target(op) else {
+            return false;
+        };
+        let staged = self
+            .board
+            .staged(layer)
+            .iter()
+            .any(|diagram| diagram.entry_of(&named).is_some());
+        let drawn = self
+            .board
+            .layer(layer)
+            .and_then(|board| board.element(&named))
+            .is_some_and(|element| element.state.is_shown());
+        staged && drawn
+    }
+
     /// What `op` reveals: a reveal's target, or the staged part a drawing tag names (models
     /// write `<node id="arena"/>` for a part they staged).
     fn reveal_target(&self, layer: LayerId, op: &NarrationOp) -> Option<(ElementId, bool)> {
         if let NarrationOp::Reveal { target, deep } = op {
             return Some((target.clone(), *deep));
         }
-        let named = if let NarrationOp::Node { id, .. } = op {
-            id.clone()
-        } else if let NarrationOp::Edge { from, to, .. } = op {
-            ElementId::parse(&format!("{}>{}", from.as_str(), to.as_str()))?
-        } else {
-            return None;
-        };
+        let named = drawing_tag_target(op)?;
         if !self.board.is_planned(layer, &named) {
             return None;
         }
@@ -397,7 +417,7 @@ impl Core {
 
     /// A reveal draws while it is explained: until the next drawing's word, or the end of what
     /// is said so far.
-    pub(super) fn reveal_budget(&self, now: SessionTime) -> u32 {
+    pub(super) fn reveal_budget(&self, now: SessionTime, parts: usize) -> u32 {
         let next = self
             .queue
             .ops()
@@ -407,6 +427,10 @@ impl Core {
             Some(Anchor::Spoken { clause, offset }) => {
                 self.voice.estimate_ms_until(clause, offset, now)
             }
+            // Nothing more is said to time it by: a pace per part (D-237's leftovers, D-250).
+            Some(Anchor::Immediate { .. }) | None if self.voice.is_silent() => u64::try_from(parts)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(u64::from(LEFTOVER_REVEAL_MS_PER_PART)),
             Some(Anchor::Immediate { .. }) | None => self.voice.estimate_ms_until_end(now),
         };
         let clamped = ms.clamp(u64::from(OP_BUDGET_MIN_MS), u64::from(REVEAL_BUDGET_MAX_MS));
@@ -435,6 +459,70 @@ impl Core {
                 None => self.staging.want_auto_reveal(op),
             }
         }
+    }
+
+    /// The reply ended normally and everything it said has played: each diagram staged for it on
+    /// the active layer, its own (`<diagram>`, `<detail>`) and the research briefs' it was given
+    /// (D-242), that still holds parts it can draw is revealed whole, once, in a hand's order, at
+    /// `LEFTOVER_REVEAL_MS_PER_PART` (D-237, D-250). Live models revealed a section's frame and
+    /// named a few of its parts, and the rest stayed planned: DeepSeek's repo maps showed 19 and
+    /// 22 of the 31 and 36 parts they staged (T-035). A reply that was interrupted, refused or
+    /// failed reveals nothing: what it didn't reach stays planned, and the summary names it. A
+    /// diagram whose layer is no longer in front (a detour opened, a page turned) stays planned
+    /// too. True when a reveal was queued.
+    pub(super) fn queue_leftovers(&mut self) -> bool {
+        let layer = self.thread.active_layer();
+        let Some(reply) = self.reply.as_mut().filter(|reply| !reply.leftovers_queued) else {
+            return false;
+        };
+        reply.leftovers_queued = true;
+        let ended = reply
+            .streams
+            .last()
+            .is_some_and(super::reply::Stream::ended_normally);
+        let first_op = reply
+            .streams
+            .first()
+            .map_or(u32::MAX, |stream| stream.op_base);
+        let stream = reply.streams.len().saturating_sub(1);
+        let briefs = self.staging.take_briefs();
+        if !ended {
+            return false;
+        }
+        let staged: Vec<ElementId> = self
+            .staging
+            .by_op
+            .iter()
+            .filter(|(op, on, _)| op.0 >= first_op && *on == layer)
+            .map(|(_, _, id)| id.clone())
+            .chain(
+                briefs
+                    .into_iter()
+                    .filter(|(on, _)| *on == layer)
+                    .map(|(_, id)| id),
+            )
+            .collect();
+        let mut queued = false;
+        for id in staged {
+            // Nothing left that can be drawn (every part drawn, or under the user's shapes, which
+            // were counted when they were passed over): no reveal.
+            let left = self
+                .board
+                .plan_reveal(layer, OpId(self.queue.next_op), &id, true)
+                .is_ok_and(|reveal| !reveal.is_empty());
+            if !left {
+                continue;
+            }
+            let op = self.fresh_op();
+            let reveal = NarrationOp::Reveal {
+                target: id,
+                deep: true,
+            };
+            self.queue
+                .push(QueuedOp::new(op, reveal, Anchor::Immediate { stream }));
+            queued = true;
+        }
+        queued
     }
 
     /// Reveals diagram `id` whole, next in line.
@@ -484,5 +572,16 @@ pub(super) fn not_staged_because(refused: &StageRefused) -> &'static str {
         StageRefused::Empty => "none of its parts could be kept",
         StageRefused::Full => "this layer holds as many diagrams as it can; turn the page",
         StageRefused::NeedsPage => "there was no room for it",
+    }
+}
+
+/// The element a node or edge tag names: a node's id, an edge's `from>to`.
+fn drawing_tag_target(op: &NarrationOp) -> Option<ElementId> {
+    if let NarrationOp::Node { id, .. } = op {
+        Some(id.clone())
+    } else if let NarrationOp::Edge { from, to, .. } = op {
+        ElementId::parse(&format!("{}>{}", from.as_str(), to.as_str()))
+    } else {
+        None
     }
 }

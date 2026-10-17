@@ -568,3 +568,114 @@ fn the_repo_reads_turn_on_when_a_code_source_is_shared() {
     let asked = format!("{:?}", sim.talker.requests[2].messages);
     assert!(asked.contains(ASKED), "{asked}");
 }
+
+/// An overview whose diagram labels one file the brief cited and one it didn't.
+const NAMES_FILES: &str = "# Brief: inf-alloc overview
+## Overview
+inf-alloc hands out memory from arenas.
+## Components
+- arena · Arena · type · src/arena.rs — Owns pages
+## Diagram
+<diagram title=\"inf-alloc · files\">
+<node id=\"alloc\" kind=\"group\" label=\"inf-alloc\"/>
+<node id=\"arena-file\" label=\"src/arena.rs\" in=\"alloc\"/>
+<node id=\"heap-file\" label=\"src/heap.rs\" in=\"alloc\"/>
+</diagram>
+## Citations
+- src/arena.rs:40-44
+";
+
+/// Each reveal's parts and budget, in order.
+fn budgets(sim: &Sim) -> Vec<(usize, u32)> {
+    sim.ui()
+        .filter_map(|(_, event)| match event {
+            UiEvent::OpStart {
+                op: DrawOp::Reveal { parts, .. },
+                budget_ms,
+                ..
+            } => Some((parts.len(), *budget_ms)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A brief's leftovers take the one leftover path (D-250), as the talker's own diagrams do: once
+/// everything said has played, at a pace per part.
+#[test]
+fn a_briefs_leftovers_are_drawn_at_the_leftover_pace() {
+    let mut sim = session(OVERVIEW);
+    share_and_read(&mut sim);
+    sim.talker.push(uses_the_brief());
+    sim.talker.push(ScriptedReply::says(
+        "Memory comes from <reveal id=\"alloc\"/>inside inf-alloc, where an arena hands it out.",
+    ));
+    sim.user_says(7_000, "How does inf-alloc hand out memory?");
+    sim.run_until(40_000);
+    assert_clean(&sim);
+    let budgets = budgets(&sim);
+    let (parts, budget_ms) = *budgets.last().expect("the leftovers' reveal");
+    assert_eq!(
+        budgets.len(),
+        2,
+        "the named part, then the rest: {budgets:?}"
+    );
+    let parts = u32::try_from(parts).expect("a count");
+    assert_eq!(
+        budget_ms,
+        parts * boardai_core::limits::LEFTOVER_REVEAL_MS_PER_PART,
+        "{budgets:?}"
+    );
+    assert!(shown(&sim, LayerId::MAIN, "pages"));
+}
+
+/// The one interruption rule (D-250): an interrupted reply reveals none of what it left, and the
+/// next turn's reply doesn't either; the summary names what is still planned.
+#[test]
+fn an_interrupted_reply_leaves_a_briefs_parts_planned() {
+    let mut sim = session(OVERVIEW);
+    share_and_read(&mut sim);
+    sim.talker.push(uses_the_brief());
+    sim.talker.push(ScriptedReply::says(concat!(
+        "Memory comes from <reveal id=\"alloc\"/>inside inf-alloc. The arena hands out slots ",
+        "from aligned pages, and a freed slot goes back to a pool that recycles it, so the next ",
+        "allocation of that size is quick and never touches the operating system at all."
+    )));
+    sim.talker.push(ScriptedReply::says(
+        "Because pages are aligned to four kilobytes.",
+    ));
+    sim.user_says(7_000, "How does inf-alloc hand out memory?");
+    assert!(sim.run_until_true(40_000, |sim| !reveals(sim).is_empty()));
+    let at = sim.now().as_ms() + 100;
+    sim.user_says_with_onset(at, "wait, why pages?");
+    sim.run_until(at + 30_000);
+    assert_clean(&sim);
+    assert!(!shown(&sim, LayerId::MAIN, "pages"), "{:?}", reveals(&sim));
+    assert!(!shown(&sim, LayerId::MAIN, "slot-pool"));
+}
+
+/// A brief's diagram is harness output, held to what the core read of it (D-252): a label naming
+/// a file none of the brief's checked citations names is marked "?" in place, and the note says
+/// so; the file it cited, and labels in words, are left alone.
+#[test]
+fn a_briefs_diagram_marks_files_its_checked_citations_dont_name() {
+    let mut sim = session(NAMES_FILES);
+    share_and_read(&mut sim);
+    sim.talker.push(uses_the_brief());
+    sim.talker.push(ScriptedReply::says(
+        "The allocator <reveal id=\"alloc\" deep=\"true\"/>has files.",
+    ));
+    sim.user_says(7_000, "How does inf-alloc hand out memory?");
+    sim.run_until(40_000);
+    assert_clean(&sim);
+    let note = system_text(&sim, 1);
+    assert!(
+        note.contains(
+            "1 part was marked \"?\": the brief's checked citations name none of src/heap.rs"
+        ),
+        "{note}"
+    );
+    let drawn = format!("{:?}", sim.ui().collect::<Vec<_>>());
+    assert!(drawn.contains("\"src/heap.rs ?\""), "{drawn}");
+    assert!(drawn.contains("\"src/arena.rs\""), "{drawn}");
+    assert!(drawn.contains("\"inf-alloc\""), "{drawn}");
+}

@@ -19,7 +19,7 @@
 
 use crate::limits::{NARRATION_SKIP_MAX_BYTES, NARRATION_TAG_MAX_BYTES};
 use crate::narration::tags::TAG_NAMES;
-use crate::narration::tags::diagram::BLOCK_TAG_NAMES;
+use crate::narration::tags::diagram::{BLOCK_TAG_NAMES, PART_KIND_TAG_NAMES};
 
 /// A tag as written: its lowercase name, attributes in order, and the exact source text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -347,7 +347,9 @@ impl TagParser {
     fn complete(&mut self, self_closing: bool, out: &mut Vec<Piece>) {
         let name = self.name.to_ascii_lowercase();
         let written = std::mem::take(&mut self.raw);
-        if TAG_NAMES.contains(&name.as_str()) {
+        // A part's kind written as its tag's name is a block's part; outside a block it drops
+        // when it is read, as an unknown tag does here.
+        if TAG_NAMES.contains(&name.as_str()) || PART_KIND_TAG_NAMES.contains(&name.as_str()) {
             out.push(Piece::Tag(RawTag {
                 name,
                 attributes: std::mem::take(&mut self.attributes),

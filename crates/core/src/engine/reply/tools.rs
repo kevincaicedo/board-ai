@@ -164,6 +164,12 @@ impl Core {
             content,
             is_error,
         });
+        if let Some(reply) = self.reply.as_mut() {
+            reply.read_repo |= matches!(
+                output,
+                ToolOutput::File { .. } | ToolOutput::Matches { .. } | ToolOutput::Listing { .. }
+            );
+        }
         if let ToolOutput::File {
             path,
             first_line,

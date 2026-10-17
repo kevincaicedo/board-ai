@@ -63,16 +63,87 @@ const NOT_A_MAP: &[&str] = &[
     "heap",
 ];
 
-/// The user's words ask for a detailed map, and not only a sketch.
+/// Asking to be walked through something (D-247). It asks for a map only when what follows names
+/// a whole thing ([`WHOLE_NOUNS`]): "walk me through how a B-tree storage engine works", "walk me
+/// through this repo". A walkthrough of a flow ("walk me through a request") or of the parts it
+/// lists ("walk me through the CDN, the load balancer…") stays a sketch.
+pub const WALKTHROUGH_PHRASES: &[&str] = &[
+    "walk me through",
+    "walk us through",
+    "take me through",
+    "take us through",
+    "tour of",
+    "overview of",
+];
+
+/// Nouns that name a whole system, a walkthrough's object (D-247).
+pub const WHOLE_NOUNS: &[&str] = &[
+    "engine",
+    "stack",
+    "system",
+    "allocator",
+    "kernel",
+    "compiler",
+    "interpreter",
+    "runtime",
+    "database",
+    "scheduler",
+    "filesystem",
+    "internals",
+    "repo",
+    "repository",
+    "codebase",
+    "code",
+    "crate",
+    "library",
+    "framework",
+    "harness",
+    "module",
+];
+
+/// How many words after a walkthrough phrase its whole thing may come, in the same clause
+/// ("walk me through how a B-tree storage engine works": the fifth).
+const WHOLE_REACH_WORDS: usize = 5;
+
+/// The user's words ask for a detailed map, and not only a sketch: a map phrase, or a walkthrough
+/// of a whole thing.
 #[must_use]
 pub fn asks_for_map(text: &str) -> bool {
     let words = words(text);
-    found_unnegated(&words, MAP_PHRASES, |index| {
+    let map = found_unnegated(&words, MAP_PHRASES, |index| {
         words[index] != "map"
             || index
                 .checked_sub(1)
                 .is_none_or(|before| !NOT_A_MAP.contains(&words[before].as_str()))
+    });
+    map || walks_through_a_whole_thing(text)
+}
+
+/// A walkthrough phrase, then within [`WHOLE_REACH_WORDS`] words of the same clause a whole
+/// thing. Clauses end at punctuation, so a list of parts after a comma never counts.
+fn walks_through_a_whole_thing(text: &str) -> bool {
+    text.split([',', '.', ';', ':', '?', '!']).any(|clause| {
+        let words = words(clause);
+        found_unnegated(&words, WALKTHROUGH_PHRASES, |index| {
+            let phrase_words = WALKTHROUGH_PHRASES
+                .iter()
+                .find(|phrase| starts_at(&words, index, phrase))
+                .map_or(1, |phrase| phrase.split(' ').count());
+            words
+                .iter()
+                .skip(index + phrase_words)
+                .take(WHOLE_REACH_WORDS)
+                .any(|word| WHOLE_NOUNS.contains(&word.as_str()))
+        })
     })
+}
+
+/// Whether `phrase` starts at word `index`.
+fn starts_at(words: &[String], index: usize, phrase: &str) -> bool {
+    phrase
+        .split(' ')
+        .enumerate()
+        .all(|(offset, part)| words.get(index + offset).is_some_and(|word| word == part))
 }
 
 /// The user's words ask for a drawing.
@@ -85,12 +156,7 @@ pub fn asks_for_drawing(text: &str) -> bool {
 /// A phrase of `table` at a word `keep` accepts, with no negation or "let me" just before it.
 fn found_unnegated(words: &[String], table: &[&str], keep: impl Fn(usize) -> bool) -> bool {
     (0..words.len()).any(|index| {
-        let found = table.iter().any(|phrase| {
-            phrase
-                .split(' ')
-                .enumerate()
-                .all(|(offset, part)| words.get(index + offset).is_some_and(|word| word == part))
-        });
+        let found = table.iter().any(|phrase| starts_at(words, index, phrase));
         let before = &words[index.saturating_sub(NEGATION_REACH_WORDS)..index];
         let negated = before
             .iter()
@@ -104,7 +170,9 @@ fn found_unnegated(words: &[String], table: &[&str], keep: impl Fn(usize) -> boo
 
 #[cfg(test)]
 mod tests {
-    use super::{DRAW_PHRASES, MAP_PHRASES, asks_for_drawing, asks_for_map};
+    use super::{
+        DRAW_PHRASES, MAP_PHRASES, WALKTHROUGH_PHRASES, WHOLE_NOUNS, asks_for_drawing, asks_for_map,
+    };
 
     #[test]
     fn a_detailed_map_is_asked_for_and_a_hash_map_is_not() {
@@ -123,6 +191,39 @@ mod tests {
             "Walk me through a request",
             "Sketch the cache",
             "don't make it detailed",
+        ] {
+            assert!(!asks_for_map(other), "{other:?}");
+        }
+    }
+
+    /// A walkthrough of a whole thing is a map (D-247); one of a flow, of the parts it lists or
+    /// of a data structure stays a sketch. The standard scripts' questions included.
+    #[test]
+    fn a_walkthrough_of_a_whole_thing_is_a_map() {
+        for noun in WHOLE_NOUNS {
+            for phrase in WALKTHROUGH_PHRASES {
+                let asked = format!("Please {phrase} the {noun}.");
+                assert!(asks_for_map(&asked), "{asked}");
+            }
+        }
+        for asked in [
+            "Walk me through how a B-tree storage engine works.",
+            "Walk me through how the TCP stack works",
+            "Walk me through this repo.",
+            "Can you give me a tour of the codebase?",
+        ] {
+            assert!(asks_for_map(asked), "{asked:?}");
+        }
+        for other in [
+            "How does a request get from the browser to our database? Walk me through the CDN, \
+             the load balancer, the API pods, Redis and Postgres.",
+            "Walk me through a B-tree insert",
+            "Walk me through how a hash map works",
+            "Walk me through how a request gets to the database",
+            "Explain the TCP handshake as a sequence diagram.",
+            "Show me how a hash map handles collisions.",
+            "The engine is slow, walk me through it",
+            "Don't walk me through the whole engine",
         ] {
             assert!(!asks_for_map(other), "{other:?}");
         }

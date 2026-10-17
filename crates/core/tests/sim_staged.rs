@@ -204,7 +204,11 @@ fn a_reveal_of_an_unknown_id_is_dropped_and_the_talker_told() {
     sim.run_until(50_000);
     assert_clean(&sim);
     assert_eq!(dropped(&sim, Dropped::Op), 1);
-    assert_eq!(reveals(&sim), [vec!["a".to_owned()]]);
+    assert_eq!(
+        reveals(&sim),
+        [vec!["a".to_owned()], vec!["b".to_owned()]],
+        "B, left planned, is revealed when the reply ends (D-237, D-250)"
+    );
     let told = transcript(&sim).join("\n");
     assert!(
         told.contains("<reveal id=\"nope\"/> named nothing staged"),

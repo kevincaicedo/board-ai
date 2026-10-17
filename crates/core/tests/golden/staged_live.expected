@@ -1,0 +1,15 @@
+clause 0 [talker@0]
+  caption: "A B-tree storage engine keeps its pages on disk and a cache of them in memory."
+  speech:  "A B-tree storage engine keeps its pages on disk and a cache of them in memory."
+dropped DiagramPart
+clause 1 [talker@80]
+  caption: "The top-level memory section holds the cache,"
+  speech:  "The top-level memory section holds the cache,"
+op 0 at clause 1 byte 0: Diagram(DiagramSpec { id: ElementId("btree"), title: "B-tree storage engine", flow: None, items: [SpecItem { parent: None, part: Container { id: ElementId("mem"), label: "In-memory structures", note: None, category: Some("memory"), dashed: false, flow: None } }, SpecItem { parent: Some(ElementId("mem")), part: Record { id: ElementId("hdr"), label: "PageHeader", fields: ["type", "count", "next", "prev"] } }, SpecItem { parent: Some(ElementId("mem")), part: Record { id: ElementId("frame"), label: "Frame", fields: ["page_id", "pin_count", "dirty"] } }, SpecItem { parent: Some(ElementId("mem")), part: Node { id: ElementId("dirty"), label: "Dirty", shape: Pill, note: None, step: None, category: None, dashed: false, new_row: false } }, SpecItem { parent: Some(ElementId("mem")), part: Node { id: ElementId("clean"), label: "Clean", shape: Pill, note: None, step: None, category: None, dashed: false, new_row: false } }, SpecItem { parent: None, part: Container { id: ElementId("ops"), label: "Operations", note: None, category: Some("process"), dashed: false, flow: None } }, SpecItem { parent: Some(ElementId("ops")), part: Node { id: ElementId("split"), label: "Split", shape: Service, note: None, step: None, category: None, dashed: false, new_row: false } }, SpecItem { parent: None, part: Edge { id: None, from: ElementId("clean"), to: ElementId("dirty"), label: Some("write"), style: Solid } }], dropped: 1 })
+op 1 at clause 1 byte 0: Reveal { target: ElementId("mem"), deep: false }
+op 2 at clause 1 byte 14: Node { id: ElementId("mem"), label: "mem", shape: None, placement: Auto, stack: 1, fill: None }
+clause 2 [talker@126]
+  caption: "and a page written to turns dirty."
+  speech:  "and a page written to turns dirty."
+op 3 at clause 2 byte 0: Reveal { target: ElementId("dirty"), deep: false }
+op 4 at clause 2 byte 28: Node { id: ElementId("dirty"), label: "dirty", shape: None, placement: Auto, stack: 1, fill: None }

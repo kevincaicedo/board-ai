@@ -2,6 +2,7 @@
 //! it happened; scenarios and the fuzzer assert there are none.
 
 mod drawing;
+mod nudges;
 mod sources;
 mod staged;
 mod tasks;
@@ -40,8 +41,7 @@ pub struct Checker {
     started_ops: BTreeSet<OpId>,
     layer_pushes: usize,
     layer_pops: usize,
-    /// The text sent to speech for every clause, so a change can be traced to the question
-    /// BoardAI asked about it (I9).
+    /// The text sent to speech per clause, to trace a change to BoardAI's question (I9).
     synthesized: BTreeMap<ClauseId, String>,
     /// Memories proposed and not yet kept, by capture, with when they were proposed.
     proposals: BTreeMap<CaptureId, SessionTime>,
@@ -67,6 +67,8 @@ pub struct Checker {
     staged: staged::Staged,
     /// Lines read this session, so a source chip names only one of them (law 6).
     read: sources::ReadLines,
+    /// Requests that asked the talker again this turn (law 5).
+    nudges: nudges::Nudges,
 }
 
 impl Checker {
@@ -172,10 +174,11 @@ impl Checker {
     ) {
         match effect {
             // I5: one talker stream at a time; CancelTalk precedes a new Talk.
-            Effect::Talk { .. } => {
+            Effect::Talk { request } => {
                 if self.talk_in_flight {
                     self.violate(now, "I5: Talk while another stream is in flight".into());
                 }
+                self.nudges.on_talk(now, request, &mut self.violations);
                 self.yours.on_talk(now, &mut self.violations);
                 self.talk_in_flight = true;
                 self.user_finals.clear();
