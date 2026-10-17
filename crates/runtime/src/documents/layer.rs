@@ -14,6 +14,7 @@ use crate::limits::{
     DOCUMENT_LINES_MAX, DOCUMENT_PAGE_MAX_BYTES, MARKDOWN_IMAGE_LINKS_MAX,
     MARKDOWN_IMAGE_MAX_BYTES, PDF_HEADING_MAX_BYTES, PDF_TABLE_ROWS_MAX, PDF_TITLE_LINES_MAX,
 };
+use crate::tools::is_credential;
 
 /// What a run of text is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,8 +61,18 @@ pub struct ImageLink {
     pub line: u32,
     /// The file it names, inside the document's folder, there, and small enough to send; `None`
     /// for a link to the web (never fetched) or a file that isn't readable.
-    pub local: Option<PathBuf>,
+    pub local: Option<LocalImage>,
     pub remote: bool,
+}
+
+/// A linked image on this Mac: where it is, and the link as the document writes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalImage {
+    /// Canonical: symlinks resolved, inside the document's folder.
+    pub path: PathBuf,
+    /// The link's own relative path (`figures/arena.png`, no `.` parts), so a private copy of
+    /// the document keeps its links working (D-231).
+    pub linked: PathBuf,
 }
 
 /// A document's text as BoardAI extracted it.
@@ -71,6 +82,9 @@ pub struct TextLayer {
     pub title: Option<String>,
     /// A PDF's length, all its pages; 0 for Markdown and text.
     pub page_count: u32,
+    /// The page `pages[0]` is (1-based): 1 for a whole text layer, the first page asked for a
+    /// page read's.
+    pub first_page: u32,
     /// A PDF's pages read (at most `DOCUMENT_PAGES_MAX`), each its text: paragraphs and other
     /// runs, one per line. Empty for Markdown and text.
     pub pages: Vec<String>,
@@ -95,7 +109,7 @@ impl TextLayer {
     /// Page `page`'s text (1-based), when it has any.
     #[must_use]
     pub fn page(&self, page: u32) -> Option<&str> {
-        let index = usize::try_from(page.checked_sub(1)?).ok()?;
+        let index = usize::try_from(page.checked_sub(self.first_page)?).ok()?;
         self.pages
             .get(index)
             .map(String::as_str)
@@ -180,8 +194,12 @@ pub fn from_pdf(text: &PdfText) -> TextLayer {
     let body = body_size(text);
     let mut layer = TextLayer {
         format: DocumentFormat::Pdf,
-        title: pdf_title(text, body),
+        // Only page 1 has the title.
+        title: (text.first_page == 1)
+            .then(|| pdf_title(text, body))
+            .flatten(),
         page_count: text.page_count,
+        first_page: text.first_page,
         pages: Vec::new(),
         line_count: 0,
         blocks: Vec::new(),
@@ -190,7 +208,7 @@ pub fn from_pdf(text: &PdfText) -> TextLayer {
         images: Vec::new(),
         empty_pages: 0,
     };
-    for (number, lines) in (1_u32..).zip(&text.pages) {
+    for (number, lines) in (text.first_page..).zip(&text.pages) {
         let mut lines: &[PdfLine] = lines;
         while let Some((last, rest)) = lines.split_last() {
             if !is_folio(last) && !last.text.trim().is_empty() {
@@ -350,6 +368,7 @@ pub fn from_lines(text: &str, format: DocumentFormat, folder: &Path) -> TextLaye
         format,
         title: None,
         page_count: 0,
+        first_page: 1,
         pages: Vec::new(),
         line_count: 0,
         blocks: Vec::new(),
@@ -544,8 +563,8 @@ fn images_on(layer: &mut TextLayer, line: &str, number: u32, folder: &Path) {
 }
 
 /// The image file a link names: relative, inside the folder (by where it leads), a file of an
-/// image kind within its size. Anything else is never read.
-fn local_image(folder: &Path, target: &str) -> Option<PathBuf> {
+/// image kind within its size, and never a credential path. Anything else is never read.
+fn local_image(folder: &Path, target: &str) -> Option<LocalImage> {
     let relative = Path::new(target);
     let inside = relative
         .components()
@@ -553,13 +572,20 @@ fn local_image(folder: &Path, target: &str) -> Option<PathBuf> {
     if !inside {
         return None;
     }
-    let extension = relative.extension()?.to_str()?.to_ascii_lowercase();
+    let linked: PathBuf = relative
+        .components()
+        .filter(|component| matches!(component, Component::Normal(_)))
+        .collect();
+    let extension = linked.extension()?.to_str()?.to_ascii_lowercase();
     if !matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
         return None;
     }
     let folder = std::fs::canonicalize(folder).ok()?;
-    let path = std::fs::canonicalize(folder.join(relative)).ok()?;
+    let path = std::fs::canonicalize(folder.join(&linked)).ok()?;
     let metadata = std::fs::metadata(&path).ok()?;
-    (path.starts_with(&folder) && metadata.is_file() && metadata.len() <= MARKDOWN_IMAGE_MAX_BYTES)
-        .then_some(path)
+    let sendable = path.starts_with(&folder)
+        && !is_credential(&path)
+        && metadata.is_file()
+        && metadata.len() <= MARKDOWN_IMAGE_MAX_BYTES;
+    sendable.then_some(LocalImage { path, linked })
 }

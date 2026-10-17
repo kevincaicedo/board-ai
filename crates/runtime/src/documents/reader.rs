@@ -5,24 +5,28 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::UNIX_EPOCH;
 
 use boardai_core::harness::HarnessEvent;
 use boardai_core::sources::digest::{self, Digest, DigestScope, request_prompt};
-use boardai_core::sources::{DocumentFormat, SourceKind, SourceState};
+use boardai_core::sources::{DocumentFormat, SourceState};
 use futures_util::future::BoxFuture;
 use futures_util::stream::{self, StreamExt};
+use tokio::sync::OnceCell;
 
 use super::files::{Attachment, FileModel};
-use super::layer::{self, TextLayer};
+use super::harness::PrivateCopy;
+use super::layer::{self, LocalImage, TextLayer};
 use super::local::{completed, local_digest, read_line};
-use super::pdfkit::PdfKit;
+use super::pdfkit::{PdfFailure, PdfKit};
 use crate::cancel::CancelToken;
 use crate::harness::{HarnessPool, HarnessStream};
 use crate::limits::{
     DIGEST_CALL_PDF_MAX_BYTES, DIGEST_CALLS_MAX, DIGEST_PAGES_PER_CALL, DIGEST_WORDS_MAX,
-    DOCUMENT_LAYERS_CACHED_MAX, DOCUMENT_PAGES_MAX, MARKDOWN_IMAGES_MAX,
+    DOCUMENT_LAYERS_CACHED_MAX, DOCUMENT_PAGE_READ_PAGES_MAX, DOCUMENT_PAGES_MAX,
+    MARKDOWN_IMAGES_MAX,
 };
-use crate::sources::{PagesRead, ReaderEvent, ReaderStream, SourceReader};
+use crate::sources::{PagesRead, PagesUnread, ReaderEvent, ReaderStream, SourceReader};
 
 /// The reader's name as the tray says it, while it reads the text itself.
 pub const DOCUMENT_READER_NAME: &str = "BoardAI";
@@ -32,19 +36,49 @@ pub struct ReaderConfig {
     /// The talker's model, then the scribe's, when they are OpenRouter models; the first that
     /// OpenRouter lists as taking files reads the figures.
     pub file_models: Vec<FileModel>,
-    /// The coding harness and its name ("Claude Code"), when one is installed.
+    /// The coding harness and its name ("Claude Code"), when one is installed. It reads a
+    /// private copy of the document alone (`harness::PrivateCopy`, D-231).
     pub harness: Option<(HarnessPool, String)>,
-    /// The home folder: a document's harness reads only inside its reach (D-226).
+    /// The home folder: a linked image under `~/Library` is never sent.
     pub home: PathBuf,
     pub pdfkit: PdfKit,
 }
 
+/// A file as it is now: its length and modification time. A text layer is kept for the file
+/// only while they match, across sessions too (the reader lives as long as the app's session).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified_ns: u128,
+}
+
+async fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = tokio::fs::metadata(path).await.ok()?;
+    let modified = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    Some(FileStamp {
+        len: metadata.len(),
+        modified_ns: modified.as_nanos(),
+    })
+}
+
+/// One document's text layer, extracted at most once: every ask waits on the same cell.
+type LayerCell = Arc<OnceCell<Arc<TextLayer>>>;
+
+struct KeptLayer {
+    path: PathBuf,
+    stamp: FileStamp,
+    cell: LayerCell,
+}
+
 struct Shared {
     config: ReaderConfig,
-    /// Text layers by path, newest last, at most `DOCUMENT_LAYERS_CACHED_MAX`.
-    layers: Mutex<VecDeque<(PathBuf, Arc<TextLayer>)>>,
+    /// `~/Library`, canonical: no linked image under it is ever sent.
+    library: PathBuf,
+    /// Text layers by path and stamp, most recently used last, at most
+    /// `DOCUMENT_LAYERS_CACHED_MAX`.
+    layers: Mutex<VecDeque<KeptLayer>>,
     /// The model that reads files, once asked of OpenRouter: `None` inside when none does.
-    file_model: tokio::sync::OnceCell<Option<FileModel>>,
+    file_model: OnceCell<Option<FileModel>>,
 }
 
 /// BoardAI's [`SourceReader`]. Cheap to clone.
@@ -56,11 +90,15 @@ pub struct DocumentReader {
 impl DocumentReader {
     #[must_use]
     pub fn new(config: ReaderConfig) -> Self {
+        let library = std::fs::canonicalize(&config.home)
+            .unwrap_or_else(|_| config.home.clone())
+            .join("Library");
         Self {
             shared: Arc::new(Shared {
                 config,
+                library,
                 layers: Mutex::new(VecDeque::new()),
-                file_model: tokio::sync::OnceCell::new(),
+                file_model: OnceCell::new(),
             }),
         }
     }
@@ -87,19 +125,51 @@ impl SourceReader for DocumentReader {
         stream::unfold(Step::Start(job), step).boxed()
     }
 
-    fn pages(&self, path: PathBuf, first: u32, last: u32) -> BoxFuture<'static, PagesRead> {
+    /// From the kept text layer when the document's whole text was extracted (its reading did
+    /// that, single-flight); otherwise only the pages asked for, so a page read never waits on
+    /// a long document's whole text (D-256).
+    fn pages(
+        &self,
+        path: PathBuf,
+        first: u32,
+        last: u32,
+    ) -> BoxFuture<'static, Result<PagesRead, PagesUnread>> {
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            let Ok(layer) = shared.layer(&path, format_of(&path)).await else {
-                return PagesRead::default();
-            };
-            PagesRead {
-                pages: (first..=last)
-                    .filter_map(|page| Some((page, layer.page(page)?.to_owned())))
-                    .collect(),
-                page_count: (layer.format == DocumentFormat::Pdf).then_some(layer.page_count),
+            if format_of(&path) != DocumentFormat::Pdf {
+                return Ok(PagesRead::default());
             }
+            let last = last.min(first.saturating_add(DOCUMENT_PAGE_READ_PAGES_MAX - 1));
+            if let Some(layer) = shared.kept_layer(&path).await {
+                return Ok(pages_of(&layer, first, last));
+            }
+            let text = shared
+                .config
+                .pdfkit
+                .pages(&path, first, last)
+                .await
+                .map_err(|failure| match failure {
+                    PdfFailure::TimedOut => PagesUnread::TimedOut,
+                    PdfFailure::Unreadable
+                    | PdfFailure::Locked { .. }
+                    | PdfFailure::BadRange
+                    | PdfFailure::TooLarge
+                    | PdfFailure::Failed { .. } => PagesUnread::Failed {
+                        reason: failure.reason(),
+                    },
+                })?;
+            Ok(pages_of(&layer::from_pdf(&text), first, last))
         })
+    }
+}
+
+/// Pages `[first, last]` that have text, and the document's length.
+fn pages_of(layer: &TextLayer, first: u32, last: u32) -> PagesRead {
+    PagesRead {
+        pages: (first..=last)
+            .filter_map(|page| Some((page, layer.page(page)?.to_owned())))
+            .collect(),
+        page_count: (layer.format == DocumentFormat::Pdf).then_some(layer.page_count),
     }
 }
 
@@ -117,13 +187,56 @@ fn format_of(path: &Path) -> DocumentFormat {
 }
 
 impl Shared {
-    /// The document's text layer: kept, or extracted now and kept.
-    async fn layer(&self, path: &Path, format: DocumentFormat) -> Result<Arc<TextLayer>, String> {
-        if let Ok(layers) = self.layers.lock()
-            && let Some((_, layer)) = layers.iter().find(|(known, _)| known == path)
-        {
-            return Ok(Arc::clone(layer));
+    /// The cell for the document as it is now: the kept one while its stamp matches, else a
+    /// new one in place of the stale one. Most recently used last; the least goes past
+    /// `DOCUMENT_LAYERS_CACHED_MAX`.
+    fn cell(&self, path: &Path, stamp: FileStamp) -> LayerCell {
+        let Ok(mut layers) = self.layers.lock() else {
+            return LayerCell::default();
+        };
+        let kept = layers
+            .iter()
+            .position(|kept| kept.path == path)
+            .and_then(|index| layers.remove(index))
+            .filter(|kept| kept.stamp == stamp)
+            .unwrap_or_else(|| KeptLayer {
+                path: path.to_path_buf(),
+                stamp,
+                cell: LayerCell::default(),
+            });
+        let cell = Arc::clone(&kept.cell);
+        layers.push_back(kept);
+        while layers.len() > DOCUMENT_LAYERS_CACHED_MAX {
+            layers.pop_front();
         }
+        cell
+    }
+
+    /// The document's whole text layer, extracted once: asks while it is being extracted wait
+    /// for that one PDFKit run; a failure isn't kept, so the next ask tries again.
+    async fn layer(&self, path: &Path, format: DocumentFormat) -> Result<Arc<TextLayer>, String> {
+        let stamp = file_stamp(path)
+            .await
+            .ok_or_else(|| "BoardAI couldn't read it".to_owned())?;
+        self.cell(path, stamp)
+            .get_or_try_init(|| self.extract(path, format))
+            .await
+            .cloned()
+    }
+
+    /// The whole text layer already extracted for the document as it is now; never extracts.
+    async fn kept_layer(&self, path: &Path) -> Option<Arc<TextLayer>> {
+        let stamp = file_stamp(path).await?;
+        let layers = self.layers.lock().ok()?;
+        layers
+            .iter()
+            .find(|kept| kept.path == path && kept.stamp == stamp)?
+            .cell
+            .get()
+            .cloned()
+    }
+
+    async fn extract(&self, path: &Path, format: DocumentFormat) -> Result<Arc<TextLayer>, String> {
         let layer = match format {
             DocumentFormat::Pdf => {
                 let text = self
@@ -150,15 +263,7 @@ impl Shared {
                 .map_err(str::to_owned)?
             }
         };
-        let layer = Arc::new(layer);
-        if let Ok(mut layers) = self.layers.lock() {
-            layers.retain(|(known, _)| known != path);
-            layers.push_back((path.to_path_buf(), Arc::clone(&layer)));
-            while layers.len() > DOCUMENT_LAYERS_CACHED_MAX {
-                layers.pop_front();
-            }
-        }
-        Ok(layer)
+        Ok(Arc::new(layer))
     }
 
     /// The first configured model OpenRouter says takes files, asked once.
@@ -174,6 +279,20 @@ impl Shared {
             })
             .await
             .clone()
+    }
+
+    /// The linked images that may leave this Mac or reach the harness, with their index among
+    /// the document's image links: on this Mac, inside the document's folder
+    /// (`layer::local_image`), never under `~/Library`, the first `MARKDOWN_IMAGES_MAX`.
+    fn sendable_images(&self, layer: &TextLayer) -> Vec<(usize, LocalImage)> {
+        layer
+            .images
+            .iter()
+            .enumerate()
+            .filter_map(|(index, image)| Some((index, image.local.clone()?)))
+            .filter(|(_, image)| !image.path.starts_with(&self.library))
+            .take(MARKDOWN_IMAGES_MAX)
+            .collect()
     }
 }
 
@@ -207,6 +326,8 @@ struct Calls {
     job: Job,
     model: FileModel,
     layer: Arc<TextLayer>,
+    /// A Markdown document's images to send, with their index among its image links.
+    images: Vec<(usize, LocalImage)>,
     local: Digest,
     ranges: Vec<(u32, u32)>,
     next: usize,
@@ -217,7 +338,10 @@ struct Calls {
 struct HarnessRun {
     job: Job,
     name: String,
+    /// Dropped before `_copy`: the harness's process group is killed, then its folder removed.
     events: HarnessStream,
+    /// The only folder the harness reads: the document and its linked images (D-231).
+    _copy: PrivateCopy,
     layer: Arc<TextLayer>,
     local: Digest,
     touched: u32,
@@ -271,25 +395,9 @@ async fn extract(job: Job) -> (ReaderEvent, Step) {
     let local = local_digest(&layer, &job.file_name());
     let pages = (job.format == DocumentFormat::Pdf).then_some(layer.page_count);
     let model = job.shared.file_model().await;
-    let reach = crate::sources::reach(
-        &job.path,
-        SourceKind::Document { format: job.format },
-        &job.shared.config.home,
-    );
-    let harness = job
-        .shared
-        .config
-        .harness
-        .as_ref()
-        .zip(reach)
-        .map(|((pool, name), reach)| (pool.clone(), name.clone(), reach));
+    let harness = job.shared.config.harness.clone();
     let long = layer.page_count > DIGEST_PAGES_PER_CALL * DIGEST_CALLS_MAX;
-    let images: Vec<PathBuf> = layer
-        .images
-        .iter()
-        .filter_map(|image| image.local.clone())
-        .take(MARKDOWN_IMAGES_MAX)
-        .collect();
+    let images = job.shared.sendable_images(&layer);
     let wants_reader = job.format == DocumentFormat::Pdf || !layer.images.is_empty();
     match (model, harness) {
         (Some(model), harness) if wants_reader && (!long || harness.is_none()) => {
@@ -306,6 +414,7 @@ async fn extract(job: Job) -> (ReaderEvent, Step) {
                 job,
                 model,
                 layer,
+                images,
                 local,
                 ranges,
                 next: 0,
@@ -314,13 +423,22 @@ async fn extract(job: Job) -> (ReaderEvent, Step) {
             };
             (reading(0, pages, Some(&by)), Step::Calls(Box::new(calls)))
         }
-        (_, Some((pool, name, reach))) if wants_reader => {
-            let events = super::harness::start(&pool, &job.path, reach, job.cancel.clone());
+        (_, Some((pool, name))) if wants_reader => {
+            let images = images.into_iter().map(|(_, image)| image).collect();
+            let copy = match PrivateCopy::make(job.path.clone(), images).await {
+                Ok(copy) => copy,
+                Err(why) => {
+                    tracing::warn!(%why, "the harness can't read the document; its text is the digest");
+                    return (settled(&local), Step::End);
+                }
+            };
+            let events = super::harness::start(&pool, &copy, &job.file_name(), job.cancel.clone());
             let event = reading(0, None, Some(&name));
             let run = HarnessRun {
                 job,
                 name,
                 events,
+                _copy: copy,
                 layer,
                 local,
                 touched: 0,
@@ -397,8 +515,8 @@ impl Calls {
                 )
                 .await
         } else {
-            let images = images_base64(&self.layer).await;
-            let prompt = images_prompt(&name, &self.layer, words_max);
+            let images = images_base64(&self.images).await;
+            let prompt = images_prompt(&name, &self.layer, &self.images, words_max);
             self.model
                 .digest(&prompt, Attachment::Images(&images))
                 .await
@@ -427,13 +545,8 @@ fn stem(name: &str) -> &str {
 }
 
 /// The images a Markdown document links, read and in base64, with their media types.
-async fn images_base64(layer: &TextLayer) -> Vec<(String, String)> {
-    let paths: Vec<PathBuf> = layer
-        .images
-        .iter()
-        .filter_map(|image| image.local.clone())
-        .take(MARKDOWN_IMAGES_MAX)
-        .collect();
+async fn images_base64(images: &[(usize, LocalImage)]) -> Vec<(String, String)> {
+    let paths: Vec<PathBuf> = images.iter().map(|(_, image)| image.path.clone()).collect();
     tokio::task::spawn_blocking(move || {
         paths
             .iter()
@@ -456,12 +569,15 @@ async fn images_base64(layer: &TextLayer) -> Vec<(String, String)> {
 
 /// The request for a Markdown document's images: the figures section only, numbered as the
 /// document links them.
-fn images_prompt(name: &str, layer: &TextLayer, words_max: u32) -> String {
+fn images_prompt(
+    name: &str,
+    layer: &TextLayer,
+    images: &[(usize, LocalImage)],
+    words_max: u32,
+) -> String {
     let mut listed = String::new();
-    let mut number = 0;
-    for (index, image) in layer.images.iter().enumerate() {
-        if image.local.is_some() && number < MARKDOWN_IMAGES_MAX {
-            number += 1;
+    for (index, _) in images {
+        if let Some(image) = layer.images.get(*index) {
             listed.push_str(&format!(
                 "- Figure {} (l. {}): {}\n",
                 index + 1,

@@ -10,6 +10,7 @@ import {
   FIGURE_UNREAD,
   figureLines,
   sentenceMarks,
+  writeSentenceStrengths,
 } from "./doc.ts";
 
 const tokens = readTokens(
@@ -102,6 +103,27 @@ test("a repeated move holds its sentence, and an index past the passage marks no
   assert.deepEqual(sentenceMarks(same, 4, 1600, 420), [{ index: 2, strength: 1 }]);
   assert.deepEqual(sentenceMarks([{ index: 9, at: 0 }], 4, 1000, 420), []);
   assert.deepEqual(sentenceMarks([{ index: 1, at: 0 }], 4, 1000, 0), [{ index: 1, strength: 1 }]);
+});
+
+test("the frame loop's strengths are the marks, with nothing allocated per frame", () => {
+  const moves = [
+    { index: 0, at: 1000 },
+    { index: 3, at: 2000 },
+    { index: 3, at: 2600 },
+    { index: 9, at: 3000 },
+    { index: 1, at: 4000 },
+  ];
+  const out = new Float64Array(4);
+  for (let at = 0; at <= 5000; at += 37) {
+    for (const duration of [0, 420]) {
+      writeSentenceStrengths(moves, at, duration, out);
+      const expected = new Float64Array(4);
+      for (const mark of sentenceMarks(moves, 4, at, duration)) {
+        expected[mark.index] = mark.strength;
+      }
+      assert.deepEqual(Array.from(out), Array.from(expected), `at ${at}, duration ${duration}`);
+    }
+  }
 });
 
 test("the card's height counts the figure box, the passage's lines and the note", () => {

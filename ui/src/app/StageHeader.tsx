@@ -5,10 +5,10 @@
 // button, which hold the same corner (14): it starts right of them (`headerLeft`, LLD §4).
 
 import { useMemo, useRef } from "preact/hooks";
-import { headerLeft } from "../sources/model.ts";
+import { headerLeft, trayCornerScratch } from "../sources/model.ts";
 import { trayCornerAt } from "../sources/Sources.tsx";
 import { headerView } from "./diagrams.ts";
-import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
+import { numberWriter, px, useFrame, useRuntime } from "./hooks.ts";
 
 function Credit({ credit }: { credit: string | null }) {
   return credit === null ? null : <span class="brief-chip">{credit}</span>;
@@ -19,15 +19,17 @@ export function StageHeader() {
   const diagrams = runtime.scene.diagrams;
   const view = headerView(diagrams.headers.value, diagrams.details.value);
   const headerRef = useRef<HTMLElement>(null);
-  const write = useMemo(styleWriter, []);
-  const leftAt = (at: number): string =>
-    `${Math.round(headerLeft(trayCornerAt(runtime, at), runtime.tokens))}px`;
-  useFrame((at) => write(headerRef.current, "left", leftAt(at)));
+  const write = useMemo(numberWriter, []);
+  const scratch = useMemo(trayCornerScratch, []);
+  // Every frame: no allocation, and the style's text only when the place moved.
+  const leftAt = (at: number): number =>
+    Math.round(headerLeft(trayCornerAt(runtime, at, scratch), runtime.tokens));
+  useFrame((at) => write(headerRef.current, "left", leftAt(at), px));
   if (view === null) {
     return null;
   }
   // Placed from its first paint, then kept beside the tray every frame.
-  const style = { left: leftAt(runtime.at) };
+  const style = { left: px(leftAt(runtime.at)) };
   if (view.kind === "diagram") {
     return (
       <header class="stage-header stage-header-diagram" ref={headerRef} style={style}>

@@ -5,10 +5,10 @@
 
 import { Fragment } from "preact";
 import { useMemo, useRef } from "preact/hooks";
-import { styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
+import { numberWriter, plain, useFrame, useRuntime } from "../app/hooks.ts";
 import type { Highlight } from "../app/session.ts";
 import { round2 } from "../canvas/math.ts";
-import { type DocSurface, docSentences, figureLines, sentenceMarks } from "./doc.ts";
+import { type DocSurface, docSentences, figureLines, writeSentenceStrengths } from "./doc.ts";
 
 export function DocCard({
   surface,
@@ -20,20 +20,23 @@ export function DocCard({
   const runtime = useRuntime();
   const tokens = runtime.tokens;
   const sentenceRefs = useRef<(HTMLSpanElement | null)[]>([]);
-  const write = useMemo(styleWriter, []);
+  const write = useMemo(numberWriter, []);
   const sentences = useMemo(() => docSentences(surface), [surface]);
+  const strengths = useMemo(() => new Float64Array(sentences.length), [sentences]);
   const figure = figureLines(surface);
   const moves = useMemo(
     () => highlights.map((highlight) => ({ index: highlight.line, at: highlight.at })),
     [highlights],
   );
 
+  // Every frame: the strengths go into one array, and a sentence's style is written only when
+  // its strength changed.
   useFrame((at) => {
-    const marks = sentenceMarks(moves, sentences.length, at, tokens.durationStandardMs);
-    sentenceRefs.current.forEach((element, index) => {
-      const strength = marks.find((mark) => mark.index === index)?.strength ?? 0;
-      write(element, "--doc-mark", String(round2(strength)));
-    });
+    writeSentenceStrengths(moves, at, tokens.durationStandardMs, strengths);
+    const elements = sentenceRefs.current;
+    for (let index = 0; index < strengths.length; index += 1) {
+      write(elements[index] ?? null, "--doc-mark", round2(strengths[index] ?? 0), plain);
+    }
   });
 
   return (

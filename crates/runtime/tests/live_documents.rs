@@ -207,6 +207,9 @@ async fn claude_code_reads_a_paper_and_its_figures() {
         environment,
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         model: None,
+        sign_in: boardai_runtime::harness::ClaudeSignIn::read(std::path::Path::new(
+            &std::env::var_os("HOME").unwrap_or_default(),
+        )),
     });
     let pool = HarnessPool::new(Arc::new(harness), HarnessTimeouts::default());
     let reader = DocumentReader::new(ReaderConfig {

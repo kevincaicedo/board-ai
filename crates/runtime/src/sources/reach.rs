@@ -1,9 +1,13 @@
 //! Where a research brief's harness may read (D-226): the shared source's enclosing git
 //! repository, so a brief can follow a call into a sibling crate but never wander into the
 //! user's other folders. The source folder itself when it isn't in a repository; for a single
-//! file, the file's repository or its folder. A repository that is too broad (a dotfiles repo
-//! at `~`: `tools::too_broad`) is no reach: the source folder is, and a single file with no
+//! code file, the file's repository or its folder. A repository that is too broad (a dotfiles
+//! repo at `~`: `tools::too_broad`) is no reach: the source folder is, and a single file with no
 //! folder but `~` around it has none, so no harness reads around it.
+//!
+//! A document has no reach (D-231): sharing one consents to that file alone. Its reader's
+//! harness reads a private folder holding only the document and the images it links
+//! (`documents::harness`), and no brief runs on it.
 //!
 //! The harness enforces the reach with its own rules where it has them (`harness::confine`).
 //! Found once, where the source is validated (on the blocking pool).
@@ -35,7 +39,8 @@ pub(crate) fn enclosing_repo(start: &Path) -> Option<PathBuf> {
 pub fn reach(path: &Path, kind: SourceKind, home: &Path) -> Option<PathBuf> {
     let folder = match kind {
         SourceKind::CodeFolder => path.to_path_buf(),
-        SourceKind::CodeFile | SourceKind::Document { .. } => path.parent()?.to_path_buf(),
+        SourceKind::CodeFile => path.parent()?.to_path_buf(),
+        SourceKind::Document { .. } => return None,
     };
     let held = |candidate: &Path| too_broad(candidate, home).is_none() && !is_credential(candidate);
     enclosing_repo(&folder)
@@ -117,7 +122,13 @@ mod tests {
         let markdown = SourceKind::Document {
             format: DocumentFormat::Markdown,
         };
-        assert_eq!(reach_of(&loose_file, markdown, &home), Some(loose));
+        assert_eq!(
+            reach_of(&loose_file, markdown, &home),
+            None,
+            "a document reaches nothing around it (D-231)"
+        );
+        let script = root.make("home/notes/scratch/plan.py");
+        assert_eq!(reach_of(&script, SourceKind::CodeFile, &home), Some(loose));
         assert_eq!(
             reach_of(&in_worktree, SourceKind::CodeFolder, &home),
             Some(worktree)

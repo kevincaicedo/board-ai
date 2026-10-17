@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use boardai_core::history::{Message, UserPart};
 use boardai_core::protocol::UiEvent;
-use boardai_core::sources::SourceState;
+use boardai_core::sources::{ProjectId, SourceState};
 
 use boardai_core::sources::DocumentFormat;
 
@@ -15,6 +15,7 @@ use crate::cancel::CancelToken;
 use crate::harness::{
     ClaudeCodeConfig, ClaudeCodeHarness, DEFAULT_RESEARCH_MODEL, HarnessPool, HarnessTimeouts,
 };
+use crate::session::shelf::MemoryShelf;
 use crate::session::{SessionParts, SourceParts, say_typed};
 use crate::sources::{ReaderEvent, ReaderStream, SourceReader, validate};
 use crate::tools::{RepoRoots, RepoTools};
@@ -95,11 +96,24 @@ fn setup(label: &str) -> Setup {
 }
 
 fn configure(setup: &Setup, readers: Vec<Arc<dyn SourceReader>>) -> impl FnOnce(&mut SessionParts) {
-    let environment = vec![
+    configure_with(setup, readers, None, None)
+}
+
+/// [`configure`], with the fake harness answering after `delay` seconds, and a shelf to look in.
+fn configure_with(
+    setup: &Setup,
+    readers: Vec<Arc<dyn SourceReader>>,
+    delay: Option<&str>,
+    shelf: Option<MemoryShelf>,
+) -> impl FnOnce(&mut SessionParts) {
+    let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
         ("FAKE_FOLDER".into(), setup.fake.clone().into()),
         ("FAKE_FIXTURE".into(), fixture("claude/brief.jsonl").into()),
         ("FAKE_MODE".into(), "replay".into()),
     ];
+    if let Some(delay) = delay {
+        environment.push(("FAKE_DELAY".into(), delay.into()));
+    }
     let other = setup.home.join("code/other");
     let home = setup.home.clone();
     move |parts| {
@@ -111,16 +125,21 @@ fn configure(setup: &Setup, readers: Vec<Arc<dyn SourceReader>>) -> impl FnOnce(
             environment,
             research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
             model: None,
+            sign_in: crate::harness::ClaudeSignIn::default(),
         });
         parts.harness = Some(HarnessPool::new(
             Arc::new(claude),
             HarnessTimeouts::default(),
         ));
-        parts.sources = SourceParts {
+        let mut sources = SourceParts {
             harness_name: Some("Claude Code".into()),
             readers,
             ..SourceParts::in_memory(home)
         };
+        if let Some(shelf) = shelf {
+            sources.shelf = Arc::new(shelf);
+        }
+        parts.sources = sources;
     }
 }
 
@@ -188,6 +207,77 @@ async fn a_dropped_folder_is_researched_in_place_and_its_brief_reaches_the_talke
     );
     let _ = close(harness).await;
     let _ = std::fs::remove_dir_all(&setup.root);
+}
+
+/// I10, the runtime's half (finding 3): a folder kept in a project, then "don't remember this
+/// session" while its brief is still being read. The keep is undone, and the brief that arrives
+/// afterwards is never saved in the project's folder, whatever the core asks.
+#[tokio::test]
+async fn a_brief_after_forgetting_the_session_is_not_saved_in_the_project() {
+    use crate::session::shelf::SourceShelf;
+
+    let setup = setup("forget");
+    let talker = Arc::new(ScriptedTalker::default());
+    let shelf = MemoryShelf::default();
+    let configure = configure_with(&setup, Vec::new(), Some("2"), Some(shelf.clone()));
+    let harness = start_configured(Arc::clone(&talker), false, None, configure);
+    let source = validate(&setup.greeter, &setup.home).expect("a valid folder");
+    assert!(harness.session.share(source, true).is_ok());
+    let project = ProjectId::parse("greeter").expect("a project id");
+    let mut kept = false;
+    for _ in 0..100 {
+        kept = !shelf
+            .kept(project.clone())
+            .await
+            .unwrap_or_default()
+            .is_empty();
+        if kept {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(kept, "the folder was kept in its project");
+    let link = harness.session.speech_in();
+    assert!(
+        say_typed(&link, "Don't remember this session.")
+            .await
+            .is_ok()
+    );
+    let recorder = Arc::clone(&harness.recorder);
+    // A kept source's row is on the project's tab.
+    let kept_states = |events: &[UiEvent]| -> Vec<SourceState> {
+        events
+            .iter()
+            .filter_map(|event| {
+                let UiEvent::Sources { tray } = event else {
+                    return None;
+                };
+                tray.project.as_ref()
+            })
+            .flat_map(|project| project.sources.iter().map(|row| row.state.clone()))
+            .collect()
+    };
+    let ready = run_until(15_000, || {
+        kept_states(&recorder.events()).iter().any(
+            |state| matches!(state, SourceState::Ready { detail } if detail.starts_with("Overview ready")),
+        )
+    })
+    .await;
+    assert!(ready, "{:?}", kept_states(&recorder.events()));
+    // The brief is stamped and would be saved by jobs: give them their moment.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let briefs = shelf
+        .briefs(project.clone(), "~/code/greeter".into())
+        .await
+        .unwrap_or_default();
+    let lines = shelf.kept(project).await.unwrap_or_default();
+    let _ = close(harness).await;
+    let _ = std::fs::remove_dir_all(&setup.root);
+    assert!(lines.is_empty(), "the keep was undone: {lines:?}");
+    assert!(
+        briefs.is_empty(),
+        "no brief was saved after the forget: {briefs:?}"
+    );
 }
 
 /// The reader seam (T-031 fills it): a document shared goes to the reader that takes its

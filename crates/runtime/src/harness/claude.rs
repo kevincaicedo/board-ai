@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::confine::{claude_rules, reach_line};
 use super::process::{self, Output, Preflight, ProcessSpec, Protocol, failed, failed_stream};
+use super::sign_in::ClaudeSignIn;
 use super::text::{bounded_summary, citations, new_session_id, progress_note, relative_to};
 use super::{Answer, CodingHarness, DefaultFolder, HarnessStream, Workspace};
 use crate::cancel::CancelToken;
@@ -30,6 +31,9 @@ pub(crate) const BRIEF_RESEARCH_PROMPT: &str = "You are researching code for Boa
 tutor that explains code while drawing it. Do not modify any file. Read what you need to answer \
 well. Answer only in the Markdown shape the task gives, with paths relative to the working \
 folder, and cite only lines you read, as path:line.";
+
+/// Loads neither the user's, the project's nor the local settings (finding 10).
+const NO_SETTING_SOURCES: &str = "--setting-sources=";
 
 /// The model a research brief runs on unless `[harness] research_model` names another (D-226):
 /// Claude Code's alias for its current Sonnet, cheaper and faster than the default for reading.
@@ -54,6 +58,9 @@ pub struct ClaudeCodeConfig {
     /// `--model` for spoken research, reviews and changes (`[harness] model`); `None` keeps
     /// Claude Code's own default.
     pub model: Option<String>,
+    /// What signing in needs from the user's own settings, which confined runs don't load
+    /// (`ClaudeSignIn::read`, finding 10).
+    pub sign_in: ClaudeSignIn,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +105,7 @@ impl CodingHarness for ClaudeCodeHarness {
                     research: &self.config.research_model,
                     other: self.config.model.as_deref(),
                 },
+                &self.config.sign_in,
             ),
             working_directory: workspace.folder.clone(),
             environment: self.config.environment.clone(),
@@ -130,13 +138,14 @@ pub struct Models<'a> {
 /// The command line, checked against `claude --help` (2.1.302). Multi-value flags get one
 /// comma-separated argument so they cannot swallow the next flag. Research and reviews, spoken
 /// or as a brief, are held to the workspace's reach by Claude Code's permission rules
-/// (`confine`, D-226, D-243); a change edits its branch.
+/// (`confine`, D-226, D-243), with no setting source loaded; a change edits its branch.
 #[must_use]
 pub fn arguments(
     kind: &HarnessKind,
     session_id: &str,
     workspace: &Workspace,
     models: Models<'_>,
+    sign_in: &ClaudeSignIn,
 ) -> Vec<OsString> {
     let mut command_line: Vec<String> = [
         "-p",
@@ -173,7 +182,7 @@ pub fn arguments(
     }
     match kind {
         HarnessKind::Research | HarnessKind::Review => {
-            let rules = claude_rules(&workspace.folder, &workspace.reach);
+            let rules = claude_rules(&workspace.folder, &workspace.reach, sign_in);
             command_line.extend(
                 [
                     "--permission-mode",
@@ -181,8 +190,9 @@ pub fn arguments(
                     "--tools",
                     "Read,Grep,Glob",
                     "--strict-mcp-config",
-                    "--setting-sources",
-                    "user",
+                    // No setting source at all, in the one-argument form Claude Code passes its
+                    // own children (an empty list; its parser takes "" as none).
+                    NO_SETTING_SOURCES,
                     "--settings",
                     rules.as_str(),
                 ]
@@ -390,7 +400,9 @@ mod tests {
 
     use super::{ClaudeProtocol, DEFAULT_RESEARCH_MODEL, Models, arguments};
     use crate::harness::process::{Output, Protocol};
+    use crate::harness::sign_in::ClaudeSignIn;
     use crate::harness::{Answer, Workspace};
+    use crate::tools::CREDENTIAL_PATHS;
 
     const DEFAULT_MODELS: Models<'static> = Models {
         research: DEFAULT_RESEARCH_MODEL,
@@ -434,7 +446,14 @@ mod tests {
         };
         expect("--permission-mode", "dontAsk");
         expect("--tools", "Read,Grep,Glob");
-        expect("--setting-sources", "user");
+        // Finding 10: no setting source, so no user setting widens the reach.
+        let sources: Vec<&OsString> = command_line
+            .iter()
+            .filter(|part| part.to_string_lossy().starts_with("--setting-sources"))
+            .collect();
+        if sources != [&OsString::from("--setting-sources=")] {
+            wrong.push(format!("setting sources load: {sources:?}"));
+        }
         if !command_line
             .iter()
             .any(|part| part == "--strict-mcp-config")
@@ -466,6 +485,19 @@ mod tests {
                 wrong.push(format!("{tool} isn't denied"));
             }
         }
+        for parts in CREDENTIAL_PATHS {
+            let anywhere = format!("\"Read(//**/{}/**)\"", parts.join("/"));
+            if !deny.contains(&anywhere) {
+                wrong.push(format!("{anywhere} isn't denied"));
+            }
+        }
+        if rules.get("hooks").is_some()
+            || permissions["additionalDirectories"]
+                .to_string()
+                .contains("/Users")
+        {
+            wrong.push("a user setting widens the reach".to_owned());
+        }
         wrong
     }
 
@@ -478,6 +510,7 @@ mod tests {
             "id",
             &brief_workspace(),
             DEFAULT_MODELS,
+            &ClaudeSignIn::default(),
         );
         assert_eq!(after(&command_line, "--model"), Some("sonnet"));
         assert_eq!(unconfined(&command_line, "/code/db"), Vec::<String>::new());
@@ -500,7 +533,13 @@ mod tests {
         };
         for kind in [HarnessKind::Research, HarnessKind::Review] {
             for workspace in [spoken_workspace(), nested.clone()] {
-                let command_line = arguments(&kind, "id", &workspace, DEFAULT_MODELS);
+                let command_line = arguments(
+                    &kind,
+                    "id",
+                    &workspace,
+                    DEFAULT_MODELS,
+                    &ClaudeSignIn::default(),
+                );
                 assert_eq!(
                     unconfined(&command_line, "/code/db"),
                     Vec::<String>::new(),
@@ -535,10 +574,60 @@ mod tests {
             "id",
             &spoken_workspace(),
             DEFAULT_MODELS,
+            &ClaudeSignIn::default(),
         );
         assert!(
             !unconfined(&elsewhere, "/code/other").is_empty(),
             "a rule for another folder is caught"
+        );
+    }
+
+    /// Finding 10: the command line before it loaded the user's settings (`--setting-sources
+    /// user`, where an `additionalDirectories` widens the reach) and denied credentials only
+    /// under the reach. The check finds both; a user's sign-in settings ride along without
+    /// widening anything.
+    #[test]
+    fn no_user_setting_can_widen_the_reach() {
+        let user = r#"{"apiKeyHelper": "/opt/bin/key", "permissions": {"additionalDirectories": ["/Users/me"]}, "hooks": {"PreToolUse": []}}"#;
+        let sign_in = ClaudeSignIn::from_settings(user);
+        let command_line = arguments(
+            &HarnessKind::Research,
+            "id",
+            &brief_workspace(),
+            DEFAULT_MODELS,
+            &sign_in,
+        );
+        assert_eq!(unconfined(&command_line, "/code/db"), Vec::<String>::new());
+        let rules: Value =
+            serde_json::from_str(after(&command_line, "--settings").expect("--settings"))
+                .expect("json");
+        assert_eq!(rules["apiKeyHelper"], "/opt/bin/key");
+        let mut planted: Vec<OsString> = command_line
+            .iter()
+            .flat_map(|part| {
+                if part == "--setting-sources=" {
+                    vec![OsString::from("--setting-sources"), OsString::from("user")]
+                } else {
+                    vec![part.clone()]
+                }
+            })
+            .collect();
+        let mut old_rules = rules.clone();
+        if let Some(deny) = old_rules["permissions"]["deny"].as_array_mut() {
+            deny.retain(|rule| {
+                !rule
+                    .as_str()
+                    .is_some_and(|rule| rule.starts_with("Read(//**/"))
+            });
+        }
+        if let Some(index) = planted.iter().position(|part| part == "--settings") {
+            planted[index + 1] = OsString::from(old_rules.to_string());
+        }
+        let wrong = unconfined(&planted, "/code/db");
+        assert!(
+            wrong.iter().any(|why| why.contains("setting sources load"))
+                && wrong.iter().any(|why| why.contains("Read(//**/.ssh/**)")),
+            "{wrong:?}"
         );
     }
 
@@ -555,24 +644,38 @@ mod tests {
             branch: "boardai/x".into(),
         };
         for kind in [HarnessKind::Research, HarnessKind::Review, change.clone()] {
-            let command_line = arguments(&kind, "id", &spoken_workspace(), models);
+            let none = ClaudeSignIn::default();
+            let command_line = arguments(&kind, "id", &spoken_workspace(), models, &none);
             assert_eq!(after(&command_line, "--model"), Some("opus"), "{kind:?}");
-            let default = arguments(&kind, "id", &spoken_workspace(), DEFAULT_MODELS);
+            let default = arguments(&kind, "id", &spoken_workspace(), DEFAULT_MODELS, &none);
             assert_eq!(after(&default, "--model"), None, "{kind:?}");
         }
-        let brief = arguments(&HarnessKind::Research, "id", &brief_workspace(), models);
+        let none = ClaudeSignIn::default();
+        let brief = arguments(
+            &HarnessKind::Research,
+            "id",
+            &brief_workspace(),
+            models,
+            &none,
+        );
         assert_eq!(after(&brief, "--model"), Some("sonnet"));
         let custom = Models {
             research: "opus",
             other: None,
         };
-        let brief = arguments(&HarnessKind::Research, "id", &brief_workspace(), custom);
+        let brief = arguments(
+            &HarnessKind::Research,
+            "id",
+            &brief_workspace(),
+            custom,
+            &none,
+        );
         assert_eq!(
             after(&brief, "--model"),
             Some("opus"),
             "research_model wins"
         );
-        let change = arguments(&change, "id", &spoken_workspace(), DEFAULT_MODELS);
+        let change = arguments(&change, "id", &spoken_workspace(), DEFAULT_MODELS, &none);
         assert_eq!(after(&change, "--permission-mode"), Some("acceptEdits"));
         assert_eq!(after(&change, "--settings"), None);
     }

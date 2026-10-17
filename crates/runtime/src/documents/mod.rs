@@ -6,11 +6,12 @@
 //!   has no text and is said to need a model that reads files.
 //! - **Figures, never lost silently.** When the configured talker or scribe is an OpenRouter
 //!   model that takes files, it reads the PDF a page range at a time (`files`); else the coding
-//!   harness reads it (`harness`); else the digest is the text's alone, its figures listed by
+//!   harness reads a private copy of it (`harness`, D-231); else the digest is the text's alone, its figures listed by
 //!   their captions and unread (`local`). Every figure the text names is in the digest, read or
 //!   not.
-//! - **Pages on request.** The talker's page reads come from the same text layer, kept for a few
-//!   documents.
+//! - **Pages on request.** The talker's page reads come from the same text layer, extracted once
+//!   and kept for a few documents; while a document's whole text isn't kept, a page read
+//!   extracts only its own pages, so it never waits on a long document.
 //!
 //! Nothing here decides anything about the conversation: the core reads the digest, says what
 //! the tray shows and what the talker hears.

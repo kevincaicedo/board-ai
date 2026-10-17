@@ -40,11 +40,38 @@ pub enum ReaderEvent {
 pub type ReaderStream = BoxStream<'static, ReaderEvent>;
 
 /// Pages a reader read for the talker: `(page, text)` for each with text, in order, and the
-/// document's length when known.
+/// document's length when known. A page left out has no text: a scan, or past the end.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PagesRead {
     pub pages: Vec<(u32, String)>,
     pub page_count: Option<u32>,
+}
+
+/// Why pages weren't read: never "no text" (that is [`PagesRead`] with the pages left out), so
+/// the talker isn't told an unread page is empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PagesUnread {
+    /// Not read within the page read's bound (`SOURCE_JOB_TIMEOUT_MS`).
+    TimedOut,
+    /// As many source jobs run as may (`SOURCE_JOBS_MAX`).
+    Busy,
+    /// No reader takes it, or it isn't shared any more.
+    NoReader,
+    /// The reader couldn't read them: what the tray would say ("It is locked with a password").
+    Failed { reason: String },
+}
+
+impl PagesUnread {
+    /// In words the talker can pass on.
+    #[must_use]
+    pub fn reason(&self) -> String {
+        match self {
+            Self::TimedOut => "its pages weren't read in time".to_owned(),
+            Self::Busy => "BoardAI was busy reading other sources".to_owned(),
+            Self::NoReader => "no reader reads it".to_owned(),
+            Self::Failed { reason } => reason.clone(),
+        }
+    }
 }
 
 pub trait SourceReader: Send + Sync {
@@ -60,9 +87,14 @@ pub trait SourceReader: Send + Sync {
 
     /// Pages `[first, last]` (1-based) of the PDF at `path`, from its extracted text (D-256).
     /// Bounded by the reader; the caller bounds it in time. A reader that keeps no text answers
-    /// with none.
-    fn pages(&self, path: PathBuf, first: u32, last: u32) -> BoxFuture<'static, PagesRead> {
+    /// that it can't read pages.
+    fn pages(
+        &self,
+        path: PathBuf,
+        first: u32,
+        last: u32,
+    ) -> BoxFuture<'static, Result<PagesRead, PagesUnread>> {
         let _ = (path, first, last);
-        Box::pin(std::future::ready(PagesRead::default()))
+        Box::pin(std::future::ready(Err(PagesUnread::NoReader)))
     }
 }

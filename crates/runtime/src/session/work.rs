@@ -40,6 +40,24 @@ enum Running {
     Reader(SourceId),
 }
 
+/// Whether a document reader can start on a source now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReaderRoom {
+    Free,
+    /// As many run as may (`SOURCE_READERS_RUNNING_MAX`): the document waits its turn.
+    Full,
+    /// One already reads that source.
+    Reading,
+}
+
+/// What a task that ended was, so the orchestrator can start what waited for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reaped {
+    /// A document reader: another document may start reading.
+    Reader,
+    Other,
+}
+
 pub(crate) struct Work {
     tools: RepoTools,
     harness: Option<HarnessPool>,
@@ -129,10 +147,13 @@ impl Work {
     }
 
     /// Runs a source job, which answers through the inbox; false when as many run as may
-    /// (`SOURCE_JOBS_MAX`), so the caller answers at once instead.
+    /// (`SOURCE_JOBS_MAX`), so the caller answers at once instead. A job past
+    /// `SOURCE_JOB_TIMEOUT_MS` is dropped and `timed_out` answers in its place, so whatever waits
+    /// on it (a brief checking its citations, a held page read, a resolve) is never left waiting.
     pub(crate) fn spawn_source_job(
         &mut self,
         job: BoxFuture<'static, Option<Envelope>>,
+        timed_out: Option<Envelope>,
         inbox: &Inbox,
     ) -> bool {
         let running = self
@@ -152,11 +173,32 @@ impl Work {
                     let _ = inbox.send_envelope(envelope).await;
                 }
                 Ok(None) => {}
-                Err(_elapsed) => tracing::warn!("a source job ran past its bound and was dropped"),
+                Err(_elapsed) => {
+                    tracing::warn!("a source job ran past its bound and was dropped");
+                    if let Some(envelope) = timed_out {
+                        let _ = inbox.send_envelope(envelope).await;
+                    }
+                }
             }
         });
         self.running.insert(handle.id(), Running::Source);
         true
+    }
+
+    /// Whether another reader may start.
+    pub(crate) fn has_reader_room(&self) -> bool {
+        self.readers_running.len() < SOURCE_READERS_RUNNING_MAX
+    }
+
+    /// Whether a reader can start on `source` now.
+    pub(crate) fn reader_room(&self, source: SourceId) -> ReaderRoom {
+        if self.readers_running.contains_key(&source) {
+            ReaderRoom::Reading
+        } else if !self.has_reader_room() {
+            ReaderRoom::Full
+        } else {
+            ReaderRoom::Free
+        }
     }
 
     /// Runs a document reader on `source`, its reports stepped as `DocumentRead`; false when as
@@ -169,19 +211,26 @@ impl Work {
         cancel: CancelToken,
         inbox: &Inbox,
     ) -> bool {
-        if self.readers_running.len() >= SOURCE_READERS_RUNNING_MAX
-            || self.readers_running.contains_key(&source)
-        {
+        if self.reader_room(source) != ReaderRoom::Free {
             return false;
         }
         self.readers_running.insert(source, cancel);
         let inbox = inbox.clone();
         let handle = self.tasks.spawn(async move {
             while let Some(event) = events.next().await {
+                // Only a whole digest is cached (D-259): a partial one (figures a model didn't
+                // read, or no model yet) is read again the next time, when a reader that reads
+                // files may be configured.
+                let whole = match &event {
+                    ReaderEvent::Ready { digest, .. } => Some(digest.clone()),
+                    ReaderEvent::Reading { .. }
+                    | ReaderEvent::Partial { .. }
+                    | ReaderEvent::Failed { .. } => None,
+                };
                 let (state, digest) = reader_state(&name, event);
-                if let Some(markdown) = digest.clone() {
-                    // The orchestrator caches it first (D-259), so a kept document's digest is
-                    // in the vault before anything asks again.
+                if let Some(markdown) = whole {
+                    // The orchestrator caches it first, so a kept document's digest is in the
+                    // vault before anything asks again.
                     let digested = SourceMessage::Digested { source, markdown };
                     if inbox
                         .send_envelope(Envelope::Source(digested))
@@ -276,7 +325,7 @@ impl Work {
     }
 
     /// Waits for the next task to end and releases it; `None` when nothing runs.
-    pub(crate) async fn reap(&mut self) -> Option<()> {
+    pub(crate) async fn reap(&mut self) -> Option<Reaped> {
         let id = match self.tasks.join_next_with_id().await? {
             Ok((id, ())) => id,
             Err(error) => {
@@ -290,10 +339,11 @@ impl Work {
             }
             Some(Running::Reader(source)) => {
                 self.readers_running.remove(&source);
+                return Some(Reaped::Reader);
             }
             Some(Running::Tool | Running::Source) | None => {}
         }
-        Some(())
+        Some(Reaped::Other)
     }
 
     /// Stops everything: harness tasks are asked to stop, then every task is aborted (dropping
@@ -367,7 +417,7 @@ mod tests {
     use futures_util::future::BoxFuture;
 
     use super::Work;
-    use crate::limits::SESSION_TOOL_TIMEOUT_MS;
+    use crate::limits::{SESSION_TOOL_TIMEOUT_MS, SOURCE_JOB_TIMEOUT_MS};
     use crate::session::SessionChannels;
     use crate::session::inbox::Envelope;
     use crate::session::ports::{SessionClose, SessionOpened, StoreRead, StoreSink};
@@ -427,6 +477,37 @@ mod tests {
                     ..
                 }))
             ),
+            "{answer:?}"
+        );
+        work.shutdown().await;
+    }
+
+    /// Finding 14: a source job past its bound was dropped without a word, so a brief whose
+    /// citations it checked waited in `Checking` for ever. Its fallback answers in its place.
+    #[tokio::test(start_paused = true)]
+    async fn a_source_job_past_its_bound_is_answered_with_its_fallback() {
+        use boardai_core::ids::TaskId;
+        use boardai_core::sources::SourceInput;
+
+        let mut channels = SessionChannels::new();
+        let mut work = Work::new(RepoTools::default(), None);
+        let unverified = Input::Source {
+            source: SourceInput::CitationsChecked {
+                task: TaskId(7),
+                read: Vec::new(),
+                unverified: Vec::new(),
+            },
+        };
+        let stuck: BoxFuture<'static, Option<Envelope>> = Box::pin(std::future::pending());
+        let timed_out = Some(Envelope::Input(unverified.clone()));
+        assert!(work.spawn_source_job(stuck, timed_out, &channels.inbox));
+        let wait = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS + 1_000);
+        let answer = tokio::time::timeout(wait, channels.receiver.recv())
+            .await
+            .ok()
+            .flatten();
+        assert!(
+            matches!(&answer, Some(Envelope::Input(input)) if *input == unverified),
             "{answer:?}"
         );
         work.shutdown().await;

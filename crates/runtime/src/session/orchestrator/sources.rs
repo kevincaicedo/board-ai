@@ -18,8 +18,8 @@ use boardai_core::input::Input;
 use boardai_core::limits::PROJECT_SOURCES_MAX;
 use boardai_core::sources::brief::parse;
 use boardai_core::sources::{
-    BriefTopic, CachedOverview, Citation, DragOver, KeptSource, Project, ProjectId, SourceEffect,
-    SourceFailure, SourceId, SourceInfo, SourceInput, SourceKind,
+    BriefTopic, CachedOverview, Citation, DragOver, KeptSource, NameKind, Project, ProjectId,
+    SourceEffect, SourceFailure, SourceId, SourceInfo, SourceInput, SourceKind,
 };
 use futures_util::FutureExt;
 
@@ -27,8 +27,8 @@ use super::Orchestrator;
 use crate::limits::SESSION_START_TIMEOUT_MS;
 use crate::session::inbox::Envelope;
 use crate::sources::{
-    CachedBrief, Found, Stamp, ValidSource, Written, check_citations, expanded_path, resolve,
-    stamp, validate,
+    CachedBrief, Found, Stamp, ValidSource, check_citations, expanded_path, resolve, stamp,
+    validate,
 };
 use crate::store::{KeptLine, StoredBrief};
 use crate::tools::RepoTools;
@@ -86,6 +86,7 @@ impl Orchestrator {
     /// told which harness reads code and which project the last session worked on.
     pub(super) async fn start_sources(&mut self) {
         self.desk.start_session();
+        self.waiting_readers.clear();
         self.refresh_roots();
         let bound = Duration::from_millis(SESSION_START_TIMEOUT_MS);
         let project = tokio::time::timeout(bound, self.shelf.last_project())
@@ -123,6 +124,19 @@ impl Orchestrator {
         }
     }
 
+    /// Sources the desk forgot: their readers stop, they leave the readers' line, and the repo
+    /// tools stop reading them.
+    pub(super) fn let_go(&mut self, gone: &[SourceId]) {
+        if gone.is_empty() {
+            return;
+        }
+        for source in gone {
+            self.work.stop_reader(*source);
+        }
+        self.stop_waiting(gone);
+        self.refresh_roots();
+    }
+
     fn answer(&mut self, source: SourceInput) {
         self.own_answers.push_back(Input::Source { source });
     }
@@ -133,29 +147,7 @@ impl Orchestrator {
                 request,
                 name,
                 kind,
-            } => {
-                let mut roots = self.desk.code_roots().to_vec();
-                for folder in self.desk_folders() {
-                    if !roots.contains(&folder) {
-                        roots.push(folder);
-                    }
-                }
-                let home = self.desk.home().to_path_buf();
-                let job = async move {
-                    let found =
-                        tokio::task::spawn_blocking(move || resolve(&name, kind, &roots, &home))
-                            .await
-                            .unwrap_or_default();
-                    Some(Envelope::Source(SourceMessage::Found { request, found }))
-                };
-                if !self.work.spawn_source_job(job.boxed(), &self.inbox) {
-                    self.answer(SourceInput::Resolved {
-                        request,
-                        candidates: Vec::new(),
-                        searched: 0,
-                    });
-                }
-            }
+            } => self.resolve_name(request, name, kind),
             SourceEffect::Share { source } => {
                 if self.desk.share(source) {
                     self.refresh_roots();
@@ -163,11 +155,8 @@ impl Orchestrator {
                 }
             }
             SourceEffect::Discard { sources } => {
-                for source in &sources {
-                    self.work.stop_reader(*source);
-                }
-                self.desk.discard(&sources);
-                self.refresh_roots();
+                let gone = self.desk.discard(&sources);
+                self.let_go(&gone);
             }
             SourceEffect::SetProject { project } => self.load_project(project),
             SourceEffect::Keep { source, project } => self.keep(source, project),
@@ -194,6 +183,37 @@ impl Orchestrator {
                 first_page,
                 last_page,
             } => self.read_pages(request, source, first_page, last_page),
+        }
+    }
+
+    /// A spoken name: a bounded walk of the code folders and readable folders, as a job.
+    fn resolve_name(&mut self, request: u32, name: String, kind: NameKind) {
+        let mut roots = self.desk.code_roots().to_vec();
+        for folder in self.desk_folders() {
+            if !roots.contains(&folder) {
+                roots.push(folder);
+            }
+        }
+        let home = self.desk.home().to_path_buf();
+        let job = async move {
+            let found = tokio::task::spawn_blocking(move || resolve(&name, kind, &roots, &home))
+                .await
+                .unwrap_or_default();
+            Some(Envelope::Source(SourceMessage::Found { request, found }))
+        };
+        let nothing = SourceInput::Resolved {
+            request,
+            candidates: Vec::new(),
+            searched: 0,
+        };
+        let timed_out = Envelope::Input(Input::Source {
+            source: nothing.clone(),
+        });
+        if !self
+            .work
+            .spawn_source_job(job.boxed(), Some(timed_out), &self.inbox)
+        {
+            self.answer(nothing);
         }
     }
 
@@ -241,88 +261,21 @@ impl Orchestrator {
                 left_out,
             }))
         };
-        if !self.work.spawn_source_job(job.boxed(), &self.inbox) {
+        let timed_out = Envelope::Input(Input::Source {
+            source: SourceInput::Failed {
+                failure: SourceFailure::ProjectUnreadable,
+                detail: "its sources weren't read in time".to_owned(),
+            },
+        });
+        if !self
+            .work
+            .spawn_source_job(job.boxed(), Some(timed_out), &self.inbox)
+        {
             self.answer(SourceInput::Failed {
                 failure: SourceFailure::ProjectUnreadable,
                 detail: "too many source jobs are running".to_owned(),
             });
         }
-    }
-
-    fn keep(&mut self, source: SourceId, project: Project) {
-        let (Some(path), Some(kind)) = (self.desk.written_path(source), self.desk.kind(source))
-        else {
-            return;
-        };
-        self.desk.set_kept(source, true);
-        self.desk.wrote(Written::Kept {
-            project: project.id.clone(),
-            path: path.clone(),
-        });
-        let briefs = self.stored_briefs(source);
-        for brief in &briefs {
-            self.desk.wrote(Written::Brief {
-                project: project.id.clone(),
-                source: brief.source.clone(),
-                topic: brief.topic.clone(),
-            });
-        }
-        let shelf = Arc::clone(&self.shelf);
-        let job = async move {
-            let line = KeptLine { kind, path };
-            if let Err(error) = shelf.keep(project.clone(), line).await {
-                let failed = SourceInput::Failed {
-                    failure: SourceFailure::NotKept,
-                    detail: error.0,
-                };
-                return Some(Envelope::Input(Input::Source { source: failed }));
-            }
-            for brief in briefs {
-                if let Err(error) = shelf.save_brief(project.id.clone(), brief).await {
-                    tracing::warn!(detail = %error.0, "a kept source's brief wasn't saved");
-                }
-            }
-            None
-        };
-        let _ = self.work.spawn_source_job(job.boxed(), &self.inbox);
-    }
-
-    /// The briefs cached for a source, as the project's folder keeps them.
-    fn stored_briefs(&self, source: SourceId) -> Vec<StoredBrief> {
-        let (Some(path), Some(written)) = (self.desk.path(source), self.desk.written_path(source))
-        else {
-            return Vec::new();
-        };
-        self.desk
-            .cached_for(path)
-            .into_iter()
-            .map(|(topic, brief)| StoredBrief {
-                source: written.clone(),
-                topic,
-                stamp: brief.stamp.as_str().to_owned(),
-                written: brief.written,
-                markdown: brief.markdown,
-            })
-            .collect()
-    }
-
-    fn unkeep(&mut self, source: SourceId, project: ProjectId) {
-        let Some(path) = self.desk.written_path(source) else {
-            return;
-        };
-        self.desk.set_kept(source, false);
-        let shelf = Arc::clone(&self.shelf);
-        let job = async move {
-            if let Err(error) = shelf.unkeep(project, path).await {
-                let failed = SourceInput::Failed {
-                    failure: SourceFailure::NotKept,
-                    detail: error.0,
-                };
-                return Some(Envelope::Input(Input::Source { source: failed }));
-            }
-            None
-        };
-        let _ = self.work.spawn_source_job(job.boxed(), &self.inbox);
     }
 
     /// A brief: the cache's when its stamp still matches the code, else the harness.
@@ -340,6 +293,13 @@ impl Orchestrator {
             return;
         };
         let fallback = prompt.clone();
+        // A stamp not taken in time can't vouch for the cached brief: research instead.
+        let timed_out = Envelope::Source(SourceMessage::Stale {
+            task,
+            source,
+            topic: key.clone(),
+            prompt: prompt.clone(),
+        });
         let job = async move {
             let now = tokio::task::spawn_blocking(move || stamp(&path)).await.ok();
             if now.as_ref() == Some(&cached.stamp) {
@@ -356,7 +316,10 @@ impl Orchestrator {
                 prompt,
             }))
         };
-        if !self.work.spawn_source_job(job.boxed(), &self.inbox) {
+        if !self
+            .work
+            .spawn_source_job(job.boxed(), Some(timed_out), &self.inbox)
+        {
             self.research(task, source, fallback);
         }
     }
@@ -379,10 +342,18 @@ impl Orchestrator {
 
     /// A brief that can't run: the source is gone, or nothing around it may be read (D-226).
     fn no_workspace(&mut self, task: TaskId, source: SourceId) {
-        let detail = if self.desk.has_no_reach(source) {
-            "a file loose in the home folder is read by BoardAI alone, not by the harness"
-        } else {
-            "the source isn't shared any more"
+        let detail = match self.desk.kind(source) {
+            Some(SourceKind::Document { .. }) => {
+                "a document is read by its reader, never researched around it (D-231)"
+            }
+            Some(SourceKind::CodeFolder | SourceKind::CodeFile)
+                if self.desk.has_no_reach(source) =>
+            {
+                "a file loose in the home folder is read by BoardAI alone, not by the harness"
+            }
+            Some(SourceKind::CodeFolder | SourceKind::CodeFile) | None => {
+                "the source isn't shared any more"
+            }
         };
         self.own_answers.push_back(Input::Harness {
             task,
@@ -408,7 +379,9 @@ impl Orchestrator {
                 stamp,
             }))
         };
-        let _ = self.work.spawn_source_job(job.boxed(), &self.inbox);
+        if !self.work.spawn_source_job(job.boxed(), None, &self.inbox) {
+            tracing::warn!("a brief wasn't cached: too many source jobs run");
+        }
     }
 
     fn check(&mut self, task: TaskId, source: SourceId, citations: Vec<Citation>) {
@@ -432,6 +405,13 @@ impl Orchestrator {
         };
         let beyond = self.desk.cited_beyond(source);
         let job_citations = citations.clone();
+        let timed_out = Envelope::Input(Input::Source {
+            source: SourceInput::CitationsChecked {
+                task,
+                read: Vec::new(),
+                unverified: citations.clone(),
+            },
+        });
         let job = async move {
             let checked = tokio::task::spawn_blocking(move || {
                 check_citations(
@@ -450,7 +430,10 @@ impl Orchestrator {
             };
             Some(Envelope::Input(Input::Source { source }))
         };
-        if !self.work.spawn_source_job(job.boxed(), &self.inbox) {
+        if !self
+            .work
+            .spawn_source_job(job.boxed(), Some(timed_out), &self.inbox)
+        {
             self.answer(SourceInput::CitationsChecked {
                 task,
                 read: Vec::new(),
@@ -580,79 +563,6 @@ impl Orchestrator {
             left_out,
         };
         self.step(Input::Source { source: loaded }).await;
-    }
-
-    fn on_stamped(&mut self, source: SourceId, topic: String, markdown: String, stamp: Stamp) {
-        let (Some(path), Some(written_path)) = (
-            self.desk.path(source).map(std::path::Path::to_path_buf),
-            self.desk.written_path(source),
-        ) else {
-            return;
-        };
-        let written = self.wall.now().date();
-        let cached = CachedBrief {
-            markdown: markdown.clone(),
-            stamp: stamp.clone(),
-            written: written.clone(),
-        };
-        self.desk.cache(path, topic.clone(), cached);
-        let Some(project) = self
-            .desk
-            .project()
-            .filter(|_| self.desk.is_kept(source))
-            .map(|project| project.id.clone())
-        else {
-            return;
-        };
-        self.desk.wrote(Written::Brief {
-            project: project.clone(),
-            source: written_path.clone(),
-            topic: topic.clone(),
-        });
-        let brief = StoredBrief {
-            source: written_path,
-            topic,
-            stamp: stamp.as_str().to_owned(),
-            written,
-            markdown,
-        };
-        let shelf = Arc::clone(&self.shelf);
-        let job = async move {
-            if let Err(error) = shelf.save_brief(project, brief).await {
-                tracing::warn!(detail = %error.0, "a brief wasn't saved in the project");
-            }
-            None
-        };
-        let _ = self.work.spawn_source_job(job.boxed(), &self.inbox);
-    }
-
-    /// "Don't remember this session" (I10): what it kept in a project and the briefs it saved
-    /// there are taken back.
-    pub(super) fn forget_written(&mut self) {
-        let written = self.desk.take_written();
-        if written.is_empty() {
-            return;
-        }
-        let shelf = Arc::clone(&self.shelf);
-        let job = async move {
-            for item in written {
-                let undone = match item {
-                    Written::Kept { project, path } => shelf.unkeep(project, path).await,
-                    Written::Brief {
-                        project,
-                        source,
-                        topic,
-                    } => shelf.delete_brief(project, source, topic).await,
-                };
-                if let Err(error) = undone {
-                    tracing::warn!(detail = %error.0, "a source write of a forgotten session stayed");
-                }
-            }
-            None
-        };
-        if !self.work.spawn_source_job(job.boxed(), &self.inbox) {
-            tracing::error!("a forgotten session's source writes could not be undone now");
-        }
     }
 }
 

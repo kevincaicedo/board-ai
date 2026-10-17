@@ -21,7 +21,7 @@ use crate::documents::pdfkit::PdfKit;
 use crate::documents::{DocumentReader, ReaderConfig};
 use crate::llm::ChatEvent;
 use crate::session::{SessionParts, SourceParts, say_typed};
-use crate::sources::{PagesRead, ReaderStream, SourceReader, validate};
+use crate::sources::{ReaderStream, SourceReader, validate};
 
 /// A home folder with the small text PDF in it.
 fn setup(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -197,15 +197,6 @@ impl SourceReader for CountingReader {
             digest: "# Digest: Notes\nRead: 2 pages; text only\n## Sections\n### Logs (p. 1)\nIt logs.\n"
                 .into(),
         }]))
-    }
-
-    fn pages(
-        &self,
-        _path: std::path::PathBuf,
-        _first: u32,
-        _last: u32,
-    ) -> futures_util::future::BoxFuture<'static, PagesRead> {
-        Box::pin(std::future::ready(PagesRead::default()))
     }
 }
 

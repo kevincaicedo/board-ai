@@ -3,6 +3,8 @@
 // file and bounds the run (time, output, pages); it parses exactly the JSON written here.
 //
 //   text  <absolute path> <max_pages>   → {"v":1,"page_count":N,"locked":false,"pages":[{"lines":[…]}]}
+//   pages <absolute path> <first> <last> → the same shape for pages [first, last] (1-based) alone,
+//                                          with "first": first; pages past the end are left out
 //   split <absolute path> <first> <last> → the base64 of a PDF of pages [first, last] (1-based)
 //
 // Failures are JSON on stdout too ({"v":1,"error":"…"}), never an exception: osascript would put
@@ -80,6 +82,21 @@ function text(path, maxPages) {
   return JSON.stringify({ v: 1, page_count: count, locked: false, pages: pages });
 }
 
+// A page read (D-256) needs only its pages: opening the document is quick, extracting every page
+// of a long one is not (600 pages take ~13 s), so a read never waits on the whole text layer.
+function pages(path, first, last) {
+  var document = open(path);
+  if (document === null) return fail('unreadable');
+  var count = number(document.pageCount);
+  if (document.isLocked) return JSON.stringify({ v: 1, page_count: count, locked: true, pages: [] });
+  var from = Math.floor(number(first));
+  var to = Math.floor(number(last));
+  if (from < 1 || to < from) return fail('bad range');
+  var read = [];
+  for (var index = from - 1; index < Math.min(to, count); index++) read.push(page(document, index));
+  return JSON.stringify({ v: 1, page_count: count, locked: false, first: from, pages: read });
+}
+
 function split(path, first, last) {
   var document = open(path);
   if (document === null) return fail('unreadable');
@@ -103,6 +120,7 @@ function split(path, first, last) {
 function run(argv) {
   var mode = argv[0];
   if (mode === 'text' && argv.length === 3) return text(argv[1], argv[2]);
+  if (mode === 'pages' && argv.length === 4) return pages(argv[1], argv[2], argv[3]);
   if (mode === 'split' && argv.length === 4) return split(argv[1], argv[2], argv[3]);
   return fail('usage');
 }

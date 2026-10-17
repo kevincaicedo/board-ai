@@ -45,6 +45,11 @@ pub const STAMP_FILES_MAX: u32 = 5_000;
 /// read and the project's sources are reported unreadable (a brief: not cached).
 pub const PROJECT_FILE_READ_MAX_BYTES: usize = 256 * 1024;
 
+/// Files looked at in a project's `briefs/` folder when one source's briefs are read back; past
+/// it the rest aren't looked at (a brief among them is researched again when asked). Of the
+/// source's own, at most `SESSION_BRIEFS_CACHED_MAX` are read.
+pub const PROJECT_BRIEF_FILES_SCANNED_MAX: usize = 4_096;
+
 /// A source's path shown whole in the tray up to this length; longer, it keeps its last three
 /// parts after `~/…/` (the tray cuts what is still too wide with an ellipsis).
 pub const SOURCE_SHOWN_FULL_MAX_BYTES: usize = 44;
@@ -58,5 +63,9 @@ pub const STAMP_GIT_FILE_MAX_BYTES: u64 = 1024 * 1024;
 pub const STAMP_GIT_ANCESTORS_MAX: usize = 32;
 
 /// Document readers running at once (the `SourceReader` seam); a document shared past it waits
-/// in the tray, as with no reader, until one is shared again.
+/// in line, and starts when a reader ends.
 pub const SOURCE_READERS_RUNNING_MAX: usize = 2;
+
+/// Documents waiting for a reader (as many as the core holds: 16 shared and 32 kept); past it
+/// the longest waiting leaves the line, logged, and is read when shared again.
+pub const DOCUMENTS_WAITING_MAX: usize = 48;

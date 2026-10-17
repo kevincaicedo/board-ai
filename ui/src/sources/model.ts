@@ -250,17 +250,50 @@ export interface TrayCornerTokens extends TrayTokens {
 
 /** The tray's place this frame, as the tray itself draws it. */
 export function trayCorner(input: TrayCornerInput, tokens: TrayCornerTokens): TrayCorner {
+  return trayCornerInto(input, tokens, trayCornerScratch().corner);
+}
+
+type Writable<T> = { -readonly [K in keyof T]: T[K] };
+
+/** What one frame loop fills each frame instead of allocating (`trayCornerInto`). */
+export interface TrayCornerScratch {
+  readonly input: Writable<TrayCornerInput>;
+  readonly corner: Writable<TrayCorner>;
+}
+
+/** A frame loop's scratch, made once per component. */
+export function trayCornerScratch(): TrayCornerScratch {
   return {
-    buttonShown: !input.replay && !input.open,
-    width: trayWidth(input.stageWidth, input.columnOpen, input.viewOpen, tokens),
-    presence: trayPresence(
-      input.openAt,
-      input.closedAt,
-      input.at,
-      tokens.durationSceneMs,
-      tokens.durationStandardMs,
-    ),
+    input: {
+      open: false,
+      openAt: null,
+      closedAt: null,
+      at: 0,
+      stageWidth: 0,
+      columnOpen: false,
+      viewOpen: false,
+      replay: false,
+    },
+    corner: { buttonShown: false, width: null, presence: 0 },
   };
+}
+
+/** `trayCorner` written into `out`: the frame loop's form, which allocates nothing (LLD §4). */
+export function trayCornerInto(
+  input: TrayCornerInput,
+  tokens: TrayCornerTokens,
+  out: Writable<TrayCorner>,
+): TrayCorner {
+  out.buttonShown = !input.replay && !input.open;
+  out.width = trayWidth(input.stageWidth, input.columnOpen, input.viewOpen, tokens);
+  out.presence = trayPresence(
+    input.openAt,
+    input.closedAt,
+    input.at,
+    tokens.durationSceneMs,
+    tokens.durationStandardMs,
+  );
+  return out;
 }
 
 /** Sizes the stage header's place needs (from tokens.css). */

@@ -4,7 +4,7 @@
 // It sits at the left, clear of the column and never over a view (LLD §4).
 
 import { useMemo, useRef, useState } from "preact/hooks";
-import { styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
+import { numberWriter, px, styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
 import type { Runtime } from "../app/runtime.ts";
 import { viewVisible } from "../app/views.ts";
 import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
@@ -20,30 +20,55 @@ import {
   rowsOf,
   stateLine,
   type TrayCorner,
+  type TrayCornerScratch,
   type TrayTab,
   tabLabels,
   toneOf,
-  trayCorner,
+  trayCornerInto,
+  trayCornerScratch,
 } from "./model.ts";
 
-/** Where the tray is this frame: the stage header keeps clear of it (LLD §4). */
-export function trayCornerAt(runtime: Runtime, at: number): TrayCorner {
+/**
+ * Where the tray is this frame: the stage header keeps clear of it (LLD §4). Called every frame,
+ * so it fills `scratch` (`trayCornerScratch`, one per component) and allocates nothing.
+ */
+export function trayCornerAt(
+  runtime: Runtime,
+  at: number,
+  scratch: TrayCornerScratch = trayCornerScratch(),
+): TrayCorner {
   const store = runtime.scene.sources;
-  return trayCorner(
-    {
-      open: store.tray.value?.open ?? false,
-      openAt: store.openAt.value,
-      closedAt: store.closedAt.value,
-      at,
-      stageWidth: runtime.stage.width,
-      columnOpen: runtime.scene.store.column.value.some((item) => item.leftAt === null),
-      viewOpen: runtime.scene.views.entries.value.some((entry) =>
-        viewVisible(entry, at, runtime.viewDurations),
-      ),
-      replay: runtime.replay !== null,
-    },
-    runtime.tokens,
-  );
+  const input = scratch.input;
+  input.open = store.tray.value?.open ?? false;
+  input.openAt = store.openAt.value;
+  input.closedAt = store.closedAt.value;
+  input.at = at;
+  input.stageWidth = runtime.stage.width;
+  input.columnOpen = columnOpen(runtime);
+  input.viewOpen = viewOpen(runtime, at);
+  input.replay = runtime.replay !== null;
+  return trayCornerInto(input, runtime.tokens, scratch.corner);
+}
+
+function columnOpen(runtime: Runtime): boolean {
+  const column = runtime.scene.store.column.value;
+  for (let index = 0; index < column.length; index += 1) {
+    if (column[index]?.leftAt === null) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function viewOpen(runtime: Runtime, at: number): boolean {
+  const entries = runtime.scene.views.entries.value;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry !== undefined && viewVisible(entry, at, runtime.viewDurations)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function useSend(): (action: SourceAction) => void {
@@ -169,6 +194,9 @@ function Choose({ keep }: { keep: boolean }) {
   );
 }
 
+/** The tray's presence as its style writes it. */
+const presenceText = (presence: number): string => presence.toFixed(3);
+
 function TrayPanel({ tray }: { tray: SourcesTray }) {
   const runtime = useRuntime();
   const store = runtime.scene.sources;
@@ -179,11 +207,13 @@ function TrayPanel({ tray }: { tray: SourcesTray }) {
   const project = tray.project?.name ?? null;
   const panelRef = useRef<HTMLElement>(null);
   const write = useMemo(styleWriter, []);
+  const writeNumber = useMemo(numberWriter, []);
+  const scratch = useMemo(trayCornerScratch, []);
   useFrame((at) => {
-    const { presence, width } = trayCornerAt(runtime, at);
+    const { presence, width } = trayCornerAt(runtime, at, scratch);
     const panel = panelRef.current;
-    write(panel, "--tray-presence", presence.toFixed(3));
-    write(panel, "--tray-live-width", `${width ?? runtime.tokens.trayWidth}px`);
+    writeNumber(panel, "--tray-presence", Math.round(presence * 1000) / 1000, presenceText);
+    writeNumber(panel, "--tray-live-width", width ?? runtime.tokens.trayWidth, px);
     write(panel, "visibility", width === null || presence <= 0 ? "hidden" : "visible");
   });
   return (

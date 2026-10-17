@@ -21,12 +21,14 @@ use boardai_core::conversation::ConversationState;
 use boardai_core::effect::{Effect, LogRecord, Milestone};
 use boardai_core::input::{Input, PlaybackPosition};
 use boardai_core::protocol::{DrawAction, MicAction, UiCommand, UiEvent};
+use boardai_core::sources::SourceId;
 use boardai_core::time::SessionTime;
 use boardai_core::{Core, CoreConfig};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 mod documents;
+mod kept;
 mod resting;
 mod sources;
 
@@ -38,7 +40,7 @@ use super::listening::{Listening, ListeningPublisher};
 use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreSink};
 use super::shelf::SourceShelf;
 use super::talker::Talker;
-use super::work::Work;
+use super::work::{Reaped, Work};
 use crate::bridge::BridgeHandle;
 use crate::cancel::CancelToken;
 use crate::clock::{Clock, TokioClock};
@@ -125,6 +127,11 @@ pub(crate) struct Orchestrator {
     pub(crate) shelf: Arc<dyn SourceShelf>,
     pub(crate) wall: Arc<dyn WallClock>,
     pub(crate) readers: Vec<Arc<dyn crate::sources::SourceReader>>,
+    /// Documents waiting for a reader, in the order shared (`DOCUMENTS_WAITING_MAX`).
+    pub(crate) waiting_readers: VecDeque<SourceId>,
+    /// The last vault write about sources, which the next one waits for: writes land in the
+    /// order asked, so "don't remember this session" undoes every one asked before it (I10).
+    pub(crate) shelf_order: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 /// The receiving ends the loop waits on.
@@ -165,6 +172,8 @@ impl Orchestrator {
             shelf: parts.shelf,
             wall: parts.wall,
             readers: parts.readers,
+            waiting_readers: VecDeque::new(),
+            shelf_order: None,
         }
     }
 
@@ -209,7 +218,11 @@ impl Orchestrator {
                 done = resting::work_done(&mut self.phase), if self.resting_work() => {
                     self.on_resting_work(done).await;
                 }
-                Some(()) = self.work.reap() => {}
+                Some(reaped) = self.work.reap() => {
+                    if reaped == Reaped::Reader {
+                        self.on_reader_ended();
+                    }
+                }
             }
         }
         self.close().await
@@ -385,6 +398,11 @@ impl Orchestrator {
             // of it then. The session's log never holds it (D-145).
             Effect::Ui(UiEvent::SessionEnd) => self.end_requested = true,
             Effect::Ui(event) => {
+                // The tray says what the core holds: the desk keeps those (finding 12).
+                if let UiEvent::Sources { tray } = &event {
+                    let gone = self.desk.tray_seen(tray);
+                    self.let_go(&gone);
+                }
                 self.store.ui_event(now, &event);
                 self.ui_events.push(event);
             }

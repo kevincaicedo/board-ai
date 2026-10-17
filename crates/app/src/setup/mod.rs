@@ -14,6 +14,7 @@ pub(crate) mod folders;
 mod harnesses;
 mod input;
 mod keys;
+mod single_flight;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -36,6 +37,7 @@ pub use status::SetupPaths;
 
 use harnesses::HarnessVersions;
 use keys::{KeyLedger, ProviderListKey};
+use single_flight::SingleFlight;
 
 /// What the setup commands share.
 pub struct SetupState {
@@ -46,6 +48,8 @@ pub struct SetupState {
     /// The last Ollama answer, so a save doesn't wait on the probe again.
     // Held only to read or replace the value.
     ollama: Mutex<Option<OllamaStatus>>,
+    /// The Ollama probe in flight: asks at once (a status and a save) share it.
+    ollama_probe: SingleFlight<OllamaStatus>,
     /// The model picker's lists, fetched on demand and kept a while (D-153); provider lists
     /// with the OpenRouter key from [`Self::list_key`] (D-218).
     catalog: Arc<ModelCatalog>,
@@ -71,6 +75,7 @@ impl Default for SetupState {
             settings: Arc::default(),
             downloads: Downloads::default(),
             ollama: Mutex::new(None),
+            ollama_probe: SingleFlight::default(),
             catalog: Arc::new(catalog),
             keys,
             list_key,

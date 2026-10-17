@@ -204,6 +204,44 @@ async fn a_project_keeps_its_sources_briefs_beside_them() {
     close(store, task).await;
 }
 
+/// A source's briefs are found among many other sources' (hygiene, review 3): the folder's files
+/// are filtered by source before they are bounded, so a project with more than
+/// `SESSION_BRIEFS_CACHED_MAX` brief files still finds this source's.
+#[tokio::test]
+async fn a_sources_briefs_are_found_among_many_others() {
+    let folder = TempFolder::new("project-many-briefs");
+    let test = TestStore::new(&folder.path);
+    let (store, task, _) = test.open().await;
+    let project = Project::named("InfinityDB").expect("a project");
+    let brief = StoredBrief {
+        source: "~/code/inf-alloc".into(),
+        topic: "overview".into(),
+        stamp: "head=aaaa;newest=1;files=2".into(),
+        written: "2026-10-15".into(),
+        markdown: "# Brief: inf-alloc\n## Overview\nIt allocates.\n".into(),
+    };
+    store
+        .save_brief(&project.id, brief.clone())
+        .await
+        .expect("saved");
+    // Other sources' briefs, more than the bound by far (but within the files looked at).
+    let briefs_folder = test.vault().join("projects/infinitydb/briefs");
+    for index in 0..4_000 {
+        let other = format!("---\nsource: ~/code/other-{index}\ntopic: overview\n---\nx\n");
+        std::fs::write(
+            briefs_folder.join(format!("other-{index}-0000abcd--overview.md")),
+            other,
+        )
+        .expect("written");
+    }
+    let found = store
+        .project_briefs(&project.id, "~/code/inf-alloc")
+        .await
+        .expect("read");
+    assert_eq!(found, vec![brief]);
+    close(store, task).await;
+}
+
 /// The project a session worked on goes into its digest, and the next session starts with it.
 #[tokio::test]
 async fn the_next_session_starts_with_the_last_sessions_project() {

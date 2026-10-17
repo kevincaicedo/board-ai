@@ -27,7 +27,9 @@ use super::vault::{
     DIGEST_FILE, FileRead, PROJECTS, VaultPath, read_text, remove_file, write_atomic,
 };
 use super::{Store, slug::slugify};
-use crate::limits::PROJECT_FILE_READ_MAX_BYTES;
+use crate::limits::{
+    PROJECT_BRIEF_FILES_SCANNED_MAX, PROJECT_FILE_READ_MAX_BYTES, SESSION_BRIEFS_CACHED_MAX,
+};
 
 const SOURCES_FILE: &str = "sources.md";
 const BRIEFS_FOLDER: &str = "briefs";
@@ -300,7 +302,23 @@ fn kind_of(noun: &str) -> Option<SourceKind> {
 }
 
 fn line_of(line: &KeptLine) -> String {
-    format!("- {}: {}", kind_noun(line.kind), line.path)
+    format!("- {}: {}", kind_noun(line.kind), escaped(&line.path))
+}
+
+/// Text as one line of `sources.md`: a control character (a line break would start a line of
+/// its own) is written as its escape (`\n`, `\u{7}`); everything else as it is. Paths are refused
+/// with one where they enter (`sources::validate`); this holds a hand-edited path, or a
+/// project's name, to its line.
+fn escaped(text: &str) -> String {
+    let mut line = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            line.extend(character.escape_default());
+        } else {
+            line.push(character);
+        }
+    }
+    line
 }
 
 /// The kept lines of a `sources.md`: `- <kind>: <path>`. Anything else is yours and ignored.
@@ -354,14 +372,15 @@ fn keep(state: &StoreState, project: &Project, line: &KeptLine) -> Result<(), St
             let header = redact_text(&format!(
                 "# {} · sources\n\nWhat BoardAI may read in every session of this project. \
                  Remove a line to stop sharing it.\n\n",
-                project.name
+                escaped(&project.name)
             ));
             write_atomic(&absolute, &Edited::create_text(&header, &added)).map_err(io)
         }
         Editable::Text(file) => {
+            let written = escaped(&line.path);
             if parse_kept(file.as_str())
                 .iter()
-                .any(|known| known.path == line.path)
+                .any(|known| known.path == written)
             {
                 return Ok(());
             }
@@ -382,10 +401,11 @@ fn unkeep(state: &StoreState, project: &ProjectId, path_written: &str) -> Result
     let Editable::Text(file) = read_editable(&absolute, bound).map_err(io)? else {
         return Ok(());
     };
+    let written = escaped(path_written);
     let edited = Edited::remove_lines(&file, |line| {
         parse_kept(line)
             .first()
-            .is_some_and(|kept| kept.path == path_written)
+            .is_some_and(|kept| kept.path == written)
     });
     match edited {
         Some(edited) => write_atomic(&absolute, &edited).map_err(io),
@@ -433,10 +453,12 @@ fn briefs(
         return Ok(Vec::new());
     };
     let mut found = Vec::new();
-    for entry in entries
-        .flatten()
-        .take(crate::limits::SESSION_BRIEFS_CACHED_MAX)
-    {
+    // Bounded by the files looked at, then by the briefs kept: the source's own are filtered
+    // first, so a project with many sources still finds every brief of this one.
+    for entry in entries.flatten().take(PROJECT_BRIEF_FILES_SCANNED_MAX) {
+        if found.len() >= SESSION_BRIEFS_CACHED_MAX {
+            break;
+        }
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with(&prefix) || !name.ends_with(".md") {
             continue;
@@ -514,8 +536,30 @@ pub(crate) fn last_project(reader: &Reader) -> Result<Option<Project>, StoreErro
 
 #[cfg(test)]
 mod tests {
-    use super::{KeptLine, brief_file, parse_kept};
+    use super::{KeptLine, brief_file, line_of, parse_kept};
     use boardai_core::sources::{DocumentFormat, ProjectId, SourceKind};
+
+    /// Finding 21: a path with a line break writes one line, which reads back as one source;
+    /// it never adds a line of its own. Other characters are kept as written.
+    #[test]
+    fn a_kept_line_is_one_line_whatever_its_path_holds() {
+        let line = KeptLine {
+            kind: SourceKind::CodeFolder,
+            path: "~/notes\n- code folder: ~/.ssh\r\u{7}".into(),
+        };
+        let written = line_of(&line);
+        assert_eq!(written.lines().count(), 1, "{written}");
+        assert_eq!(
+            written,
+            "- code folder: ~/notes\\n- code folder: ~/.ssh\\r\\u{7}"
+        );
+        assert_eq!(parse_kept(&written).len(), 1);
+        let accented = KeptLine {
+            kind: SourceKind::CodeFolder,
+            path: "~/Café/naïve \\ tool".into(),
+        };
+        assert_eq!(line_of(&accented), "- code folder: ~/Café/naïve \\ tool");
+    }
 
     #[test]
     fn kept_lines_are_read_back_and_your_own_lines_are_ignored() {

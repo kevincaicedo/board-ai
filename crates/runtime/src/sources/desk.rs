@@ -6,10 +6,11 @@
 //! task's workspace. A new session starts it empty, keeping only the id counter, so a late
 //! answer about a source of the last session names nothing.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use boardai_core::RepoReads;
+use boardai_core::sources::tray::SourcesTray;
 use boardai_core::sources::{DocumentFormat, Project, ProjectId, SourceId, SourceInfo, SourceKind};
 
 use super::stamp::Stamp;
@@ -65,6 +66,13 @@ pub struct SourceDesk {
     cache: VecDeque<((PathBuf, String), CachedBrief)>,
     project: Option<Project>,
     written: Vec<Written>,
+    /// "Don't remember this session" (I10): nothing more of it goes to a project's folder.
+    forgotten: bool,
+    /// The ids the core's latest tray shows, session and project: sources the core holds.
+    held: BTreeSet<SourceId>,
+    /// Ids the core discarded while its tray still showed them (the same path offered again as
+    /// a candidate or a kept line keeps its id); forgotten once a tray no longer does.
+    discarded_while_held: BTreeSet<SourceId>,
     /// What the core was last told the talker's requests offer (D-232, D-244): the repo reads,
     /// over the code folders and readable code sources. A shared document, readable by its
     /// lines too (D-256), offers none.
@@ -90,6 +98,9 @@ impl SourceDesk {
             cache: VecDeque::new(),
             project: None,
             written: Vec::new(),
+            forgotten: false,
+            held: BTreeSet::new(),
+            discarded_while_held: BTreeSet::new(),
             reads: RepoReads::NotOffered,
         }
         .with_reads()
@@ -144,6 +155,9 @@ impl SourceDesk {
         self.cache.clear();
         self.project = None;
         self.written.clear();
+        self.forgotten = false;
+        self.held.clear();
+        self.discarded_while_held.clear();
         self.reads = self.code_reads();
     }
 
@@ -227,10 +241,41 @@ impl SourceDesk {
             .is_some()
     }
 
-    pub fn discard(&mut self, ids: &[SourceId]) {
+    /// The core let these ids go. One its latest tray still shows is kept until a tray no
+    /// longer does: the core holds it as a source, whatever else it discarded the id as (finding
+    /// 12: the same path keeps its id). Returns the ids forgotten now.
+    pub fn discard(&mut self, ids: &[SourceId]) -> Vec<SourceId> {
+        let mut gone = Vec::new();
         for id in ids {
+            if self.held.contains(id) {
+                self.discarded_while_held.insert(*id);
+            } else if self.entries.remove(id).is_some() {
+                gone.push(*id);
+            }
+        }
+        gone
+    }
+
+    /// The core's tray as it sent it: what it holds now. Ids it discarded while showing them,
+    /// and shows no longer, are forgotten; returns them.
+    pub fn tray_seen(&mut self, tray: &SourcesTray) -> Vec<SourceId> {
+        self.held = tray
+            .session
+            .iter()
+            .chain(tray.project.iter().flat_map(|project| &project.sources))
+            .map(|row| row.id)
+            .collect();
+        let gone: Vec<SourceId> = self
+            .discarded_while_held
+            .iter()
+            .filter(|id| !self.held.contains(id))
+            .copied()
+            .collect();
+        for id in &gone {
+            self.discarded_while_held.remove(id);
             self.entries.remove(id);
         }
+        gone
     }
 
     #[must_use]
@@ -254,17 +299,16 @@ impl SourceDesk {
         self.path(id).map(|path| written_path(path, &self.home))
     }
 
-    /// Where a brief about a readable source runs: its folder, or a single file's folder (the
-    /// task message points the harness at that file), reading only inside its reach (D-226).
-    /// `None` when it isn't readable or has no reach.
+    /// Where a brief about a readable code source runs: its folder, or a single file's folder
+    /// (the task message points the harness at that file), reading only inside its reach
+    /// (D-226). `None` when it isn't readable or has no reach; a document never has one (D-231).
     #[must_use]
     pub fn workspace(&self, id: SourceId) -> Option<Workspace> {
         let entry = self.entries.get(&id).filter(|entry| entry.readable)?;
         let folder = match entry.kind {
             SourceKind::CodeFolder => entry.path.clone(),
-            SourceKind::CodeFile | SourceKind::Document { .. } => {
-                entry.path.parent()?.to_path_buf()
-            }
+            SourceKind::CodeFile => entry.path.parent()?.to_path_buf(),
+            SourceKind::Document { .. } => return None,
         };
         Some(Workspace {
             folder,
@@ -374,9 +418,30 @@ impl SourceDesk {
         }
     }
 
-    /// What to undo when the session is forgotten.
-    pub fn take_written(&mut self) -> Vec<Written> {
-        std::mem::take(&mut self.written)
+    /// "Don't remember this session" (I10): what it wrote to a project's folder, to undo. What it
+    /// kept is no longer kept, and nothing more of it is written there: no keep, and no brief or
+    /// digest that arrives later.
+    pub fn forget_session(&mut self) -> Vec<Written> {
+        self.forgotten = true;
+        let written = std::mem::take(&mut self.written);
+        for item in &written {
+            let Written::Kept { path, .. } = item else {
+                continue;
+            };
+            let home = self.home.clone();
+            for entry in self.entries.values_mut() {
+                if written_path(&entry.path, &home) == *path {
+                    entry.kept = false;
+                }
+            }
+        }
+        written
+    }
+
+    /// Whether the session was forgotten: nothing of it goes to a project's folder.
+    #[must_use]
+    pub fn is_forgotten(&self) -> bool {
+        self.forgotten
     }
 }
 
@@ -384,9 +449,10 @@ impl SourceDesk {
 mod tests {
     use std::path::PathBuf;
 
-    use boardai_core::sources::SourceKind;
+    use boardai_core::sources::tray::{SourceRow, SourcesTray};
+    use boardai_core::sources::{Project, ProjectId, SourceId, SourceKind, SourceState};
 
-    use super::{CachedBrief, SourceDesk};
+    use super::{CachedBrief, SourceDesk, Written};
     use crate::harness::Answer;
     use crate::sources::stamp::Stamp;
     use crate::sources::validate::ValidSource;
@@ -481,5 +547,76 @@ mod tests {
         assert!(desk.cached(&PathBuf::from("/src/1"), "overview").is_some());
         desk.evict(&PathBuf::from("/src/1"), "overview");
         assert!(desk.cached(&PathBuf::from("/src/1"), "overview").is_none());
+    }
+
+    fn tray(ids: &[SourceId]) -> SourcesTray {
+        SourcesTray {
+            open: false,
+            session: ids
+                .iter()
+                .map(|id| SourceRow {
+                    id: *id,
+                    kind: SourceKind::CodeFolder,
+                    title: "inf-alloc".into(),
+                    path: "~/src/inf-alloc".into(),
+                    state: SourceState::Ready {
+                        detail: String::new(),
+                    },
+                })
+                .collect(),
+            project: None,
+            talker: "the model".into(),
+            harness: None,
+            reading: Vec::new(),
+        }
+    }
+
+    /// Finding 12: the same path keeps its id, so the core may discard an id it still holds (a
+    /// candidate or a kept line that was a shared source too). The desk forgets a source only
+    /// once the core's tray no longer shows it.
+    #[test]
+    fn a_source_the_core_still_shows_is_never_forgotten() {
+        let mut desk = SourceDesk::new(PathBuf::from("/Users/me"), Vec::new(), None);
+        let shared = desk.register(&valid("/src/inf-alloc", SourceKind::CodeFolder));
+        assert!(desk.share(shared.id));
+        let other = desk.register(&valid("/src/other/inf-alloc", SourceKind::CodeFolder));
+        assert!(desk.tray_seen(&tray(&[shared.id])).is_empty());
+        // "Use the inf-alloc crate": both paths are candidates, the shared one by its own id;
+        // the core picks neither and discards both.
+        assert_eq!(desk.discard(&[shared.id, other.id]), [other.id]);
+        assert!(desk.is_readable(shared.id), "the core still holds it");
+        assert!(desk.tray_seen(&tray(&[shared.id])).is_empty());
+        assert!(desk.is_readable(shared.id));
+        // Removed from the tray: forgotten once the tray says so.
+        assert!(desk.discard(&[shared.id]).is_empty());
+        assert_eq!(desk.tray_seen(&tray(&[])), [shared.id]);
+        assert!(desk.path(shared.id).is_none());
+    }
+
+    /// I10: "don't remember this session" hands back what the session wrote to a project, and
+    /// what it kept is no longer kept, so a brief that arrives later isn't saved there.
+    #[test]
+    fn forgetting_the_session_unkeeps_what_it_kept() {
+        let mut desk = SourceDesk::new(PathBuf::from("/Users/me"), Vec::new(), None);
+        let kept = desk.register(&valid("/Users/me/src/inf-alloc", SourceKind::CodeFolder));
+        assert!(desk.share(kept.id));
+        let project = Project {
+            id: ProjectId::parse("infinitydb").expect("an id"),
+            name: "infinitydb".into(),
+        };
+        desk.set_project(project.clone());
+        desk.set_kept(kept.id, true);
+        desk.wrote(Written::Kept {
+            project: project.id.clone(),
+            path: "~/src/inf-alloc".into(),
+        });
+        assert!(!desk.is_forgotten());
+        let written = desk.forget_session();
+        assert_eq!(written.len(), 1);
+        assert!(!desk.is_kept(kept.id));
+        assert!(desk.is_forgotten());
+        assert!(desk.forget_session().is_empty(), "undone once");
+        desk.start_session();
+        assert!(!desk.is_forgotten(), "the next session is remembered");
     }
 }

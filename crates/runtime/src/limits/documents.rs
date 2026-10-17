@@ -9,6 +9,18 @@ pub const PDFKIT_TIMEOUT_MS: u64 = 30_000;
 /// process is killed and the run fails as too large.
 pub const PDFKIT_OUTPUT_MAX_BYTES: usize = 48 * 1024 * 1024;
 
+/// What of an error the PDFKit script names is kept in the failure's detail (logged, never
+/// shown); the rest is dropped.
+pub const PDFKIT_ERROR_SHOWN_MAX_CHARS: usize = 80;
+
+/// The largest font size, in points, a PDF line is taken to be set in; a larger (or absurd)
+/// size PDFKit reports is read as this, so one line can't skew heading detection's arithmetic.
+pub const PDF_FONT_SIZE_MAX_POINTS: f64 = 1_000.0;
+
+/// Pages one page read extracts (`SourceReader::pages`, D-256); later pages are left out of the
+/// answer. The core asks for at most its own `DOCUMENT_READ_PAGES_MAX` (4).
+pub const DOCUMENT_PAGE_READ_PAGES_MAX: u32 = 4;
+
 /// Pages whose text is extracted; later pages are counted but not read (the tray says so, and
 /// a page read past it finds no text).
 pub const DOCUMENT_PAGES_MAX: u32 = 600;

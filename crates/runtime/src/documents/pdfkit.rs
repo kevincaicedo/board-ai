@@ -12,7 +12,10 @@ use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
-use crate::limits::{PDFKIT_OUTPUT_MAX_BYTES, PDFKIT_TIMEOUT_MS};
+use crate::limits::{
+    PDF_FONT_SIZE_MAX_POINTS, PDFKIT_ERROR_SHOWN_MAX_CHARS, PDFKIT_OUTPUT_MAX_BYTES,
+    PDFKIT_TIMEOUT_MS,
+};
 
 /// The script, embedded: no file of it is ever written or read at run time.
 const SCRIPT: &str = include_str!("pdfkit.js");
@@ -33,6 +36,8 @@ pub struct PdfLine {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PdfText {
     pub page_count: u32,
+    /// The page `pages[0]` is (1-based): 1 for the whole text, the first asked for a page read.
+    pub first_page: u32,
     pub pages: Vec<Vec<PdfLine>>,
 }
 
@@ -88,6 +93,9 @@ impl Default for PdfKit {
 struct RawText {
     #[serde(default)]
     page_count: f64,
+    /// A page read's first page; absent for the whole text.
+    #[serde(default)]
+    first: Option<f64>,
     #[serde(default)]
     locked: bool,
     #[serde(default)]
@@ -125,34 +133,31 @@ impl PdfKit {
                 OsString::from(max_pages.to_string()),
             ])
             .await?;
-        let raw: RawText = serde_json::from_slice(&output).map_err(|error| PdfFailure::Failed {
-            detail: format!("its answer wasn't the script's JSON: {error}"),
-        })?;
-        let page_count = number(raw.page_count);
-        if let Some(error) = raw.error {
-            return Err(failure(&error, page_count));
+        parse_text(&output, 1, max_pages)
+    }
+
+    /// The text of pages `[first, last]` (1-based) alone, for a page read (D-256): PDFKit opens
+    /// the document and extracts only those, so a page of a long PDF is read in a fraction of a
+    /// second. Pages past the end are left out.
+    pub async fn pages(&self, path: &Path, first: u32, last: u32) -> Result<PdfText, PdfFailure> {
+        if first == 0 || last < first {
+            return Err(PdfFailure::BadRange);
         }
-        if raw.locked {
-            return Err(PdfFailure::Locked { page_count });
+        let output = self
+            .run([
+                OsString::from("pages"),
+                path.as_os_str().to_owned(),
+                OsString::from(first.to_string()),
+                OsString::from(last.to_string()),
+            ])
+            .await?;
+        let text = parse_text(&output, first, last - first + 1)?;
+        if text.first_page != first {
+            return Err(PdfFailure::Failed {
+                detail: "its answer was for other pages".to_owned(),
+            });
         }
-        let pages = raw
-            .pages
-            .into_iter()
-            .take(usize::try_from(max_pages).unwrap_or(usize::MAX))
-            .map(|page| {
-                page.lines
-                    .into_iter()
-                    .map(|line| PdfLine {
-                        text: line.text,
-                        // A tenth of a point is all heading detection needs.
-                        #[allow(clippy::cast_possible_truncation, reason = "font sizes are small")]
-                        size: (line.size.clamp(0.0, 1_000.0) * 10.0).round() as f32 / 10.0,
-                        bold: line.bold,
-                    })
-                    .collect()
-            })
-            .collect();
-        Ok(PdfText { page_count, pages })
+        Ok(text)
     }
 
     /// Pages `[first, last]` (1-based) of the PDF at `path` as a PDF of their own, in base64.
@@ -234,6 +239,44 @@ impl PdfKit {
     }
 }
 
+/// The script's `text` or `pages` JSON, parsed once into types: at most `max_pages` pages, each
+/// line's font size to a tenth of a point.
+fn parse_text(output: &[u8], first_page: u32, max_pages: u32) -> Result<PdfText, PdfFailure> {
+    let raw: RawText = serde_json::from_slice(output).map_err(|error| PdfFailure::Failed {
+        detail: format!("its answer wasn't the script's JSON: {error}"),
+    })?;
+    let page_count = number(raw.page_count);
+    if let Some(error) = raw.error {
+        return Err(failure(&error, page_count));
+    }
+    if raw.locked {
+        return Err(PdfFailure::Locked { page_count });
+    }
+    let pages = raw
+        .pages
+        .into_iter()
+        .take(usize::try_from(max_pages).unwrap_or(usize::MAX))
+        .map(|page| {
+            page.lines
+                .into_iter()
+                .map(|line| PdfLine {
+                    text: line.text,
+                    // A tenth of a point is all heading detection needs.
+                    #[allow(clippy::cast_possible_truncation, reason = "font sizes are small")]
+                    size: (line.size.clamp(0.0, PDF_FONT_SIZE_MAX_POINTS) * 10.0).round() as f32
+                        / 10.0,
+                    bold: line.bold,
+                })
+                .collect()
+        })
+        .collect();
+    Ok(PdfText {
+        page_count,
+        first_page: raw.first.map_or(first_page, number),
+        pages,
+    })
+}
+
 fn failure(error: &str, page_count: u32) -> PdfFailure {
     match error {
         "locked" => PdfFailure::Locked { page_count },
@@ -242,7 +285,10 @@ fn failure(error: &str, page_count: u32) -> PdfFailure {
         other => PdfFailure::Failed {
             detail: format!(
                 "the script said {:?}",
-                other.chars().take(80).collect::<String>()
+                other
+                    .chars()
+                    .take(PDFKIT_ERROR_SHOWN_MAX_CHARS)
+                    .collect::<String>()
             ),
         },
     }

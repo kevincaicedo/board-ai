@@ -8,10 +8,24 @@ import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { type Box, boxAt, detailBox, detailOpen, screenBox } from "../canvas/detail.ts";
 import { clamp, lerp, round1, round2 } from "../canvas/math.ts";
 import type { DetailView } from "./diagrams.ts";
-import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
+import {
+  type NumberFormat,
+  numberWriter,
+  plain,
+  px,
+  styleWriter,
+  useFrame,
+  useRuntime,
+} from "./hooks.ts";
 
 /** The card's contents fade in over the first part of its growth. */
 const CONTENT_IN_SHARE = 0.35;
+
+/** A step back's blur in pixels, `none` at 0. */
+const blurFilter: NumberFormat = (blur) => (blur === 0 ? "none" : `blur(${blur}px)`);
+
+/** A step back's scale, `none` at 1. */
+const scaleTransform: NumberFormat = (scale) => (scale === 1 ? "none" : `scale(${scale})`);
 
 function emptyBox(): Box {
   return { x: 0, y: 0, w: 0, h: 0 };
@@ -47,6 +61,7 @@ export function DetailStage() {
   const details = runtime.scene.diagrams.details.value;
   const cards = useRef(new Map<number, HTMLElement>());
   const write = useMemo(styleWriter, []);
+  const writeNumber = useMemo(numberWriter, []);
   const boxes = useMemo(() => ({ from: emptyBox(), to: emptyBox(), now: emptyBox() }), []);
   const cardRef = useMemo(
     () => (layer: number, element: HTMLElement | null) => {
@@ -77,15 +92,13 @@ export function DetailStage() {
       }
       anchorBox(detail, boxes.to, boxes.from);
       boxAt(boxes.from, boxes.to, open, boxes.now);
-      write(card, "left", `${round1(boxes.now.x)}px`);
-      write(card, "top", `${round1(boxes.now.y)}px`);
-      write(card, "width", `${round1(boxes.now.w)}px`);
-      write(card, "height", `${round1(boxes.now.h)}px`);
-      write(
-        card,
-        "border-radius",
-        `${round1(lerp(tokens.diagramFrameRadius, tokens.detailCardRadius, open))}px`,
-      );
+      // Numbers, compared before any text is built: a settled card writes nothing.
+      writeNumber(card, "left", round1(boxes.now.x), px);
+      writeNumber(card, "top", round1(boxes.now.y), px);
+      writeNumber(card, "width", round1(boxes.now.w), px);
+      writeNumber(card, "height", round1(boxes.now.h), px);
+      const radius = lerp(tokens.diagramFrameRadius, tokens.detailCardRadius, open);
+      writeNumber(card, "border-radius", round1(radius), px);
       // A detail opened inside this one covers it: this one steps back as the board does.
       let covered = 0;
       for (let later = index + 1; later < details.length; later += 1) {
@@ -95,17 +108,16 @@ export function DetailStage() {
         }
       }
       const fade = clamp(open / CONTENT_IN_SHARE) * (1 - tokens.detailPushFade * covered);
-      write(card, "opacity", String(round2(fade)));
-      write(
+      writeNumber(card, "opacity", round2(fade), plain);
+      const stepped = covered >= 0.001;
+      writeNumber(
         card,
         "filter",
-        covered < 0.001 ? "none" : `blur(${round1(tokens.detailPushBlur * covered)}px)`,
+        stepped ? round1(tokens.detailPushBlur * covered) : 0,
+        blurFilter,
       );
-      write(
-        card,
-        "transform",
-        covered < 0.001 ? "none" : `scale(${round2(1 - tokens.detailPushShrink * covered)})`,
-      );
+      const scale = stepped ? round2(1 - tokens.detailPushShrink * covered) : 1;
+      writeNumber(card, "transform", scale, scaleTransform);
     }
   });
 

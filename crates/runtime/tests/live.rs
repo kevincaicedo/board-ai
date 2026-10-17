@@ -272,6 +272,9 @@ async fn claude_code_answers_a_read_only_question() {
         environment,
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         model: None,
+        sign_in: boardai_runtime::harness::ClaudeSignIn::read(std::path::Path::new(
+            &std::env::var_os("HOME").unwrap_or_default(),
+        )),
     });
     let events = run_task("claude code", &harness).await;
     assert!(
@@ -351,6 +354,9 @@ async fn live_brief() -> LiveBrief {
         environment,
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         model: None,
+        sign_in: boardai_runtime::harness::ClaudeSignIn::read(std::path::Path::new(
+            &std::env::var_os("HOME").unwrap_or_default(),
+        )),
     });
     let task = HarnessTask {
         kind: HarnessKind::Research,

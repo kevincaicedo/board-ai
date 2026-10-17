@@ -2,8 +2,9 @@
 //! window, picked in the macOS chooser, found by the resolver, or read back from a project's
 //! `sources.md`. Nothing else makes a [`ValidSource`].
 //!
-//! The rules: absolute; within its length bound; not a credential path (before the file system
-//! is asked, and again where a symlink leads); it exists; a folder is a code folder unless it
+//! The rules: absolute; within its length bound; no control character (a line break would add a
+//! line to a project's `sources.md`); not a credential path (before the file system is asked,
+//! and again where a symlink leads); it exists; a folder is a code folder unless it
 //! is too broad (the disk, the home folder or above, `~/Library`: `tools::too_broad`); a file's
 //! kind comes from its extension, within that kind's size bound; nothing inside `~/Library`.
 
@@ -41,6 +42,8 @@ pub struct ValidSource {
 pub enum Refusal {
     NotAbsolute,
     TooLong,
+    /// A line break or another control character in its path.
+    ControlCharacter,
     Missing,
     Unreadable,
     /// The disk, the home folder or above: every file of yours.
@@ -59,6 +62,7 @@ impl Refusal {
         match self {
             Self::NotAbsolute | Self::Missing => "it isn't there any more.",
             Self::TooLong => "its path is too long.",
+            Self::ControlCharacter => "its path has a line break or another control character.",
             Self::Unreadable => "it can't be read.",
             Self::HoldsEverything => {
                 "that holds every file of yours, keys included. Share the folder your code is in."
@@ -91,6 +95,9 @@ pub fn validate(path: &Path, home: &Path) -> Result<ValidSource, Refusal> {
     if !path.is_absolute() {
         return Err(Refusal::NotAbsolute);
     }
+    if has_control_character(path) {
+        return Err(Refusal::ControlCharacter);
+    }
     // Refused before the file system is asked whether it exists.
     if is_credential(path) {
         return Err(Refusal::Credentials);
@@ -102,6 +109,9 @@ pub fn validate(path: &Path, home: &Path) -> Result<ValidSource, Refusal> {
             Refusal::Unreadable
         }
     })?;
+    if has_control_character(&canonical) {
+        return Err(Refusal::ControlCharacter);
+    }
     if is_credential(&canonical) {
         return Err(Refusal::Credentials);
     }
@@ -140,6 +150,12 @@ pub fn validate(path: &Path, home: &Path) -> Result<ValidSource, Refusal> {
         title,
         files_estimate,
     })
+}
+
+/// A control character anywhere in the path's bytes (a newline, a tab, DEL…).
+fn has_control_character(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().iter().any(u8::is_ascii_control)
 }
 
 fn file_kind(path: &Path) -> Option<SourceKind> {
@@ -239,7 +255,34 @@ pub fn expanded_path(written: &str, home: &Path) -> Option<PathBuf> {
 mod tests {
     use std::path::Path;
 
-    use super::{expanded_path, shown_path, written_path};
+    use super::{Refusal, expanded_path, shown_path, validate, written_path};
+
+    /// Finding 21: a newline in a shared path would add a line to a project's `sources.md`
+    /// (`- code folder: /etc`): refused before the file system is asked, and where a symlink
+    /// leads.
+    #[test]
+    fn a_path_with_a_control_character_is_refused() {
+        let root = std::env::temp_dir().join(format!("boardai-control-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let named = home.join("notes\n- code folder: ~/.ssh");
+        std::fs::create_dir_all(&named).expect("a folder with a newline in its name");
+        for path in [
+            named.clone(),
+            home.join("tab\there"),
+            home.join("del\u{7f}"),
+        ] {
+            assert_eq!(
+                validate(&path, &home),
+                Err(Refusal::ControlCharacter),
+                "{path:?}"
+            );
+        }
+        let link = home.join("plain");
+        std::os::unix::fs::symlink(&named, &link).expect("a symlink");
+        assert_eq!(validate(&link, &home), Err(Refusal::ControlCharacter));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn paths_are_shown_under_home_and_shortened() {

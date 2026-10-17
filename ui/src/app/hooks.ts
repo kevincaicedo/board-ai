@@ -42,3 +42,40 @@ export function styleWriter(): (
     }
   };
 }
+
+/** A number as a style value: built only when the number changed (`numberWriter`). */
+export type NumberFormat = (value: number) => string;
+
+/** `12.5` → `"12.5px"`. */
+export const px: NumberFormat = (value) => `${value}px`;
+
+/** `0.25` → `"0.25"`. */
+export const plain: NumberFormat = (value) => String(value);
+
+/**
+ * Sets a style property from a number only when the number changes, and builds its text only
+ * then: the frame loop's form of `styleWriter`, which allocates nothing while a value holds
+ * (LLD §4). `format` must be a function made once (`px`, `plain`), never one made per frame.
+ */
+export function numberWriter(): (
+  element: HTMLElement | SVGElement | null,
+  name: string,
+  value: number,
+  format: NumberFormat,
+) => void {
+  const last = new WeakMap<Element, Map<string, number>>();
+  return (element, name, value, format) => {
+    if (element === null) {
+      return;
+    }
+    let values = last.get(element);
+    if (values === undefined) {
+      values = new Map();
+      last.set(element, values);
+    }
+    if (values.get(name) !== value) {
+      values.set(name, value);
+      element.style.setProperty(name, format(value));
+    }
+  };
+}

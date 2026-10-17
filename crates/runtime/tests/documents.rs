@@ -26,6 +26,7 @@ use boardai_runtime::documents::{DocumentReader, ReaderConfig};
 use boardai_runtime::harness::{
     CodingHarness, HarnessPool, HarnessStream, HarnessTimeouts, Workspace,
 };
+use boardai_runtime::limits::SOURCE_JOB_TIMEOUT_MS;
 use boardai_runtime::llm::Effort;
 use boardai_runtime::settings::Secret;
 use boardai_runtime::sources::{ReaderEvent, SourceReader};
@@ -264,10 +265,32 @@ async fn a_failed_call_keeps_the_text_and_says_what_wasnt_read() {
     assert!(digest.contains("### Figure 3 (p. 4)"), "{digest}");
 }
 
-/// A coding harness that answers a digest, as Claude Code would.
+/// The files under `folder`, relative, sorted.
+fn listing(folder: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut folders = vec![folder.to_path_buf()];
+    while let Some(next) = folders.pop() {
+        for entry in std::fs::read_dir(&next).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                folders.push(path);
+            } else if let Ok(inside) = path.strip_prefix(folder) {
+                found.push(inside.to_string_lossy().into_owned());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A task the harness got, where, and what its folder held then.
+type Recorded = (HarnessTask, Workspace, Vec<String>);
+
+/// A coding harness that answers a digest, as Claude Code would, and records what its folder
+/// held when it ran.
 struct RecordedHarness {
     answer: String,
-    tasks: Arc<std::sync::Mutex<Vec<(HarnessTask, Workspace)>>>,
+    tasks: Arc<std::sync::Mutex<Vec<Recorded>>>,
 }
 
 impl CodingHarness for RecordedHarness {
@@ -282,7 +305,8 @@ impl CodingHarness for RecordedHarness {
         _cancel: CancelToken,
     ) -> HarnessStream {
         if let Ok(mut tasks) = self.tasks.lock() {
-            tasks.push((task, workspace));
+            let held = listing(&workspace.folder);
+            tasks.push((task, workspace, held));
         }
         futures_util::stream::iter([
             HarnessEvent::FileTouched {
@@ -313,14 +337,116 @@ async fn the_harness_reads_the_pdf_when_no_model_reads_files() {
     golden("paper.pdf.claude-code", &state, &digest);
     let tasks = tasks.lock().expect("lock").clone();
     assert_eq!(tasks.len(), 1);
-    let (task, workspace) = &tasks[0];
+    let (task, workspace, held) = &tasks[0];
     assert!(
         task.brief
             .contains("Read the document \"paper.pdf\" in this folder")
     );
-    assert_eq!(
+    // D-231: never the document's own folder (its neighbours are other fixtures), only a private
+    // folder holding the document, removed once the read ends.
+    assert_ne!(
         workspace.folder,
         document("paper.pdf").parent().expect("a folder")
+    );
+    assert_eq!(workspace.reach, workspace.folder);
+    assert_eq!(held, &["paper.pdf"]);
+    assert!(!workspace.folder.exists(), "the private folder is removed");
+}
+
+/// D-231: a Markdown document's harness reads the document and the images it links, at the
+/// paths its links name, and nothing else of its folder.
+#[tokio::test]
+async fn a_documents_harness_reads_only_it_and_the_images_it_links() {
+    let folder = TempFolder::new("private-copy");
+    let notes = folder.write(
+        "notes.md",
+        b"# Notes\n\n![The arena](./images/arena.png)\n\n![Gone](images/missing.png)\n",
+    );
+    let png = fixture("documents/images/arena.png");
+    folder.write("images/arena.png", &png);
+    folder.write("images/unlinked.png", &png);
+    folder.write("secrets.txt", concat!("token = ", "abc").as_bytes());
+    let tasks = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let harness = RecordedHarness {
+        answer: "# Digest: Notes\n## Figures\n### Figure 1 (l. 3): The arena\nSlabs.\n".into(),
+        tasks: Arc::clone(&tasks),
+    };
+    let pool = HarnessPool::new(Arc::new(harness), HarnessTimeouts::default());
+    let reader = reader(Vec::new(), Some((pool, "Claude Code".into())));
+    let path = std::fs::canonicalize(&notes).expect("canonical");
+    let _ = settled(&read_all(&reader, &path).await);
+    let tasks = tasks.lock().expect("lock").clone();
+    let (_, workspace, held) = tasks.first().expect("the harness ran");
+    assert_eq!(held, &["images/arena.png", "notes.md"]);
+    assert!(!workspace.folder.starts_with(&folder.path));
+    assert!(!workspace.folder.exists(), "the private folder is removed");
+}
+
+/// A harness that is still reading when its read is dropped (the session ended, D-280's
+/// cancellation): it records its folder and never answers.
+struct HangingHarness {
+    folders: Arc<std::sync::Mutex<Vec<PathBuf>>>,
+}
+
+impl CodingHarness for HangingHarness {
+    fn run(&self, _task: HarnessTask, _cancel: CancelToken) -> HarnessStream {
+        futures_util::stream::pending().boxed()
+    }
+
+    fn run_in(
+        &self,
+        _task: HarnessTask,
+        workspace: Workspace,
+        _cancel: CancelToken,
+    ) -> HarnessStream {
+        if let Ok(mut folders) = self.folders.lock() {
+            folders.push(workspace.folder);
+        }
+        futures_util::stream::pending().boxed()
+    }
+}
+
+/// Finding 22: a harness read cut short (the session ended mid-read) leaves nothing behind: no
+/// private folder, and no digest (the next share reads it again).
+#[tokio::test]
+async fn a_harness_read_cut_short_leaves_nothing_behind() {
+    let folders = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let harness = HangingHarness {
+        folders: Arc::clone(&folders),
+    };
+    let pool = HarnessPool::new(Arc::new(harness), HarnessTimeouts::default());
+    let reader = reader(Vec::new(), Some((pool, "Claude Code".into())));
+    let mut events = reader.read(document("paper.pdf"), CancelToken::new());
+    let mut seen = Vec::new();
+    while let Some(event) = events.next().await {
+        let harness_reads =
+            matches!(&event, ReaderEvent::Reading { by: Some(by), .. } if by == "Claude Code");
+        seen.push(event);
+        if harness_reads {
+            break;
+        }
+    }
+    // The pool starts the harness when its stream is first polled; it never answers.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), events.next())
+            .await
+            .is_err()
+    );
+    let folder = folders
+        .lock()
+        .expect("lock")
+        .first()
+        .cloned()
+        .expect("the harness ran");
+    assert!(folder.join("paper.pdf").exists(), "{seen:?}");
+    drop(events);
+    assert!(!folder.exists(), "the private folder went with the read");
+    assert!(
+        !seen.iter().any(|event| matches!(
+            event,
+            ReaderEvent::Ready { .. } | ReaderEvent::Partial { .. }
+        )),
+        "no digest from a read cut short: {seen:?}"
     );
 }
 
@@ -346,7 +472,7 @@ async fn pages_are_read_from_the_kept_text_layer() {
     });
     let path = document("small-text.pdf");
     let _ = read_all(&reader, &path).await;
-    let read = reader.pages(path.clone(), 1, 4).await;
+    let read = reader.pages(path.clone(), 1, 4).await.expect("read");
     assert_eq!(read.page_count, Some(2));
     let numbers: Vec<u32> = read.pages.iter().map(|(page, _)| *page).collect();
     assert_eq!(numbers, [1, 2], "pages past the end have no text");
@@ -362,6 +488,104 @@ async fn pages_are_read_from_the_kept_text_layer() {
         runs.lines().count(),
         1,
         "one PDFKit run for the reading and both page reads"
+    );
+}
+
+/// A PDFKit that counts its runs, by mode; `text_first` runs before the whole text's extraction
+/// (`sleep 30` makes a long document's).
+fn counting_pdfkit(folder: &TempFolder, text_first: &str) -> (PdfKit, PathBuf) {
+    let count = folder.path.join("runs");
+    let program = folder.write(
+        "osascript",
+        format!(
+            "#!/bin/sh\necho \"$5\" >> '{}'\nif [ \"$5\" = text ]; then {text_first}; fi\nexec /usr/bin/osascript \"$@\"\n",
+            count.display()
+        )
+        .as_bytes(),
+    );
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    (
+        PdfKit::with_program(program, Duration::from_secs(60)),
+        count,
+    )
+}
+
+fn runs(count: &Path) -> Vec<String> {
+    std::fs::read_to_string(count)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Finding 8: a page read on a document whose whole text isn't extracted (a long one still
+/// being read, or one answered from its cached digest) extracts only its pages, so it never
+/// waits on the whole text, however long the document.
+#[tokio::test]
+async fn a_page_read_never_waits_on_the_whole_text() {
+    let folder = TempFolder::new("pdfkit-slow-text");
+    let (pdfkit, count) = counting_pdfkit(&folder, "sleep 30");
+    let reader = DocumentReader::new(ReaderConfig {
+        file_models: Vec::new(),
+        harness: None,
+        home: home(),
+        pdfkit,
+    });
+    let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS.saturating_sub(500));
+    let read = tokio::time::timeout(bound, reader.pages(document("small-text.pdf"), 2, 9))
+        .await
+        .expect("within the page read's bound")
+        .expect("read");
+    assert_eq!(read.page_count, Some(2));
+    let numbers: Vec<u32> = read.pages.iter().map(|(page, _)| *page).collect();
+    assert_eq!(numbers, [2], "page 2, and none past the end");
+    assert_eq!(runs(&count), ["pages"]);
+}
+
+/// The reproducer on a real long PDF, local only (`BOARDAI_LONG_PDF=<a 600-page PDF>`): the
+/// whole text takes PDFKit ~13 s, a page read a tenth of a second.
+#[tokio::test]
+async fn a_page_of_a_long_pdf_is_read_within_the_page_read_bound() {
+    let Some(path) = std::env::var_os("BOARDAI_LONG_PDF") else {
+        return;
+    };
+    let reader = reader(Vec::new(), None);
+    let bound = Duration::from_millis(SOURCE_JOB_TIMEOUT_MS.saturating_sub(500));
+    let started = std::time::Instant::now();
+    let read = tokio::time::timeout(bound, reader.pages(path.into(), 40, 40))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    assert!(
+        !read.pages.is_empty(),
+        "page 40 came back empty after {:?} (bound {bound:?}); page_count {:?}",
+        started.elapsed(),
+        read.page_count
+    );
+}
+
+/// A document read twice at once (two sessions, or a stale digest's reread) is extracted once:
+/// the second waits on the first PDFKit run. A page read after it uses the kept text.
+#[tokio::test]
+async fn a_document_read_twice_at_once_is_extracted_once() {
+    let folder = TempFolder::new("pdfkit-single-flight");
+    let (pdfkit, count) = counting_pdfkit(&folder, "sleep 0.3");
+    let reader = DocumentReader::new(ReaderConfig {
+        file_models: Vec::new(),
+        harness: None,
+        home: home(),
+        pdfkit,
+    });
+    let path = document("small-text.pdf");
+    let (first, second) = tokio::join!(read_all(&reader, &path), read_all(&reader, &path));
+    assert_eq!(settled(&first), settled(&second));
+    let read = reader.pages(path, 1, 1).await.expect("read");
+    assert_eq!(read.pages.len(), 1);
+    assert_eq!(
+        runs(&count),
+        ["text"],
+        "one extraction, and the page from it"
     );
 }
 

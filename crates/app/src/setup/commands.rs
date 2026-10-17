@@ -430,15 +430,21 @@ async fn current_status(
     .await
 }
 
-/// Asks Ollama for its models (bounded by `OLLAMA_PROBE_TIMEOUT_MS`) and remembers the answer.
+/// Asks Ollama for its models (bounded by `OLLAMA_PROBE_TIMEOUT_MS`) and remembers the answer;
+/// asks made while one runs share it.
 async fn probe_ollama(state: &SetupState) -> OllamaStatus {
-    let found = match ollama_models(OLLAMA_BASE_URL).await {
-        Ok(models) => OllamaStatus::Reachable { models },
-        Err(error) => {
-            tracing::debug!(%error, "Ollama did not answer");
-            OllamaStatus::Unreachable
-        }
-    };
+    let found = state
+        .ollama_probe
+        .run(|| async {
+            match ollama_models(OLLAMA_BASE_URL).await {
+                Ok(models) => OllamaStatus::Reachable { models },
+                Err(error) => {
+                    tracing::debug!(%error, "Ollama did not answer");
+                    OllamaStatus::Unreachable
+                }
+            }
+        })
+        .await;
     match state.ollama.lock() {
         Ok(mut last) => *last = Some(found.clone()),
         Err(poisoned) => *poisoned.into_inner() = Some(found.clone()),

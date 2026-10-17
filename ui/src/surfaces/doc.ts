@@ -104,6 +104,40 @@ export function sentenceMarks(
   return marks.filter((mark) => mark.strength > 0);
 }
 
+/**
+ * `sentenceMarks` written into `out` (one strength per sentence, 0 for the unmarked): the frame
+ * loop's form, which allocates nothing (LLD §4). `out` holds a strength for each of the
+ * passage's sentences.
+ */
+export function writeSentenceStrengths(
+  moves: readonly SentenceMove[],
+  at: number,
+  durationMs: number,
+  out: Float64Array,
+): void {
+  out.fill(0);
+  // The latest two moves made by `at`, as `sentenceMarks` reads them.
+  let latest: SentenceMove | undefined;
+  let previous: SentenceMove | undefined;
+  for (let index = 0; index < moves.length; index += 1) {
+    const move = moves[index];
+    if (move !== undefined && move.at <= at) {
+      previous = latest;
+      latest = move;
+    }
+  }
+  if (latest === undefined) {
+    return;
+  }
+  const f = durationMs <= 0 ? 1 : easeOut(clamp((at - latest.at) / durationMs));
+  if (previous !== undefined && previous.index !== latest.index && previous.index < out.length) {
+    out[previous.index] = 1 - f;
+  }
+  if (latest.index < out.length) {
+    out[latest.index] = previous === undefined || previous.index !== latest.index ? f : 1;
+  }
+}
+
 /** Lines `text` takes at `perLine` characters a line; at least one when it has any text. */
 function lineCount(text: string, perLine: number): number {
   const length = Array.from(text).length;

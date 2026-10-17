@@ -70,6 +70,7 @@ impl Fake {
             environment: self.environment(fixture_name, mode),
             research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
             model: None,
+            sign_in: boardai_runtime::harness::ClaudeSignIn::default(),
         })
     }
 
@@ -144,7 +145,7 @@ async fn claude_research_maps_stream_json_to_events() {
         "--include-partial-messages\n--session-id\n",
         "--permission-prompts\nnone\n",
         "\n--permission-mode\ndontAsk\n--tools\nRead,Grep,Glob\n--strict-mcp-config\n",
-        "\n--setting-sources\nuser\n--settings\n",
+        "\n--setting-sources=\n--settings\n",
     ] {
         assert!(
             arguments.contains(expected),
@@ -208,7 +209,7 @@ async fn a_brief_runs_in_the_sources_folder_and_answers_the_shape() {
     for expected in [
         "\n--model\nsonnet\n",
         "\n--permission-mode\ndontAsk\n--tools\nRead,Grep,Glob\n--strict-mcp-config\n",
-        "\n--setting-sources\nuser\n--settings\n",
+        "\n--setting-sources=\n--settings\n",
     ] {
         assert!(arguments.contains(expected), "{expected:?} in {arguments}");
     }
@@ -238,6 +239,7 @@ async fn a_harness_without_a_folder_refuses_a_task_with_none() {
         environment: fake.environment("claude/research.jsonl", "replay"),
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         model: None,
+        sign_in: boardai_runtime::harness::ClaudeSignIn::default(),
     });
     let events = collect(harness.run(research("q"), CancelToken::new())).await;
     assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);
@@ -325,6 +327,7 @@ async fn a_missing_program_is_not_installed() {
         environment: Vec::new(),
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
         model: None,
+        sign_in: boardai_runtime::harness::ClaudeSignIn::default(),
     });
     let events = collect(harness.run(research("q"), CancelToken::new())).await;
     assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);

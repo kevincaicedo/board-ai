@@ -30,8 +30,8 @@ use boardai_runtime::documents::files::FileModel;
 use boardai_runtime::documents::pdfkit::PdfKit;
 use boardai_runtime::documents::{DocumentReader, ReaderConfig};
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, DefaultFolder,
-    HarnessPool, HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
+    ClaudeCodeConfig, ClaudeCodeHarness, ClaudeSignIn, CodingHarness, DEFAULT_RESEARCH_MODEL,
+    DefaultFolder, HarnessPool, HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
 };
 use boardai_runtime::limits::STORE_SHUTDOWN_TIMEOUT_MS;
 use boardai_runtime::llm::LlmProvider;
@@ -529,6 +529,7 @@ fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<(HarnessPool, 
                     .clone()
                     .unwrap_or_else(|| DEFAULT_RESEARCH_MODEL.to_owned()),
                 model: settings.harness.model.clone(),
+                sign_in: ClaudeSignIn::read(&home_folder()),
             })),
             "Claude Code",
         ),

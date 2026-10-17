@@ -54,6 +54,15 @@ pub const LIST_ENTRIES_MAX: usize = 400;
 // ---------------------------------------------------------------------------------------------
 // Coding harnesses (owner: runtime::harness)
 
+/// The user's Claude Code `settings.json`, read once for what signing in needs (finding 10);
+/// a larger one isn't read, nothing is forwarded, and a run that needed it says it isn't
+/// signed in.
+pub const CLAUDE_SETTINGS_READ_MAX_BYTES: usize = 256 * 1024;
+
+/// One sign-in setting forwarded to a confined run (a helper's command, a region); a longer
+/// one isn't forwarded.
+pub const CLAUDE_SIGN_IN_VALUE_MAX_BYTES: usize = 1024;
+
 /// Read-only tasks (research, review) running at once; more wait in the queue.
 pub const HARNESS_READ_TASKS_MAX: usize = 2;
 

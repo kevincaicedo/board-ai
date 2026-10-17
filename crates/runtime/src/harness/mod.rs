@@ -13,6 +13,7 @@ mod lines;
 mod pi;
 mod pool;
 mod process;
+mod sign_in;
 mod text;
 
 use std::path::{Path, PathBuf};
@@ -28,6 +29,7 @@ pub use discovery::{HarnessDiscovery, discover, discover_from_environment};
 pub use git::{BRANCH_PREFIX, is_valid_branch};
 pub use pi::{PiConfig, PiHarness};
 pub use pool::{HarnessPool, HarnessTimeouts};
+pub use sign_in::ClaudeSignIn;
 
 /// The command lines, exposed so tests and the dev overlay can show what runs.
 pub mod command_line {

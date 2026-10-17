@@ -22,56 +22,154 @@ use crate::setup::folders::{CHOOSE_SOURCE_FILE, CHOOSE_SOURCE_FOLDER, Chosen, ch
 /// The drag in progress, kept between its events.
 #[derive(Debug, Default)]
 pub struct DragState {
-    // Held only to read or swap, never across an await.
-    current: Mutex<Option<DragOver>>,
+    // Held only to read or change the drag and send what it says (a `try_send`), never across
+    // an await: sending under it keeps the session's drag events in the order the drag's own.
+    current: Mutex<DragTrack>,
+}
+
+/// One drag at a time, from its enter to its drop or leave. Each drag has a generation, so a
+/// check that answers after its drag ended, or after a newer one began, is dropped: the overlay
+/// never sticks once the pointer has left (finding 24).
+#[derive(Debug)]
+struct DragTrack {
+    generation: u64,
+    /// Between an enter and its drop or leave.
+    live: bool,
+    /// The half under the pointer, kept while the enter's check runs.
+    half: DropHalf,
+    /// What the session was last told: the drag once its check answered.
+    shown: Option<DragOver>,
+}
+
+impl Default for DragTrack {
+    fn default() -> Self {
+        Self {
+            generation: 0,
+            live: false,
+            half: DropHalf::Session,
+            shown: None,
+        }
+    }
+}
+
+impl DragTrack {
+    /// A drag entered: a new generation, shown once its check answers.
+    fn enter(&mut self, half: DropHalf) -> u64 {
+        self.generation += 1;
+        self.live = true;
+        self.half = half;
+        self.shown = None;
+        self.generation
+    }
+
+    /// The enter's check answered: the drag to show, when it is still the drag in progress,
+    /// over the half the pointer is on now.
+    fn checked(
+        &mut self,
+        generation: u64,
+        title: String,
+        refused: Option<String>,
+    ) -> Option<DragOver> {
+        if !self.live || self.generation != generation {
+            return None;
+        }
+        let drag = DragOver {
+            title,
+            refused,
+            half: self.half,
+        };
+        self.shown = Some(drag.clone());
+        Some(drag)
+    }
+
+    /// The pointer moved: the drag to show again when its half changed.
+    fn moved(&mut self, half: DropHalf) -> Option<DragOver> {
+        if !self.live || self.half == half {
+            return None;
+        }
+        self.half = half;
+        let drag = self.shown.as_mut()?;
+        drag.half = half;
+        Some(drag.clone())
+    }
+
+    /// Dropped or left: the drag ends; its generation, for a drop's check to end the overlay.
+    fn end(&mut self) -> u64 {
+        self.generation += 1;
+        self.live = false;
+        self.shown = None;
+        self.generation
+    }
+
+    /// Whether the overlay is still the ended drag's: no drag began since `generation` ended.
+    fn still_ended(&self, generation: u64) -> bool {
+        !self.live && self.generation == generation
+    }
+}
+
+impl DragState {
+    /// Runs `change` on the drag, then sends what it says, under the drag's lock.
+    fn update(
+        &self,
+        app: &AppHandle,
+        change: impl FnOnce(&mut DragTrack) -> Option<Option<DragOver>>,
+    ) {
+        let Ok(mut track) = self.current.lock() else {
+            return;
+        };
+        if let Some(drag) = change(&mut track) {
+            send_drag(app, drag);
+        }
+    }
 }
 
 /// One drag-and-drop event on the window.
 pub fn on_drag_drop(window: &Window, event: &DragDropEvent) {
     let app = window.app_handle().clone();
+    let state = app.state::<DragState>();
     match event {
         DragDropEvent::Enter { paths, position } => {
             let half = half_of(window, *position);
+            let mut generation = 0;
+            state.update(&app, |track| {
+                generation = track.enter(half);
+                None
+            });
             let paths = bounded(paths);
+            let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let checked = check_all(paths).await;
-                let drag = DragOver {
-                    title: title_of(&checked),
-                    refused: refusal_of(&checked),
-                    half,
-                };
-                remember(&app, Some(drag.clone()));
-                send_drag(&app, Some(drag));
+                let (title, refused) = (title_of(&checked), refusal_of(&checked));
+                app.state::<DragState>().update(&app, |track| {
+                    track.checked(generation, title, refused).map(Some)
+                });
             });
         }
         DragDropEvent::Over { position } => {
             let half = half_of(window, *position);
-            let state = app.state::<DragState>();
-            let changed = state.current.lock().ok().and_then(|mut current| {
-                let drag = current.as_mut()?;
-                (drag.half != half).then(|| {
-                    drag.half = half;
-                    drag.clone()
-                })
-            });
-            if let Some(drag) = changed {
-                send_drag(&app, Some(drag));
-            }
+            state.update(&app, |track| track.moved(half).map(Some));
         }
         DragDropEvent::Drop { paths, position } => {
             let keep = half_of(window, *position) == DropHalf::Project;
             let paths = bounded(paths);
-            remember(&app, None);
+            let mut generation = 0;
+            state.update(&app, |track| {
+                generation = track.end();
+                None
+            });
+            let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let checked = check_all(paths).await;
-                send_drag(&app, None);
+                // The overlay stays while the drop is checked, unless a new drag took it over.
+                app.state::<DragState>()
+                    .update(&app, |track| track.still_ended(generation).then_some(None));
                 share_checked(&app, checked, keep);
             });
         }
-        DragDropEvent::Leave => {
-            remember(&app, None);
-            send_drag(&app, None);
-        }
+        DragDropEvent::Leave => state.update(&app, |track| {
+            track.end();
+            Some(None)
+        }),
         // Tauri may add kinds of drag event; none of them shares anything.
         _ => {}
     }
@@ -160,12 +258,6 @@ fn refusal_of(checked: &[(PathBuf, Result<ValidSource, &'static str>)]) -> Optio
     Some(format!("Can't share that: {words}"))
 }
 
-fn remember(app: &AppHandle, drag: Option<DragOver>) {
-    if let Ok(mut current) = app.state::<DragState>().current.lock() {
-        *current = drag;
-    }
-}
-
 fn send_drag(app: &AppHandle, drag: Option<DragOver>) {
     with_session(app, |session| session.drag(drag).is_ok());
 }
@@ -212,4 +304,50 @@ fn with_session(
         tracing::warn!("the session didn't take a source event: it is busy or closed");
     }
     sent
+}
+
+#[cfg(test)]
+mod tests {
+    use boardai_core::sources::DropHalf;
+
+    use super::DragTrack;
+
+    fn title() -> String {
+        "hekaton.pdf".to_owned()
+    }
+
+    /// Finding 24: a check that answers after the pointer left is dropped, so the overlay it
+    /// would show never sticks.
+    #[test]
+    fn a_check_that_answers_after_the_drag_left_shows_nothing() {
+        let mut track = DragTrack::default();
+        let entered = track.enter(DropHalf::Session);
+        let _ = track.end();
+        assert_eq!(track.checked(entered, title(), None), None);
+        assert_eq!(track.moved(DropHalf::Project), None);
+    }
+
+    /// A drop's check ends the overlay only while no new drag has begun; the new drag's own
+    /// check shows it, over the half the pointer moved to meanwhile.
+    #[test]
+    fn a_new_drag_owns_the_overlay() {
+        let mut track = DragTrack::default();
+        let first = track.enter(DropHalf::Session);
+        let dropped = track.end();
+        assert_eq!(track.checked(first, title(), None), None);
+        let second = track.enter(DropHalf::Session);
+        assert!(
+            !track.still_ended(dropped),
+            "the drop's end can't hide the new drag"
+        );
+        assert_eq!(track.moved(DropHalf::Project), None, "nothing shown yet");
+        let shown = track.checked(second, title(), None).map(|drag| drag.half);
+        assert_eq!(shown, Some(DropHalf::Project));
+        assert_eq!(
+            track.moved(DropHalf::Session).map(|drag| drag.half),
+            Some(DropHalf::Session)
+        );
+        let left = track.end();
+        assert!(track.still_ended(left));
+    }
 }

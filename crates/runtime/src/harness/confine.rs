@@ -5,21 +5,24 @@
 //! - `--tools Read,Grep,Glob`: no other built-in tool exists in the session (no Bash, no edits,
 //!   no web, no subagents), and `--strict-mcp-config` loads no MCP server.
 //! - `--permission-mode dontAsk`: whatever no rule allows is denied, never asked.
-//! - `--setting-sources user`: the shared repository's own `.claude/` settings (its hooks,
-//!   allow rules, MCP servers) are not loaded; it is untrusted input.
+//! - `--setting-sources=` (none): neither the shared repository's own `.claude/` settings (its
+//!   hooks, allow rules, MCP servers: untrusted input) nor the user's are loaded, so no setting
+//!   can widen the reach (an `additionalDirectories`, an allow rule, a hook). What signing in
+//!   needs from the user's settings is handed back in `--settings` (`sign_in`, finding 10).
 //! - `--settings` with [`claude_rules`]: `Read` allowed on the reach's path pattern only (Claude
-//!   Code applies `Read` rules to Grep and Glob), every other tool and the credential paths
-//!   denied, the reach as the one extra working directory, and
-//!   `blockReadsOutsideWorkingDirectories`, which refuses reads outside the working directories
-//!   in every mode, whatever allow rule a user's own settings add.
+//!   Code applies `Read` rules to Grep and Glob), every other tool denied, the credential paths
+//!   and key files denied under the reach and anywhere (`//**/`), the reach as the one extra
+//!   working directory, and `blockReadsOutsideWorkingDirectories`, which refuses reads outside
+//!   the working directories in every mode.
 //!
 //! pi's RPC mode has no permission rules: it gets the read-only tool set
 //! (`--tools read,grep,find,ls`), the source folder as its working directory, and the prompt.
 
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
+use super::sign_in::ClaudeSignIn;
 use crate::tools::CREDENTIAL_PATHS;
 
 /// Claude Code tools denied by name: removed from the session even if a setting allows one.
@@ -54,20 +57,24 @@ pub fn reach_line(folder: &Path, reach: &Path) -> String {
     )
 }
 
-/// Claude Code's `--settings` for a brief: the permission rules that hold it to `reach`
-/// (canonical). `folder` is the working directory; the reach is added as a working directory
-/// when it is wider.
+/// Claude Code's `--settings` for a read-only run: the permission rules that hold it to `reach`
+/// (canonical), and what signing in needs (`sign_in`). `folder` is the working directory; the
+/// reach is added as a working directory when it is wider.
 #[must_use]
-pub fn claude_rules(folder: &Path, reach: &Path) -> String {
+pub fn claude_rules(folder: &Path, reach: &Path, sign_in: &ClaudeSignIn) -> String {
     let anchor = pattern_anchor(reach);
     let mut deny: Vec<String> = DENIED_TOOLS.iter().map(|tool| (*tool).to_owned()).collect();
-    for parts in CREDENTIAL_PATHS {
-        let joined = parts.join("/");
-        deny.push(format!("Read({anchor}/**/{joined})"));
-        deny.push(format!("Read({anchor}/**/{joined}/**)"));
-    }
-    for file in DENIED_FILES {
-        deny.push(format!("Read({anchor}/**/{file})"));
+    // Under the reach, and anywhere: a rule a working directory could miss (one more added by
+    // some setting, or the reach spelled another way) still never reads a key.
+    for root in [anchor.as_str(), "/"] {
+        for parts in CREDENTIAL_PATHS {
+            let joined = parts.join("/");
+            deny.push(format!("Read({root}/**/{joined})"));
+            deny.push(format!("Read({root}/**/{joined}/**)"));
+        }
+        for file in DENIED_FILES {
+            deny.push(format!("Read({root}/**/{file})"));
+        }
     }
     let mut permissions = json!({
         "allow": [format!("Read({anchor}/**)")],
@@ -78,7 +85,10 @@ pub fn claude_rules(folder: &Path, reach: &Path) -> String {
     if folder != reach {
         permissions["additionalDirectories"] = json!([reach.to_string_lossy()]);
     }
-    json!({ "permissions": permissions }).to_string()
+    let mut settings = Map::new();
+    sign_in.add_to(&mut settings);
+    settings.insert("permissions".to_owned(), permissions);
+    Value::Object(settings).to_string()
 }
 
 /// `//` and the absolute path, with gitignore's pattern characters escaped so the rule names
@@ -101,12 +111,14 @@ mod tests {
     use serde_json::Value;
 
     use super::{claude_rules, reach_line};
+    use crate::harness::sign_in::ClaudeSignIn;
 
     #[test]
     fn the_rules_allow_reading_the_reach_and_deny_the_rest() {
         let rules: Value = serde_json::from_str(&claude_rules(
             Path::new("/r/db/crates/a"),
             Path::new("/r/db"),
+            &ClaudeSignIn::default(),
         ))
         .expect("json");
         let permissions = &rules["permissions"];
@@ -124,20 +136,30 @@ mod tests {
             "mcp__*",
             "Read(//r/db/**/.ssh/**)",
             "Read(//r/db/**/.env)",
+            "Read(//**/.ssh/**)",
+            "Read(//**/.aws/**)",
+            "Read(//**/*.pem)",
         ] {
             assert!(deny.contains(&denied), "{denied} in {deny:?}");
         }
         assert_eq!(permissions["blockReadsOutsideWorkingDirectories"], true);
         assert_eq!(permissions["additionalDirectories"][0], "/r/db");
-        let alone: Value =
-            serde_json::from_str(&claude_rules(Path::new("/r/db"), Path::new("/r/db")))
-                .expect("json");
+        let alone: Value = serde_json::from_str(&claude_rules(
+            Path::new("/r/db"),
+            Path::new("/r/db"),
+            &ClaudeSignIn::default(),
+        ))
+        .expect("json");
         assert!(alone["permissions"]["additionalDirectories"].is_null());
     }
 
     #[test]
     fn pattern_characters_in_the_path_are_escaped() {
-        let rules = claude_rules(Path::new("/r/a[1]*"), Path::new("/r/a[1]*"));
+        let rules = claude_rules(
+            Path::new("/r/a[1]*"),
+            Path::new("/r/a[1]*"),
+            &ClaudeSignIn::default(),
+        );
         assert!(rules.contains(r#""Read(//r/a\\[1\\]\\*/**)""#), "{rules}");
     }
 
