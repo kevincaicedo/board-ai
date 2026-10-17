@@ -100,7 +100,7 @@ The numbers match the badges on the diagram.
 - Each provider's models can be listed for a picker (OpenRouter's tool-capable models with context and price, who serves one of them, Ollama's local models); the lists are public, bounded and cached.
 - A session readies its talker when it opens (a local model loads and reads its prompt), so the first answer doesn't wait for it.
 - Local models are downloaded on first run and checked against a SHA-256 hash. The macOS system voice covers the wait until the download finishes.
-- A cloud speech-to-text adapter (for example Deepgram) is a Phase 1 addition behind the same interface.
+- A cloud speech-to-text adapter (for example Deepgram) is a later addition behind the same interface.
 - The Claude Agent SDK would need a Node sidecar. The CLI's headless mode gives the same capabilities, so the SDK is deferred.
 
 ## 7. Data and privacy (local-first)
@@ -143,8 +143,8 @@ What is left:
 
 ## 9. Deployment
 
-- **MVP.** A Tauri app for macOS 14+ on Apple silicon. Builds are unsigned during Phase 0, then signed and notarized before the first outside users.
-- **Hosted (Phase 4, after the MVP is validated).**
+- **MVP.** A Tauri app for macOS 14+ on Apple silicon. Builds are unsigned while the MVP is built, then signed and notarized before the first outside users (Phase 1 of [PRODUCT §11](../PRODUCT.md)).
+- **Hosted (later, after the MVP is validated; [PRODUCT §11](../PRODUCT.md)).**
   - The same core and runtime run on a server, with WebSocket replacing the Tauri transport and WebRTC carrying audio.
   - The UI is served as a web app.
   - Managed models and sync come with a subscription.

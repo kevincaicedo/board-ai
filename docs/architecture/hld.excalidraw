@@ -4099,11 +4099,11 @@
    "locked": false,
    "fontSize": 18,
    "fontFamily": 5,
-   "text": "Later · hosted (Phase 4)\nSame core + runtime on a server.\nUI in the browser over WebSocket;\naudio over WebRTC.\nManaged models + sync by subscription.\n\nWhy it stays cheap: the UI only talks\nthrough the protocol, and core +\nruntime never import Tauri.",
+   "text": "Later · hosted\nSame core + runtime on a server.\nUI in the browser over WebSocket;\naudio over WebRTC.\nManaged models + sync by subscription.\n\nWhy it stays cheap: the UI only talks\nthrough the protocol, and core +\nruntime never import Tauri.",
    "textAlign": "left",
    "verticalAlign": "top",
    "containerId": "re111",
-   "originalText": "Later · hosted (Phase 4)\nSame core + runtime on a server.\nUI in the browser over WebSocket;\naudio over WebRTC.\nManaged models + sync by subscription.\n\nWhy it stays cheap: the UI only talks\nthrough the protocol, and core +\nruntime never import Tauri.",
+   "originalText": "Later · hosted\nSame core + runtime on a server.\nUI in the browser over WebSocket;\naudio over WebRTC.\nManaged models + sync by subscription.\n\nWhy it stays cheap: the UI only talks\nthrough the protocol, and core +\nruntime never import Tauri.",
    "autoResize": true,
    "lineHeight": 1.25
   }

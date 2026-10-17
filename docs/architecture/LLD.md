@@ -678,7 +678,7 @@ The system prompt and tool set are session config (`TalkerConfig { role, model, 
   - **Memory view.** The newest `MEMORY_VIEW_ITEMS_MAX` (12) memories from each file, the newest notes, and the latest digest as a card, with its notes, tasks and open questions counted.
   - **Past sessions.** `open_session` gives the final board, at most `PAST_BOARD_OPS_MAX` (1024) ops. `find_session` resolves a replay by id or by title words.
   - **Replays.** `session_log(id)` reads a session's `events.jsonl` by its exact id, never a path, and at most `SESSION_LOG_READ_MAX_BYTES` (32 MiB).
-- **Replay audio.** BoardAI's voice will be stored as Opus in Phase 1. Your voice is never stored; replays show your words as captions.
+- **Replay audio.** BoardAI's voice will be stored as Opus later. Your voice is never stored; replays show your words as captions.
 
 ### 3.7 Protocol (core ↔ UI)
 

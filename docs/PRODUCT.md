@@ -1,20 +1,27 @@
-# BoardAI: a voice-first harness for understanding
+# BoardAI: the board for understanding
 
-> Status: pre-MVP · Last updated: 2026-10-15 · Open source (Apache-2.0)
+> Status: MVP built, in validation · Last updated: 2026-10-17 · Open source (Apache-2.0) · [github.com/kevincaicedo/board-ai](https://github.com/kevincaicedo/board-ai)
 >
 > **Design (source of truth for every screen):** [BoardAI design canvas](https://claude.ai/artifact/XY3ZrPFmFDA9gNw9Y6WuVJ) · **Architecture:** [HLD](architecture/HLD.md) · [LLD](architecture/LLD.md)
 
 ## TL;DR
 
-BoardAI is a personal AI you **talk to** in order to understand things, starting with software. It explains the way a senior engineer does at a whiteboard. It speaks while it **draws hand-drawn diagrams in real time**, shows **code snippets that highlight in sync with what it's saying**, and lets you **interrupt at any moment** ("wait, wait — what's that?"). It answers, then picks up exactly where it stopped. Everything you explore feeds a **personal brain** of notes, a knowledge graph of past conversations, and tasks and roadmaps, so each session starts where the last one ended.
+BoardAI is **the board for understanding**: a voice-first desktop app where you understand, plan and design software together with an AI. Drop in a codebase, a PDF or a Markdown document and ask out loud. BoardAI explains the way a senior engineer does at a whiteboard. It speaks while it **draws hand-drawn diagrams in real time**, from a quick sketch to a detailed system map you can drill into, and shows **code that highlights in sync with what it's saying**. You can **interrupt at any moment** ("wait, wait — what's that?"), pick up the pen and draw, or say "note that". It answers, then picks up exactly where it stopped.
 
-It runs on top of existing coding harnesses (Claude Code, pi), so it can read real codebases. It is built for **understanding first**: when you ask for a deep review or a change, it hands a precise brief to the harness.
+Software work is moving from writing code to understanding systems and working alongside AI: knowing how a system works, and identifying and balancing its trade-offs. BoardAI is built for that part. It works beside the coding harness you already use (Claude Code, pi):
 
-The MVP depends on three things:
+- **The harness researches and writes code.** It reads the repo and returns a brief with `file:line` citations, and it makes the changes you agree on.
+- **BoardAI is where you understand and decide.** It turns the research into a drawing it explains, helps you weigh a change, and captures the decisions, tasks and plans that go back to the harness to execute.
+
+Everything you explore feeds a **personal brain** of notes, tasks, memories, session digests and replays, so each session starts where the last one ended. Over time it learns what you know and how you like to learn.
+
+The MVP is built (§10), and it depends on three things:
 
 1. **The voice feels human.** Latency is low, the pace is natural, and interruptions are expected, not treated as errors.
 2. **Drawing is synced to speech.** The diagram grows *while* it's being explained, stroke by stroke.
 3. **The UI is almost nothing.** An orb, a canvas, and surfaces that appear only when they help.
+
+What ships after the MVP, and in what order, is in §11.
 
 ---
 
@@ -43,24 +50,65 @@ Keeping design and code in sync:
 
 ## 2. Vision and positioning
 
-**One-liner:** *A whiteboard that talks back, and remembers.*
+**One-liner:** *The board for understanding.* A whiteboard that talks back, draws while it explains, and remembers.
 
-**Vision:** A second brain you converse with in real time. It explains, draws, simulates and remembers, so your understanding compounds over time. It starts with software and can extend to any complex domain later.
+**Vision.** Coding agents write more of the code every month. What stays with the engineer is understanding: how a system works, which trade-offs it makes, which change to make next, and why. BoardAI is designed for understanding.
+
+It is the board for understanding, planning, designing, mocking up and architecting software. You drop in a file, a PDF or a Markdown document and ask questions, and the explanation is drawn while it's spoken. You co-design software with the AI before anything is coded, or you understand an existing codebase by discussing it visually, in real time. You interrupt, draw, ask it to remember, and write notes with your voice. Afterwards you replay the session, discuss architectural changes, find issues, and write high-level and low-level diagrams.
+
+Over time it becomes a personal brain. It holds your tasks, the knowledge graph of what you've explored, your memories and what it understood about your code. It also learns your expertise, your learning path, how you think a problem through, and how you like to learn. It starts with software and can extend to other complex domains later.
+
+### 2.1 BoardAI and your coding harness
+
+BoardAI does not replace your coding harness. Each does the part it's built for.
+
+| | Your coding harness (Claude Code, pi) | BoardAI |
+|---|---|---|
+| **Its job** | Research the code, and write it | Show how it works, and help you decide |
+| **What it produces** | Research briefs with `file:line` citations; changes on a git branch | Live drawn explanations, diagrams, decisions, notes, tasks and plans |
+| **How you use it** | In the terminal, or driven by BoardAI | By voice, on the board |
+
+The loop:
+
+1. **Give BoardAI the code.** Share a folder, a crate or a file. Later, give it a repo URL and it downloads the repo.
+2. **The harness researches it.** BoardAI asks Claude Code or pi for a brief, checks every line the brief cites, and draws the map.
+3. **You understand and decide on the board.** You ask, interrupt, draw, compare options, and capture notes and tasks.
+4. **The harness executes.** A change you confirm out loud runs in the harness on a new git branch. Later, whole tasks and designs go to it from the board.
+5. **The harness pulls context back** (later). A BoardAI MCP server lets the harness search and pull the design, decisions, tasks and notes behind a request it got from BoardAI.
+
+### 2.2 Use cases
+
+| Use case | What it looks like | Status |
+|---|---|---|
+| **Understand a codebase** | "Walk me through this repo." The harness researches the shared code. BoardAI draws the module map and walks the main paths, with code cards, trace and checked `file:line` chips. | **In the MVP** |
+| **Read a paper or a document** | Drop a PDF or a Markdown file and ask. BoardAI digests its text, tables and figures, redraws a figure on the board, and cites pages (`p. 5 · Figure 3`). | **In the MVP** |
+| **Explain a system with detailed diagrams** | "Walk me through the whole engine." A map of 40 to 100 or more parts (nested containers, a legend, numbered steps) is revealed a part at a time as it's explained. "More detail on the arena" drills in. | **In the MVP** |
+| **Draw together** | Pick up the pen and sketch your idea, name the parts by voice, say "done", and BoardAI answers about your drawing. | **In the MVP** |
+| **Notes, tasks and memory by voice** | "Note that." "Add a task to check our TTLs." "Remember that we use Kafka." A digest is written when the session ends. | **In the MVP** |
+| **Replay** | Open a past session in the library and scrub it like a film, or ask "show me the diagram from the Redis session". | **In the MVP** |
+| **A repo from its URL** | "Use github.com/…". BoardAI downloads the repo into a folder you own and researches it through your harness, the same way as a shared folder. | **Later** (Phase 4) |
+| **Co-design, from idea to code** | Brainstorm an idea → wireframes and mock-ups → a project board → software design and architecture diagrams → cloud architecture → hand it to Claude Code to implement. | **Partly built.** Architecture and system diagrams, Compare for trade-offs, and a change confirmed out loud and run by the harness work today. Brainstorming, wireframes and mock-ups, designed cloud architecture and handing a design to Claude Code are Phase 2. The project board is Phase 3. |
+| **An MCP server for the coding harness** | Claude Code, working on a request from BoardAI, searches BoardAI and pulls the design, decisions and tasks behind it. | **Later** (Phase 4) |
+| **The personal brain** | BoardAI knows your expertise, your learning path, how you think and how you like to learn, and adapts to them. | **Partly built.** Memory, notes, tasks, digests and recall work, and each digest records the concepts and relations of the knowledge graph. The graph view and the deeper profile are Phase 5. |
+| **Project board and roadmap** | "What's next on the harness project?" A Jira-style board of columns and a roadmap timeline, called up by voice. | **Later** (Phase 3). Tasks, projects and the Now list are built. |
+
+### 2.3 What BoardAI is and isn't
 
 | BoardAI is | BoardAI is not |
 |---|---|
-| A voice-first partner for understanding systems and code | A coding agent that writes code for you (it can hand off to one) |
+| The board for understanding, planning and designing software with an AI | A coding agent that writes code for you (it hands that to one) |
 | Live, interruptible, hand-drawn explanations | A diagram generator that hands you a finished image |
-| A memory of everything you've explored | A chat log |
+| A memory of everything you've explored, and of how you learn | A chat log |
+| Where decisions, tasks and plans come from, captured as you talk | A project tracker you fill in by hand |
 | A calm, mostly empty screen | A dashboard, an IDE, or a chat window |
 
 ## 3. Who it's for
 
 | Persona | Job to be done | Example topics |
 |---|---|---|
-| **Self-directed systems learner** (primary user; we use it ourselves first) | "Make me *really* understand X, at my pace, and remember what I learned." | Linux VFS, Raft, B-trees, CPU caches, AWS networking, memory allocators |
+| **Self-directed systems learner** (primary user; we use it ourselves first) | "Make me *really* understand X, at my pace, and remember what I learned." | Linux VFS, Raft and its paper, B-trees, CPU caches, AWS networking, memory allocators |
 | **Engineer onboarding onto a codebase** | "Walk me through this repo. How does a request actually flow?" | A new job, an open-source contribution |
-| **Architect thinking out loud** | "Talk this design through with me and show me the tradeoffs." | Kafka vs SQS, cache strategy, a sharding plan |
+| **Architect or engineer designing with AI** | "Talk this design through with me, show me the tradeoffs, and turn it into work for my coding agent." | Kafka vs SQS, cache strategy, a sharding plan, a feature before any code is written |
 | *Later:* interview prep, students, learners outside software | | Mock system design interviews |
 
 ## 4. Product principles
@@ -73,6 +121,7 @@ Keeping design and code in sync:
 6. **Grounded.** When BoardAI talks about your code, every claim comes from a file it actually read, with a `file:line` reference. "I haven't looked at that yet" is an acceptable answer.
 7. **It remembers you.** Sessions connect to each other. BoardAI knows what you've covered and where you struggled.
 8. **Local-first, and yours.** Notes are Markdown, diagrams are open JSON, and the index is SQLite on your machine.
+9. **Beside your coding harness, not instead of it.** The harness researches and writes code. BoardAI explains, helps you decide and plans, and hands the work back to the harness.
 
 ---
 
@@ -151,7 +200,7 @@ BoardAI sounds like a calm senior engineer at a whiteboard:
 - It never keeps lecturing past an interruption.
 - It uses analogies sparingly.
 
-The MVP has one default voice, warm and unhurried. A choice of voices comes later.
+The MVP has one default voice, warm and unhurried, spoken by Kokoro on your Mac. The settings page switches the engine to ElevenLabs or the macOS system voice. Choosing among each engine's voices comes later.
 
 ---
 
@@ -227,9 +276,9 @@ Surfaces follow three rules:
 
 - **Auto-notes.** BoardAI takes notes quietly during the session. At the end it writes a **session digest** with a summary, the key diagrams, open questions and any captured tasks.
 - **Voice capture.** You can say "note that", "remember that our cluster uses…" or "add a task…".
-- **Knowledge graph.** The graph links concepts, systems, files, projects, sessions and notes. The relationships are `explains`, `part_of`, `depends_on`, `mentioned_in` and `struggled_with`.
+- **Knowledge graph.** The graph links concepts, systems, files, projects, sessions and notes. The relationships are `explains`, `part_of`, `depends_on`, `mentioned_in` and `struggled_with`. Each session's digest records them today; the graph view comes in Phase 5 (§11).
 - **Recall.** Asking "What did we cover on consensus?" or "Show me the diagram from the Redis session" brings back the canvas with a two-sentence recap.
-- **Learner model.** BoardAI tracks what you've covered, what you asked about repeatedly, and your preferred pace and depth. Interruptions are a useful signal of confusion. BoardAI uses this to skip what you already know and to revisit topics where you were shaky.
+- **Learner model.** BoardAI tracks what you've covered, what you asked about repeatedly, and your preferred pace and depth. Interruptions are a useful signal of confusion. BoardAI uses this to skip what you already know and to revisit topics where you were shaky. The MVP records these signals; the profile built from them (expertise, learning path, how you think, your preferences) comes in Phase 5.
 - **Plain files.** Notes are Markdown and diagrams are `.excalidraw`-compatible JSON, stored in a folder you own.
 
 **What BoardAI remembers on its own.** The balance: keep what is useful and visible, ask before keeping what was inferred, and never keep what is risky.
@@ -252,13 +301,13 @@ Two controls cover the rest. "Forget that" removes the last memory. "Don't remem
 - **Tasks are captured by voice.** Each one links to the session, diagram node or `file:line` it came from.
 - **Projects group things.** A project ("the harness project") collects tasks, notes and sessions.
 - **Views appear on request.** **Now** is a short list, **Board** shows columns, and **Roadmap** is a timeline. You call them up by voice ("what's next on the harness?") and they show as a surface, never as a permanent screen.
-- **MVP scope:** tasks, projects and the Now list. The Board and Roadmap views come later.
+- **MVP scope:** tasks, projects and the Now list. The Board and Roadmap views, and sending a task to the harness, come in Phase 3 (§11).
 
 ### 7.6 Sessions and replay
 
 - **Sessions replay like a film.** Every session is an event log of voice, strokes and surfaces. You can scrub the timeline, which has chapters at each thread step and shows detours as branches.
 - **Library.** Sessions appear as large rounded cards. Each has soft abstract cover art (a blurred pastel render of the session's diagram) and the play, mute and progress controls from the references.
-- **Export.** Diagrams export as PNG, SVG or `.excalidraw`, notes as Markdown, plus the transcript.
+- **Export.** Each session's board is saved as `.excalidraw` and its notes as Markdown, with the transcript. PNG and SVG export come later.
 
 ---
 
@@ -385,60 +434,148 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
 
 ## 10. MVP scope
 
-**In scope**
+The MVP is built. Its scope is fixed: it is the right size to validate the idea and the product, and we use it ourselves first. What is left is validation (Phase 1 in §11). New functionality ships in the phases after it.
 
-- A desktop app for macOS 14+ on Apple silicon, with a light theme. Open source, bring your own keys.
+**Built**
+
+- **A desktop app** for macOS 14+ on Apple silicon, with a light theme. Open source and bring your own keys. The repository is public, and CI runs on macOS 14.
+- **Setup and settings.** A first-run screen, and a settings page (⌘, or "open settings") for the talker and its model, the scribe, the voice, the microphone and its permission, keys (checked, replaced or removed, kept in the macOS Keychain), coding harnesses and code folders, and the vault and its index.
 - **Providers, all swappable:**
-  - LLM: Claude, OpenRouter (any listed model; measured presets include gpt-oss-120b, Qwen3.8, DeepSeek V4.1 Flash, Claude Haiku 5.5, Gemini 3.8 Flash and GPT-6 Luna), or a local model through Ollama
-  - Speech-to-text: local Whisper by default
-  - Text-to-speech: a local voice model (Kokoro) by default, or ElevenLabs
-  - Coding harness: Claude Code (headless CLI) or pi
+  - LLM: Claude, OpenRouter, or a local model through Ollama. OpenRouter takes any listed model, with measured presets (gpt-oss-120b by default, Qwen3.8 27B as the scribe, DeepSeek V4.1 Flash, Claude Haiku 5.5, Gemini 3.8 Flash and GPT-6 Luna), and the settings page shows how well each one drew when measured.
+  - Speech-to-text: local Whisper with Silero voice detection, its vocabulary taken from the board and the opened code
+  - Text-to-speech: Kokoro on your Mac by default, ElevenLabs (realtime), or the macOS system voice
+  - Coding harness: Claude Code (headless CLI) or pi (RPC)
 - **Voice loop:**
   - Open mic by default, with push-to-talk as an option
   - Barge-in using duck-then-decide, with backchannel handling
   - Captions
+  - Controls by voice, such as "go back", "clear the board", "end the session" and "open settings"
 - **The orb**, with every state and the orb-to-nib transition.
 - **Live canvas:**
-  - Architecture, flow, sequence and data-structure diagrams, from quick sketches to detailed nested system maps, with drill-down into any part
-  - Human-like strokes synced to speech
-  - Strike-and-rewrite corrections and annotations
-  - Camera follow and depth of field
+  - Architecture, flow, sequence, state, tree and data-structure diagrams (arrays, pages, hash tables)
+  - Detailed diagrams, planned whole and revealed a part at a time as they're explained: nested containers, categories and a legend, records with fields, notes and numbered steps
+  - Drill-down into any part ("more detail on X"), several levels deep, and "back out"
+  - Human-like strokes synced to speech, strike-and-rewrite corrections, annotations and highlights
+  - Pages ("clear the board"), camera follow and depth of field
+- **You draw:** your shapes on the board in your own ink, labels by voice, undo, and BoardAI waits until you say "done", then answers about your drawing.
 - **Explanations:** the thread, nested detours and exact resume.
 - **Pointing:** hover or click while saying "this".
-- **Sources (§7.7):** codebases, crates, modules, files, Markdown and PDF documents, shared for a session or kept in a project, with document digests that keep figures.
+- **Sources (§7.7):** codebases, crates, modules, files, and Markdown, text and PDF documents, shared by drop, the chooser or voice, for a session or kept in a project, in the Sources tray.
 - **Code grounding:**
-  - Code understanding through the coding harness (research briefs with diagrams), native read-only looks for code cards and citation checks, and the harness for reviews and confirmed changes
-  - Module map
+  - Code understanding through research briefs from the coding harness, confined to the source's repository and cached per source. A brief's diagram is staged on the board with the harness's name and how many files it read.
+  - Every cited `file:line` is read natively and checked before its chip shows
+  - Repo tours and module maps that hold to what was read
   - Code cards with synced highlights and source chips
   - Trace mode
-- **The Compare surface.**
-- **Memory:** notes and tasks by voice, an automatic session digest, the memory policy in §7.4, and recall of past sessions.
-- **Stretch:** the session library and replay.
+  - Reviews through the harness, read-only, and changes only after a spoken yes, on a new git branch
+- **Documents:** PDF and Markdown digests with sections, tables, figures as diagrams BoardAI can redraw, and claims with pages. PDF text is read on this Mac in reading order, and figures by a model that reads files or by the harness. Page citations are checked, the Doc card shows the passage, and a figure can be staged on the board. The figure's image on the card is not built yet.
+- **Surfaces:** code card, Compare, Doc card, recap, note and task chips, thread and captions.
+- **Memory:** notes and tasks by voice, an automatic session digest (summary, diagrams, open questions, proposed memories, and the concepts and relations of the knowledge graph), the memory policy in §7.4, recall of past sessions, and "forget that", "don't remember this session" and "yes, keep it".
+- **Views:** the library with cover art, tasks (the Now list), memory, and replay of past sessions. Projects group tasks, notes, sessions and sources.
 
-**Out of scope for now**
+**Out of scope for the MVP**
 
-- Text input
-- Windows, Linux and mobile
-- Multiplayer
-- Editing code inside BoardAI (changes go through the coding harness)
-- Visualizing the knowledge graph
-- Board and roadmap views
-- Simulations other than trace
-- Domains outside software
-- A hosted version
-- Dark theme
+| Not in the MVP | Where it goes (§11) |
+|---|---|
+| Brainstorming, wireframes and mock-ups, designed cloud architecture, handing a design to Claude Code | Phase 2 |
+| Text input | Phase 2 |
+| The Board and Roadmap views, sending a task to the harness | Phase 3 |
+| Repo URLs, and the BoardAI MCP server | Phase 4 |
+| Visualizing the knowledge graph, the expertise and learning-path profile | Phase 5 |
+| A hosted version, sync and multiplayer | Later |
+| Simulations other than trace, timelines, layered stacks and plots, PNG and SVG export, a dark theme | Later |
+| Windows, Linux and mobile, and domains outside software | Later |
+| Editing code inside BoardAI | Never: code changes go through the coding harness |
 
 ## 11. Roadmap
 
-| Phase | What ships | Exit criteria |
+The first roadmap had a Phase 0 (the magic trick: the orb, the voice loop and drawing synced to speech) and a Phase 1 (grounding and memory). The MVP built both in one push (§10). This section is the phased delivery after the MVP.
+
+Three rules hold for every phase:
+
+- **A phase starts when the one before it passes its exit test.** The plan tracks each phase's deliverables and exit test.
+- **Each phase builds on what's built.** It reuses the MVP's voice loop, canvas, staged diagrams, sources, harness and store before adding anything new. A new seam, dependency, protocol or storage format gets its decision row first.
+- **The principles in §4 don't bend.** Voice first, a calm screen, grounded claims, local-first, and code written only by the coding harness.
+
+| Phase | What it delivers | Exit test |
 |---|---|---|
-| **0 · The magic trick** | The orb, the voice loop with barge-in, and hand-drawn architecture diagrams synced to speech, on general topics. No repo and no memory yet. | Ten of your own study sessions (Linux VFS, Raft, B-trees…) where interrupting feels natural and you'd rather use BoardAI than read. |
-| **1 · MVP** | Repo grounding, code cards, trace, detours and resume, Compare, notes and tasks, session memory and recall, library and replay. | You get to know an unfamiliar open-source repo using only BoardAI, and 5 outside engineers use it every week for a month. |
-| **2 · Personal brain** | A visual view of the knowledge graph ("constellation"), Board and Roadmap views, a learner model that revisits shaky topics, simulations, an MCP server that exposes the brain, a text box, a dark theme. | Weekly retention, and sessions that build on earlier ones. |
-| **3 · Beyond software** | Other domains (math, physics, business), a mock system design interview mode (you draw and explain while BoardAI interviews), shared sessions, a mobile companion for listening and review. | |
-| **4 · Hosted** | A web version: the same core running in the cloud, managed models by subscription, and sync across devices. It starts only after the MVP loop is validated. | People pay for it instead of managing their own keys. |
+| **1 · Validate the MVP** | The owner's study sessions, Claude measured, polish from use | The exit sessions pass, Claude is measured, and the polish list is closed |
+| **2 · Co-design** | Brainstorming, wireframes and mock-ups, design and cloud architecture diagrams, designs handed to Claude Code, a text box | A real feature goes from an idea to code through a design made in BoardAI |
+| **3 · Project planning** | The Board and Roadmap views, designs split into tasks, tasks sent to the harness | A real project is planned in BoardAI for two weeks, with its tasks done through the harness |
+| **4 · MCP server and repo URLs** | A BoardAI MCP server the harness pulls from, and repos from a URL | The harness pulls a task's context itself, and a repo is learned from its URL alone |
+| **5 · The personal brain** | The graph view, expertise, learning path, thinking process and preferences | After a month, the profile reads true and new sessions build on it |
+| **Later** | Hosted, sync, multiplayer, beyond software | People pay for the hosted version instead of managing their own keys |
+
+### Phase 1 · Validate the MVP
+
+- **Delivers:**
+  - **The owner's study sessions:** ten real study sessions where interrupting feels natural, and an unfamiliar open-source repo learned using only BoardAI.
+  - **Claude measured** as the talker with the owner's key, for latency and drawing, the same way the OpenRouter models were. Claude's own API is measured reading PDF figures too.
+  - **The checks only a person can make:** echo cancellation on laptop speakers in a quiet room, and how the voices sound.
+  - **Polish from use.** Whatever the sessions show is broken, slow or confusing gets fixed, each fix with a regression test. Nothing is added to scope.
+  - **A signed and notarized build**, so the first outside engineers can try it.
+- **Why first:** everything after it stands on the voice loop, the drawing and the grounding. If they don't hold up in daily use, more features would only hide it.
+- **Builds on:** the MVP as it is.
+- **Exit test:** the ten sessions and the repo pass, Claude's numbers are on the settings page, and every item on the polish list from those sessions is fixed or deliberately deferred.
+
+### Phase 2 · Co-design
+
+- **Delivers:**
+  - **Brainstorming.** "Let's brainstorm X" puts ideas on the board as you talk, groups them, and turns a choice between them into a Compare.
+  - **Wireframes and mock-ups.** A new diagram family for screens (frames, navigation, lists, forms, buttons) in the same hand-drawn style, drawn from your words or from your own sketch.
+  - **Design and architecture diagrams from the design.** Components, the data model and the main flows, high level and low level, with drill-down.
+  - **Cloud architecture.** The design's deployment (regions, networks, managed services), with its trade-offs in a Compare.
+  - **Design decisions by voice.** "We chose X because Y" is kept in the project, linked to the part of the board it's about.
+  - **Handing a design to Claude Code.** BoardAI writes a design brief (the diagrams as structured parts, the decisions and the notes). After a spoken yes, the harness implements it on a new git branch while BoardAI narrates its progress.
+  - **A text box** for names, identifiers and specs that are hard to say (§8.9).
+- **Why now:** the MVP explains what already exists. Co-design uses the same board for what doesn't exist yet. It's the shortest step from the MVP, and planning (Phase 3) needs a design to plan from.
+- **Builds on:** staged diagrams and drill-down, which already lay out large nested diagrams; You draw; Compare; notes and projects; and the change gate (a spoken yes, a new branch) that already sends changes to the harness.
+- **Exit test:** the owner designs one real feature in BoardAI, from the idea to a wireframe and an architecture diagram, and hands it to Claude Code. The result follows the design without the owner re-explaining it in the terminal.
+
+### Phase 3 · Project planning
+
+- **Delivers:**
+  - **Tasks with a status** (to do, doing, done), linked to the session, diagram part, design or `file:line` they came from.
+  - **"Split this into tasks."** A design or a diagram becomes proposed tasks in the project, kept after you say yes.
+  - **The Board view** (columns) and **the Roadmap view** (a timeline of a project's milestones), called up by voice as surfaces, never as a permanent screen (§7.5).
+  - **Sending a task to the harness.** A task brief (the goal, the context, the linked diagrams and decisions, and what done means) runs in the harness on a new branch after a spoken yes. BoardAI narrates its progress, and the task moves to done with its branch linked.
+  - **Planning by voice.** "What's next on the harness project?" "Move the TTL task to this week."
+- **Why now:** tasks and projects are already built, and Phase 2 produces designs that need breaking down. Planning turns decisions into work the harness can do.
+- **Builds on:** tasks, projects and the Now list; views called up by voice; and the design hand-off from Phase 2.
+- **Exit test:** the owner plans one real project in BoardAI for two weeks with no other tracker, and at least five tasks go from the board to the harness and come back done.
+
+### Phase 4 · The BoardAI MCP server and repo URLs
+
+- **Delivers:**
+  - **Repo URLs.** "Use github.com/…", or a dropped link, downloads the repo into a folder you own. It's shared as a code source and researched through the harness like any local folder, with the same reach and credential rules. It can be kept in a project and updated on request.
+  - **The BoardAI MCP server.** A local MCP server the coding harness connects to. Its tools search the brain (notes, tasks, decisions, digests, briefs and sessions) and fetch a task or a design whole, with its diagrams as structured parts. Its only write is a task's progress and result. It runs on this Mac, is scoped to a project, and returns only what the store has already redacted.
+  - **Claude Code and pi get the server** in their configuration when BoardAI starts them.
+- **Why now:** after Phases 2 and 3, BoardAI holds designs, decisions and tasks worth pulling. Until then, the brief BoardAI writes is enough. Repo URLs come in the same phase because both widen what passes between BoardAI, the harness and the outside world, and both need the same care about reach and privacy.
+- **Builds on:** the store's index and full-text search, cached briefs and digests, the sources model, and the harness's confinement.
+- **Exit test:** Claude Code, working on a task sent from BoardAI, pulls the task's design and decisions through the MCP server instead of having them pasted into its prompt. An unfamiliar open-source repo is learned starting from only its URL.
+
+### Phase 5 · The personal brain
+
+- **Delivers:**
+  - **The graph view** ("constellation") of concepts, systems, files, projects and sessions, with their relations. Opening a node recalls its sessions.
+  - **Expertise:** what you know and how deeply, from sessions, learning signals and what you've said about yourself.
+  - **A learning path:** what to learn next, from what you covered and where you struggled. The idle suggestion picks from it, and BoardAI revisits shaky topics and skips what you know.
+  - **Your thinking process and preferences:** how you approach a problem (what you ask first, how you break it down), and the pace, depth and kind of examples you prefer, applied by default.
+  - All of it follows the policy in §7.4: inferred items are proposed in the digest, kept only after a yes, and visible and editable in Memory.
+- **Why last:** the brain learns from months of sessions, designs and plans, which Phases 1–4 produce. Built earlier, it would show an empty graph and guess from too little. It also keeps the risk of a brain that never ends (§13) contained.
+- **Builds on:** the memory policy, learning signals, the entities and relations each digest already writes to the index, recall, and the Memory view.
+- **Exit test:** after a month of use, the owner keeps most of the profile BoardAI proposes, and new sessions visibly build on it. BoardAI skips what's known, revisits shaky topics, and the next step on the learning path is one the owner takes.
+
+### Later
+
+- **Hosted:** a web version, with the same core and runtime behind a WebSocket and managed models by subscription. It starts only after the loop is validated. Its exit test: people pay for it instead of managing their own keys.
+- **Sync** across devices, and **multiplayer**: shared sessions, one board that two people talk over.
+- **Beyond software:** other domains (math, physics, business), a mock system design interview mode (you draw and explain while BoardAI interviews), and a mobile companion for listening and review.
+- Simulations beyond trace, timelines, layered stacks and plots, PNG and SVG export, a dark theme, a choice of voices, and Windows and Linux.
 
 ## 12. Success metrics
+
+Each phase has its own exit test (§11). These metrics run across all of them.
 
 - **How it feels** (instrumented):
   - Voice-to-voice latency at p50 and p90
@@ -452,6 +589,8 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
   - **Continuity rate:** the share of sessions picked up again later
   - The share of sessions that produce a note or task
   - Understanding rated by the user before and after (1–5), on a sample of sessions
+- **From understanding to work** (from Phase 2):
+  - The share of designs and tasks handed to the harness that it completes without being re-explained in the terminal
 - **Grounding:**
   - The share of code claims that carry a valid source chip
   - User corrections per session (fewer means better grounding)
@@ -465,7 +604,9 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
 | False barge-ins from echo, coughs or "mm-hm" | Explanations become choppy | Echo cancellation, recommending headphones, duck-then-decide, a backchannel classifier |
 | Hallucinated explanations of code | It destroys trust | Claims come only from the researcher, with a source chip on each, and an honest "I haven't read that yet" |
 | Friction from voice-only input (spelling identifiers, noisy rooms) | Frustration | Pointing, captions, push-to-talk, STT vocabulary built from the repo, a text box in Phase 2 |
-| Scope creep: a "personal brain" never ends | The MVP never ships | The MVP is the magic trick plus code grounding. Brain features only emerge as byproducts of sessions. |
+| Scope creep: a "personal brain" never ends | Nothing gets validated | The MVP's scope is fixed and built (§10). Each phase has an exit test and starts only after the one before passes. The brain comes last (Phase 5) and grows from what sessions already record. |
+| Co-design and planning turn BoardAI into an IDE or a project tracker | It loses the calm, understanding-first product | Views stay surfaces called up by voice (§7.5), code is written only by the harness, and every phase keeps §4's principles |
+| The MCP server exposes the brain to a process that can write code | Private notes leak, or the harness acts on a stale plan | Local only, scoped to a project, read-mostly (its one write is a task's progress), secrets redacted before anything is stored, and a decision row before it's built |
 | Cost per hour of voice | Pricing | A fast tier, prompt caching, local VAD and later local STT |
 | Big labs add voice and canvas modes | Being commoditized | Depth for engineers, grounding in *your* code, drawing built around interruptions, local-first memory |
 
@@ -476,10 +617,12 @@ The architecture lives in [architecture/HLD.md](architecture/HLD.md) (high level
 | General voice assistants | ChatGPT Voice, Gemini Live | Diagrams drawn in sync with speech, and knowledge of your repo |
 | AI explainers | NotebookLM audio and video overviews | A live conversation you can interrupt, instead of pre-rendered media |
 | AI diagramming | Excalidraw and tldraw AI features, Eraser, Napkin | A narrating teacher; drawing that happens live |
-| Coding agents | Claude Code, Cursor, pi | Built for understanding rather than changing code (and it uses them underneath) |
+| Design whiteboards | FigJam, Miro | A co-designer that talks and draws, knows your code, and hands the design to your coding agent (Phase 2) |
+| Coding agents | Claude Code, Cursor, pi | Built for understanding and deciding rather than changing code; it hands the changes to them, and uses them underneath |
+| Project trackers | Jira, Linear | Tasks captured from the conversation, linked to the diagram and the code, and sent to the harness (Phase 3) |
 | Notes and PKM | Obsidian, Notion, Tana | Memory captured automatically from conversation |
 
-**The wedge** is the combination: live, interruptible voice plus drawing, grounded in your code, with memory. It's for engineers first.
+**The wedge** is the combination: live, interruptible voice plus drawing, grounded in your code, with memory, beside the coding harness you already use. It's for engineers first.
 
 ## 15. Decisions
 
@@ -492,8 +635,10 @@ The open questions from the first draft are answered. The decision log (kept out
 | Desktop shell | Tauri |
 | Canvas | A custom renderer with an Excalidraw-compatible format |
 | Mic | Both modes. Open mic is the default; push-to-talk is an option. |
-| Voice | One default voice for now; a choice of voices later |
-| Business model | Open source and bring your own keys, with a choice of providers (§10). A hosted version with managed models and sync comes after the MVP is validated (Phase 4). |
+| Voice | One default voice (Kokoro); the settings page switches the engine to ElevenLabs or the system voice. A choice among each engine's voices comes later. |
+| Positioning | The board for understanding, beside the coding harness: the harness researches and writes code, and BoardAI explains, helps you decide, and plans (§2) |
+| Roadmap | The MVP's scope is fixed at what's built (§10). New functionality ships in the phases of §11, each gated by its exit test. |
+| Business model | Open source and bring your own keys, with a choice of providers (§10). A hosted version with managed models and sync comes after the MVP is validated (Later, §11). |
 | Memory | The balance in §7.4: automatic for the session record and learning signals, proposed for anything inferred, only on request for notes and tasks, never for raw audio or secrets |
 
 **Still open**
@@ -517,3 +662,8 @@ The open questions from the first draft are answered. The decision log (kept out
 | **Brain edge** | The glowing right edge where captured items fly in |
 | **Talker / Researcher** | The fast conversational model / the coding harness that reads code |
 | **Narration script** | The talker's output: speech with drawing ops interleaved |
+| **Coding harness** | The coding agent you already use (Claude Code, pi). It researches and writes code for BoardAI. |
+| **Source** | Code or a document you share, for one session or kept in a project |
+| **Brief** | The harness's research on a code source: components, flows with `file:line`, and a diagram |
+| **Digest** | A document's summary: sections, tables, figures as diagrams, and claims with pages. A session also gets a digest when it ends. |
+| **MCP server** | (Phase 4) The local server the coding harness uses to search and pull from BoardAI |
