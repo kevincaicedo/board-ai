@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # For humans, not CI: runs BoardAI's PDFKit script (`text` mode) on each fixture PDF and prints
-# its page count and each page's first lines with their font size and boldness.
+# its page count and each page's first lines with their font size, boldness and box, in PDFKit's
+# order (the runtime reads them in its own, `documents::order`, D-293).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -19,6 +20,7 @@ for number, page in enumerate(document["pages"], start=1):
     lines = page["lines"]
     print("  p.%d: %d lines" % (number, len(lines)))
     for line in lines[:4]:
-        print("    %5.1f %s %s" % (line["size"], "B" if line["bold"] else " ", line["text"][:70]))
+        box = " ".join("%6.1f" % value for value in line["box"])
+        print("    %5.1f %s [%s] %s" % (line["size"], "B" if line["bold"] else " ", box, line["text"].strip()[:60]))
 '
 done

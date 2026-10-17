@@ -17,6 +17,31 @@ pub const PDFKIT_ERROR_SHOWN_MAX_CHARS: usize = 80;
 /// size PDFKit reports is read as this, so one line can't skew heading detection's arithmetic.
 pub const PDF_FONT_SIZE_MAX_POINTS: f64 = 1_000.0;
 
+/// Line boxes one page's reading order is rebuilt from (D-293); a page with more keeps
+/// PDFKit's own order, none of its text lost.
+pub const PDF_PAGE_BOXES_MAX: usize = 2_000;
+
+/// Columns one page's reading order tells apart (D-293); past it the gutters seen least are
+/// ignored, and the columns on either side of one are read as one.
+pub const PDF_PAGE_COLUMNS_MAX: usize = 4;
+
+/// How far apart two boxes' bottoms may be, in points, and still share a baseline (D-293): a
+/// table's cells in one row, a figure's labels on one line.
+pub const PDF_ROW_BASELINE_TOLERANCE_POINTS: f32 = 2.0;
+
+/// A line this long, in characters, is prose (D-293): two prose lines side by side (or prose
+/// beside a margin note) make a gutter. A table's cells are shorter, so a table's columns are
+/// never taken for a page's.
+pub const PDF_PROSE_LINE_MIN_CHARS: usize = 30;
+
+/// The narrowest gap, in points, between two prose lines side by side that is a gutter between
+/// columns (D-293); a narrower one is a wide space inside a line.
+pub const PDF_GUTTER_MIN_POINTS: f32 = 8.0;
+
+/// The farthest a line's box may lie from the page's origin, in points; a coordinate PDFKit
+/// gives past it (or not finite) is read at the bound, so one absurd box can't skew the order.
+pub const PDF_COORDINATE_MAX_POINTS: f64 = 100_000.0;
+
 /// Pages one page read extracts (`SourceReader::pages`, D-256); later pages are left out of the
 /// answer. The core asks for at most its own `DOCUMENT_READ_PAGES_MAX` (4).
 pub const DOCUMENT_PAGE_READ_PAGES_MAX: u32 = 4;

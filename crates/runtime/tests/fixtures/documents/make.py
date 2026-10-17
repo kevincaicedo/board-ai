@@ -1,5 +1,6 @@
 """Writes the document fixtures for T-031 (D-186): small PDFs with text, headings, a vector
-figure, a table, a scanned page, a Markdown note with image links, and the live run's paper.
+figure, a table, a scanned page, a Markdown note with image links, the live run's paper, and a
+two-column paper with a table in a column and one across both (D-293).
 
 Regenerate from the repository root with:
 
@@ -276,6 +277,93 @@ class Flow:
                 self.canvas.line(MARGIN, self.y, right, self.y, line_width=0.5)
         self.canvas.line(MARGIN, self.y, right, self.y, line_width=1)
         self.y -= 14
+
+
+COLUMN_GAP = 24
+COLUMN_WIDTH = (TEXT_WIDTH - COLUMN_GAP) / 2
+# Every line of a two-column page sits on this grid, as a printed paper's do.
+COLUMN_LEADING = 12
+
+
+class Columns:
+    """A two-column paper (D-293): full-width blocks across the top of a page (the title, a wide
+    table), then blocks flowing down the left column and on into the right one, with page numbers
+    in the footer. Every line keeps to one baseline grid, so the two columns' baselines line up
+    across the gutter: a reader that sorts a page by height alone interleaves them."""
+
+    def __init__(self, bottom):
+        self.pages = []
+        self.new_page(bottom)
+
+    def new_page(self, bottom):
+        """A page whose columns run down to `bottom`."""
+        self.canvas = Canvas()
+        self.pages.append(self.canvas)
+        self.y = TOP
+        self.top = TOP
+        self.column = 0
+        self.bottom = bottom
+        self.canvas.centred(PAGE_WIDTH / 2, 40, str(len(self.pages)), "F1", 9)
+
+    def x(self):
+        return MARGIN + self.column * (COLUMN_WIDTH + COLUMN_GAP)
+
+    def room(self, height):
+        if self.y - height >= self.bottom:
+            return
+        if self.column == 1:
+            raise ValueError("the text overflows the page's two columns")
+        self.column = 1
+        self.y = self.top
+
+    def wide(self, text, font, size):
+        """Centred lines across both columns, above them."""
+        for row in wrap(text, font, size, TEXT_WIDTH):
+            self.y -= 2 * COLUMN_LEADING
+            self.canvas.centred(PAGE_WIDTH / 2, self.y, row, font, size)
+        self.top = self.y - COLUMN_LEADING
+        self.y = self.top
+
+    def lines(self, text, font, size):
+        for row in wrap(text, font, size, COLUMN_WIDTH):
+            self.room(COLUMN_LEADING)
+            self.y -= COLUMN_LEADING
+            self.canvas.text(self.x(), self.y, row, font, size)
+
+    def heading(self, text):
+        # A line of space before it, and kept with two lines of what follows.
+        self.room(4 * COLUMN_LEADING)
+        self.y -= COLUMN_LEADING
+        self.lines(text, "F2", 12)
+
+    def paragraph(self, text):
+        self.lines(text, "F1", 10)
+
+    def table(self, caption, header, rows, columns, wide=False):
+        """A table in the current column, or across both at the top of the page (`wide`)."""
+        height = (len(rows) + 3) * COLUMN_LEADING
+        if not wide:
+            self.room(height + COLUMN_LEADING)
+        left = MARGIN if wide else self.x()
+        self.y -= COLUMN_LEADING
+        self.canvas.text(left, self.y, caption, "F1", 9)
+        x_positions = [left]
+        for column in columns[:-1]:
+            x_positions.append(x_positions[-1] + column)
+        right = left + sum(columns)
+        self.canvas.line(left, self.y - 4, right, self.y - 4, line_width=1)
+        for index, row in enumerate([header] + rows):
+            self.y -= COLUMN_LEADING
+            font = "F2" if index == 0 else "F1"
+            for x, cell in zip(x_positions, row):
+                self.canvas.text(x + 4, self.y, cell, font, 9)
+            if index == 0:
+                self.canvas.line(left, self.y - 4, right, self.y - 4, line_width=0.5)
+        self.canvas.line(left, self.y - 4, right, self.y - 4, line_width=1)
+        self.y -= COLUMN_LEADING
+        if wide:
+            self.top = self.y
+            self.column = 0
 
 
 def small_text():
@@ -900,9 +988,85 @@ def paper():
     write_pdf(os.path.join(HERE, "paper.pdf"), flow.pages)
 
 
+def columns():
+    """Two pages in two columns (D-293): page 1 has a table inside its left column, page 2 a
+    table across both columns whose cells all miss the gutter, above the columns."""
+    flow = Columns(bottom=300)
+    flow.wide("A Replicated Log, Set in Two Columns", "F2", 18)
+    flow.wide("A two-page fixture for the reading order of columns and tables", "F1", 11)
+    flow.heading("1 Introduction")
+    flow.paragraph(
+        "A replicated log keeps the same sequence of records on several machines, so that losing "
+        "one machine loses no record. Each record is appended by a leader and copied to the "
+        "followers before it counts as written."
+    )
+    flow.paragraph(
+        "This fixture prints that idea in two columns, the way most papers are printed. Both "
+        "columns share every baseline, so a reader that sorts the page by height alone reads a "
+        "line of the left column, then a line of the right one, and gives itself away."
+    )
+    flow.heading("2 Roles")
+    flow.paragraph(
+        "Table 1 lists the roles in a group of five replicas. Only the leader accepts appends; "
+        "the followers copy and acknowledge them, and a learner copies without a vote."
+    )
+    flow.table(
+        "Table 1: Replica roles in a group of five.",
+        ["Role", "Count", "Votes"],
+        [["Leader", "1", "yes"], ["Follower", "3", "yes"], ["Learner", "1", "no"]],
+        [100, 61, 61],
+    )
+    flow.paragraph(
+        "A write is durable once a majority of the voting replicas holds it. With four voters, "
+        "three acknowledgements are enough, so one slow follower never delays a commit, and the "
+        "leader can answer the client as soon as the third one arrives."
+    )
+    flow.paragraph(
+        "Followers learn of new records in batches. The leader sends each follower the records "
+        "after the last one it acknowledged, and a follower that has fallen too far behind is "
+        "sent a snapshot instead of the records it missed."
+    )
+    flow.heading("3 Recovery")
+    flow.paragraph(
+        "When the leader stops answering, each follower waits out a random timeout and then asks "
+        "the others for their votes. The first to win a majority becomes the new leader and goes "
+        "on from the last record a majority holds."
+    )
+    flow.paragraph(
+        "A record that only the old leader held is dropped. That is safe, because no client was "
+        "ever told that the record had been written."
+    )
+    flow.new_page(bottom=540)
+    flow.table(
+        "Table 2: Write latency and throughput by group size.",
+        ["Replicas", "p50 write (ms)", "p99 write (ms)", "Writes/s"],
+        [["3", "1.8", "4.9", "61,000"], ["5", "2.3", "6.1", "54,000"], ["7", "2.9", "7.7", "47,000"]],
+        [150, 100, 100, 118],
+        wide=True,
+    )
+    flow.heading("4 Evaluation")
+    flow.paragraph(
+        "Table 2 shows that each pair of replicas added to a group costs about half a millisecond "
+        "at the median. The extra replicas buy tolerance of more failures, not speed."
+    )
+    flow.paragraph(
+        "Throughput falls more slowly than latency rises, because the leader batches the appends "
+        "that arrive while it waits for acknowledgements, and a larger group waits a little "
+        "longer and so sends larger batches."
+    )
+    flow.heading("5 Lessons")
+    flow.paragraph(
+        "Keep the voting group small and add learners for reads. Measure the slowest follower that "
+        "a majority must wait for, not the average one, since that follower sets the latency of "
+        "every write."
+    )
+    write_pdf(os.path.join(HERE, "columns.pdf"), flow.pages)
+
+
 if __name__ == "__main__":
     small_text()
     figure_table()
     scanned()
     notes()
     paper()
+    columns()

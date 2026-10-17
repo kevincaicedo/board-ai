@@ -1,8 +1,8 @@
 //! A document's text layer: what BoardAI extracts on this Mac (D-186). A PDF's pages come from
-//! PDFKit's lines, with headings found by font size, captions by their "Figure N" / "Table N"
-//! start, and a table's rows under its caption; Markdown and text are read natively, with
-//! headings, pipe tables and image links. All of it is bounded; nothing here decides anything
-//! about the conversation.
+//! PDFKit's lines in reading order (`order`, D-293), with headings found by font size, captions
+//! by their "Figure N" / "Table N" start, and a table's rows under its caption; Markdown and text
+//! are read natively, with headings, pipe tables and image links. All of it is bounded; nothing
+//! here decides anything about the conversation.
 
 use std::path::{Component, Path, PathBuf};
 

@@ -93,6 +93,7 @@ async fn every_fixture_has_its_text_only_golden_digest() {
         "scanned.pdf",
         "notes.md",
         "paper.pdf",
+        "columns.pdf",
     ] {
         let events = read_all(&reader, &document(name)).await;
         assert!(
@@ -102,6 +103,81 @@ async fn every_fixture_has_its_text_only_golden_digest() {
         let (state, digest) = settled(&events);
         golden(&format!("{name}.text-only"), &state, &digest);
     }
+}
+
+/// D-293: a page's reading order comes from where PDFKit laid out its lines, not from the order
+/// of its text (macOS 14 reads a table column by column), so it is the same on every macOS: a
+/// two-column paper reads a column at a time, and every table, in a column or across both, by
+/// rows.
+#[tokio::test]
+async fn a_two_column_paper_reads_a_column_at_a_time_and_its_tables_by_rows() {
+    let read = PdfKit::default()
+        .text(&document("columns.pdf"), 2)
+        .await
+        .expect("read");
+    let pages: Vec<Vec<&str>> = read
+        .pages
+        .iter()
+        .map(|page| page.iter().map(|line| line.text.as_str()).collect())
+        .collect();
+    let [first, second] = pages.as_slice() else {
+        panic!("two pages: {pages:#?}");
+    };
+    let follows =
+        |page: &[&str], lines: &[&str]| page.windows(lines.len()).any(|window| window == lines);
+    // The left column's table, its rows in place under its caption, while the right column's
+    // lines share their baselines.
+    assert!(
+        follows(
+            first,
+            &[
+                "copies without a vote.",
+                "Table 1: Replica roles in a group of five.",
+                "Role Count Votes",
+                "Leader 1 yes",
+                "Follower 3 yes",
+                "Learner 1 no",
+                "A write is durable once a majority of the voting",
+            ]
+        ),
+        "{first:#?}"
+    );
+    // The left column ends mid-sentence and the right one goes on with it.
+    assert!(
+        follows(
+            first,
+            &["can answer the client as soon as the third one", "arrives."]
+        ),
+        "{first:#?}"
+    );
+    assert_eq!(first.last(), Some(&"1"), "the page number, from the gutter");
+    // A table across both columns, its cells clear of the gutter, before the columns.
+    assert_eq!(
+        second.get(..6),
+        Some(
+            &[
+                "Table 2: Write latency and throughput by group size.",
+                "Replicas p50 write (ms) p99 write (ms) Writes/s",
+                "3 1.8 4.9 61,000",
+                "5 2.3 6.1 54,000",
+                "7 2.9 7.7 47,000",
+                "4 Evaluation",
+            ][..]
+        ),
+        "{second:#?}"
+    );
+    assert!(
+        follows(
+            second,
+            &[
+                "arrive while it waits for acknowledgements, and a",
+                "larger group waits a little longer and so sends",
+                "larger batches.",
+                "5 Lessons",
+            ]
+        ),
+        "{second:#?}"
+    );
 }
 
 #[tokio::test]

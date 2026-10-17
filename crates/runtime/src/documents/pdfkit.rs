@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+use super::order::{Bounds, LineBox, reading_order};
 use crate::limits::{
     PDF_FONT_SIZE_MAX_POINTS, PDFKIT_ERROR_SHOWN_MAX_CHARS, PDFKIT_OUTPUT_MAX_BYTES,
     PDFKIT_TIMEOUT_MS,
@@ -23,7 +24,7 @@ const SCRIPT: &str = include_str!("pdfkit.js");
 /// macOS's script runner; never looked up on `PATH`.
 pub const OSASCRIPT: &str = "/usr/bin/osascript";
 
-/// One line of a page as PDFKit read it, with the font at its first character.
+/// One line of a page in reading order (`order`), with the font at its first character.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PdfLine {
     pub text: String,
@@ -115,6 +116,9 @@ struct RawLine {
     size: f64,
     #[serde(default)]
     bold: bool,
+    /// Where PDFKit laid the line out: `[x, y, width, height]` in PDF points.
+    #[serde(rename = "box")]
+    bounds: [f64; 4],
 }
 
 impl PdfKit {
@@ -240,7 +244,7 @@ impl PdfKit {
 }
 
 /// The script's `text` or `pages` JSON, parsed once into types: at most `max_pages` pages, each
-/// line's font size to a tenth of a point.
+/// line's font size to a tenth of a point, each page's lines in reading order (D-293).
 fn parse_text(output: &[u8], first_page: u32, max_pages: u32) -> Result<PdfText, PdfFailure> {
     let raw: RawText = serde_json::from_slice(output).map_err(|error| PdfFailure::Failed {
         detail: format!("its answer wasn't the script's JSON: {error}"),
@@ -256,25 +260,33 @@ fn parse_text(output: &[u8], first_page: u32, max_pages: u32) -> Result<PdfText,
         .pages
         .into_iter()
         .take(usize::try_from(max_pages).unwrap_or(usize::MAX))
-        .map(|page| {
-            page.lines
-                .into_iter()
-                .map(|line| PdfLine {
-                    text: line.text,
-                    // A tenth of a point is all heading detection needs.
-                    #[allow(clippy::cast_possible_truncation, reason = "font sizes are small")]
-                    size: (line.size.clamp(0.0, PDF_FONT_SIZE_MAX_POINTS) * 10.0).round() as f32
-                        / 10.0,
-                    bold: line.bold,
-                })
-                .collect()
-        })
+        .map(|page| reading_order(page.lines.into_iter().filter_map(line_box).collect()))
         .collect();
     Ok(PdfText {
         page_count,
         first_page: raw.first.map_or(first_page, number),
         pages,
     })
+}
+
+/// A line the script sent, with its box; `None` when it is blank.
+fn line_box(line: RawLine) -> Option<LineBox> {
+    let [x, y, width, height] = line.bounds;
+    LineBox::new(
+        PdfLine {
+            text: line.text,
+            // A tenth of a point is all heading detection needs.
+            #[allow(clippy::cast_possible_truncation, reason = "font sizes are small")]
+            size: (line.size.clamp(0.0, PDF_FONT_SIZE_MAX_POINTS) * 10.0).round() as f32 / 10.0,
+            bold: line.bold,
+        },
+        Bounds {
+            x,
+            y,
+            width,
+            height,
+        },
+    )
 }
 
 fn failure(error: &str, page_count: u32) -> PdfFailure {
