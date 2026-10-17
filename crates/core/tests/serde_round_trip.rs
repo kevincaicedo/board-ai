@@ -214,6 +214,10 @@ fn every_view_round_trips_in_events_and_tool_results() {
     }
     round_trip(&UiEvent::ViewDismiss);
     round_trip(&UiEvent::OpenSettings);
+    round_trip(&UiEvent::PageTurn {
+        page: 2,
+        title: Some("DNS".into()),
+    });
     round_trip(&UiEvent::SessionStart {
         session: Some("2026-10-15-143210".into()),
     });

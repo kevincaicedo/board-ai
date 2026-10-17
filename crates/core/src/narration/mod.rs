@@ -12,6 +12,7 @@ pub mod ops;
 pub mod parser;
 pub mod quality;
 pub mod speakable;
+pub mod spoken_calls;
 pub mod tags;
 
 use crate::effect::Dropped;
@@ -20,6 +21,7 @@ use clauses::ClauseCutter;
 use ops::NarrationOp;
 use parser::{Piece, TagParser};
 use speakable::Speakable;
+use spoken_calls::{SpokenCall, SpokenCalls};
 
 /// Spoken when the talker opens a fourth nested detour (LLD §2.6).
 pub const DETOUR_REFUSAL_LINE: &str = "Let's finish this one first.";
@@ -93,6 +95,8 @@ pub struct NarrationStream {
     /// The spoken word being read, held back from the clause cutter until it ends, so a
     /// `path:line` citation anchors its source chip on its own first character.
     word: Word,
+    /// Tool calls written as words, kept out of speech (D-179).
+    calls: SpokenCalls,
 }
 
 /// The word being read: held while it could still be a citation, passed through once it is too
@@ -118,6 +122,7 @@ impl NarrationStream {
             segments: Vec::new(),
             written: String::new(),
             word: Word::Held(String::new()),
+            calls: SpokenCalls::default(),
         }
     }
 
@@ -135,7 +140,14 @@ impl NarrationStream {
         self.consume(&mut pieces, out);
         self.pieces = pieces;
         self.end_word(out);
+        self.boundary(out);
         self.cutter.finish(out);
+    }
+
+    /// Tool calls the talker wrote as words, which were kept out of speech (D-179).
+    #[must_use]
+    pub fn spoken_calls(&self) -> &[SpokenCall] {
+        self.calls.calls()
     }
 
     /// Everything the talker wrote, tags included.
@@ -193,10 +205,10 @@ impl NarrationStream {
                     for ch in text.chars() {
                         self.speak_char(ch, out);
                     }
-                    self.push_segment_text(&text);
                 }
                 Piece::Tag(tag) => {
                     self.end_word(out);
+                    self.boundary(out);
                     let op = match tags::to_op(&tag) {
                         Ok(op) => self.keep_op(op, out),
                         Err(_) => {
@@ -211,6 +223,7 @@ impl NarrationStream {
                 }
                 Piece::Dropped(written) => {
                     self.end_word(out);
+                    self.boundary(out);
                     out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
                     self.segments.push(Segment::Tag { written, op: None });
                 }
@@ -219,11 +232,12 @@ impl NarrationStream {
     }
 
     /// Whitespace ends the word being read; anything else joins it, or goes straight through
-    /// once the word is too long to be a citation.
+    /// once the word is too long to be a citation (or a call's argument).
     fn speak_char(&mut self, ch: char, out: &mut Vec<NarrationOutput>) {
         if ch.is_whitespace() {
             self.end_word(out);
-            self.cutter.push_char(ch, out);
+            let said = self.calls.whitespace(ch);
+            self.say(&said, out);
             return;
         }
         match &mut self.word {
@@ -233,35 +247,54 @@ impl NarrationStream {
             Word::Held(word) => {
                 let word = std::mem::take(word);
                 self.word = Word::Overflowed;
-                for held in word.chars() {
-                    self.cutter.push_char(held, out);
-                }
-                self.cutter.push_char(ch, out);
+                self.boundary(out);
+                self.say(&word, out);
+                self.say_char(ch, out);
             }
-            Word::Overflowed => self.cutter.push_char(ch, out),
+            Word::Overflowed => self.say_char(ch, out),
         }
     }
 
-    /// The word ended (whitespace, a tag, the end of the stream): a citation becomes an op
-    /// anchored on the word's first character, then the word goes to the clause cutter.
+    /// The word ended (whitespace, a tag, the end of the stream). A tool call written as words
+    /// is kept out of speech; a citation becomes an op anchored on the word's first character;
+    /// then the word goes to the clause cutter.
     fn end_word(&mut self, out: &mut Vec<NarrationOutput>) {
         let word = match std::mem::replace(&mut self.word, Word::Held(String::new())) {
-            Word::Held(word) => word,
-            Word::Overflowed => return,
+            Word::Held(word) if !word.is_empty() => word,
+            Word::Held(_) | Word::Overflowed => return,
         };
+        let fate = self.calls.word(&word);
+        self.say(&fate.released, out);
+        if !fate.speak {
+            return;
+        }
         if let Some((path, line)) = citation::parse(&word) {
             self.keep_op(NarrationOp::Cite { path, line }, out);
         }
-        for ch in word.chars() {
-            self.cutter.push_char(ch, out);
+        self.say(&word, out);
+    }
+
+    /// A tag, an overlong word or the end of the stream ends a tool call written as words; a
+    /// tool's name held to see what followed it is spoken after all.
+    fn boundary(&mut self, out: &mut Vec<NarrationOutput>) {
+        let released = self.calls.boundary();
+        self.say(&released, out);
+    }
+
+    fn say(&mut self, text: &str, out: &mut Vec<NarrationOutput>) {
+        for ch in text.chars() {
+            self.say_char(ch, out);
         }
     }
 
-    fn push_segment_text(&mut self, text: &str) {
+    /// One character of speech: to the clause cutter, and to what was written as speech, which
+    /// the heard prefix is measured against (LLD §2.7).
+    fn say_char(&mut self, ch: char, out: &mut Vec<NarrationOutput>) {
+        self.cutter.push_char(ch, out);
         if let Some(Segment::Text(existing)) = self.segments.last_mut() {
-            existing.push_str(text);
+            existing.push(ch);
         } else {
-            self.segments.push(Segment::Text(text.to_owned()));
+            self.segments.push(Segment::Text(ch.to_string()));
         }
     }
 
@@ -285,6 +318,11 @@ impl NarrationStream {
                 return None;
             }
             NarrationOp::Resume => self.planned_depth = self.planned_depth.saturating_sub(1),
+            // A page turn closes every open detour first (D-177).
+            NarrationOp::Page { .. } => {
+                self.planned_depth = 0;
+                self.refused_detours = 0;
+            }
             NarrationOp::Plan { .. }
             | NarrationOp::Step { .. }
             | NarrationOp::Node { .. }

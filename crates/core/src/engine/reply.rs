@@ -9,8 +9,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::board::summary::summary;
 use crate::conversation::cues::CancelTarget;
+use crate::conversation::draw_cues::asks_for_drawing;
 use crate::effect::{Dropped, Effect, LogRecord, Milestone, TalkRequest};
 use crate::engine::gate::GateClosed;
+use crate::engine::nudge::{is_view, shows};
 use crate::engine::ops::{Anchor, QueuedOp};
 use crate::engine::text::{
     CALL_NOT_RUN, REFUSAL_LINE, TOOL_ROUNDS_LINE, failure_line, harness_report, invalid_call,
@@ -51,6 +53,11 @@ impl Stream {
     pub(super) fn has_stopped(&self) -> bool {
         self.stop.is_some()
     }
+
+    /// The talker called a tool in this stream.
+    pub(super) fn has_calls(&self) -> bool {
+        !self.calls.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +77,15 @@ pub(super) struct Reply {
     pub done: bool,
     /// The `path:line` citations this reply showed a source chip for.
     pub cited: BTreeSet<(String, u32)>,
+    /// The turn's words asked for a drawing (D-178).
+    pub asks_drawing: bool,
+    /// The reply drew something, or showed a card or a view.
+    pub shown: bool,
+    /// How many times the core asked the talker once more this turn (D-178).
+    pub nudges: usize,
+    /// The reply called a repo read, or wrote one instead of calling it: a tour, whose module
+    /// names are checked (D-180).
+    pub touring: bool,
 }
 
 impl Reply {
@@ -142,7 +158,8 @@ impl Core {
     pub(super) fn request_talk(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         // No reply yet: a new turn (the user's next question, or a harness report), so the
         // topic has moved on (D-148). A tool round continues the same reply.
-        if self.reply.is_none() {
+        let new_turn = self.reply.is_none();
+        if new_turn {
             self.recap_leaves(effects);
         }
         debug_assert!(
@@ -164,7 +181,14 @@ impl Core {
         milestone(effects, Milestone::TalkerRequested);
         self.marks.first_token = false;
         let op_base = self.queue.next_op;
+        let asks_drawing = new_turn
+            && self
+                .user
+                .pending
+                .as_ref()
+                .is_some_and(|pending| asks_for_drawing(&pending.text));
         let reply = self.reply.get_or_insert_with(Reply::default);
+        reply.asks_drawing |= asks_drawing;
         reply.in_flight = true;
         reply.done = false;
         reply.streams.push(Stream {
@@ -272,6 +296,8 @@ impl Core {
         self.notice_dropped_ops(index);
         if !matches!(stop, StopReason::Refusal | StopReason::Failed { .. }) {
             self.carry_out_written_calls(index, effects);
+            self.notice_spoken_calls(index);
+            self.mark_tour(index);
         }
         // A proposed change is asked about only when the reply ends normally; a refusal or a
         // failure ends the reply with a problem line, and the proposal is dropped with it.
@@ -279,7 +305,9 @@ impl Core {
             StopReason::ToolUse if has_calls => self.maybe_tool_round(now, effects),
             StopReason::EndTurn | StopReason::ToolUse => {
                 self.finish_stream(index);
-                self.ask_change(effects);
+                if !self.maybe_nudge(now, index, effects) {
+                    self.ask_change(effects);
+                }
             }
             StopReason::MaxTokens => {
                 self.finish_stream(index);
@@ -436,7 +464,14 @@ impl Core {
                         stream.clauses.push(id);
                     }
                 }
-                NarrationOutput::Op(op) => self.queue_op(index, op),
+                NarrationOutput::Op(op) => {
+                    if shows(&op.op)
+                        && let Some(reply) = self.reply.as_mut()
+                    {
+                        reply.shown = true;
+                    }
+                    self.queue_op(index, op);
+                }
                 NarrationOutput::Dropped(what) => {
                     effects.push(Effect::Log(LogRecord::Dropped { what, count: 1 }));
                     if what == Dropped::Op
@@ -536,6 +571,15 @@ impl Core {
             | ToolCall::ShowTasks { .. }
             | ToolCall::ShowMemory
             | ToolCall::PlaySession { .. } => {
+                if let Some(reply) = self.reply.as_mut() {
+                    reply.shown |= is_view(call);
+                    reply.touring |= matches!(
+                        call,
+                        ToolCall::ReadFile { .. }
+                            | ToolCall::SearchCode { .. }
+                            | ToolCall::ListDir { .. }
+                    );
+                }
                 effects.push(Effect::RunTool {
                     id: id.clone(),
                     call: call.clone(),
@@ -606,6 +650,8 @@ impl Core {
         let Some(output) = self.on_written_read(id, output, effects) else {
             return;
         };
+        let listed = self.listed_folder(id);
+        self.repo_names.record(listed.as_deref(), &output);
         let Some(slot) = self.reply.as_mut().and_then(|reply| {
             reply
                 .tools
@@ -633,6 +679,23 @@ impl Core {
             self.show_view(*view, today, effects);
         }
         self.maybe_tool_round(now, effects);
+    }
+
+    /// The folder call `id` of the reply listed, when it was a `list_dir`.
+    fn listed_folder(&self, id: &ToolCallId) -> Option<String> {
+        let reply = self.reply.as_ref()?;
+        reply
+            .streams
+            .iter()
+            .flat_map(|stream| &stream.calls)
+            .find(|call| call.id == *id)
+            .and_then(|call| {
+                if let Ok(ToolCall::ListDir { path }) = &call.call {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            })
     }
 
     /// When the stream stopped for tools and every result is in: store the assistant message

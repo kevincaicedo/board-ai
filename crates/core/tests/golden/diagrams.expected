@@ -3,17 +3,17 @@ clause 0 [talker@0]
   speech:  "The client opens with a SYN,"
 op 0 at clause 0 byte 4: Participant { id: ElementId("c"), label: "Client" }
 op 1 at clause 0 byte 24: Participant { id: ElementId("s"), label: "Server" }
-op 2 at clause 0 byte 24: Message { from: ElementId("c"), to: ElementId("s"), label: Some("SYN"), style: Solid }
+op 2 at clause 0 byte 24: Message { from: ElementId("c"), to: ElementId("s"), label: Some("SYN"), style: None }
 clause 1 [talker@29]
   caption: "the server answers, and the client acknowledges."
   speech:  "the server answers, and the client acknowledges."
-op 3 at clause 1 byte 11: Message { from: ElementId("s"), to: ElementId("c"), label: Some("SYN-ACK"), style: Dashed }
-op 4 at clause 1 byte 35: Message { from: ElementId("c"), to: ElementId("s"), label: Some("ACK"), style: Solid }
+op 3 at clause 1 byte 11: Message { from: ElementId("s"), to: ElementId("c"), label: Some("SYN-ACK"), style: Some(Dashed) }
+op 4 at clause 1 byte 35: Message { from: ElementId("c"), to: ElementId("s"), label: Some("ACK"), style: None }
 dropped NarrationTag
 clause 2 [talker@78]
   caption: "It may retry on its own, and a broken close is dropped."
   speech:  "It may retry on its own, and a broken close is dropped."
-op 5 at clause 2 byte 7: Message { from: ElementId("s"), to: ElementId("s"), label: Some("retry"), style: Solid }
+op 5 at clause 2 byte 7: Message { from: ElementId("s"), to: ElementId("s"), label: Some("retry"), style: None }
 clause 3 [talker@134]
   caption: "An array holds six slots."
   speech:  "An array holds six slots."

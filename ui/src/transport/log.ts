@@ -176,6 +176,7 @@ export function chaptersOf(batches: readonly UiBatch[]): Chapter[] {
         case "UserShape":
         case "UserShapeRemove":
         case "LabelHint":
+        case "PageTurn":
           break;
       }
     }

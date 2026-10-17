@@ -12,7 +12,7 @@ use crate::board::{
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::limits::ELEMENTS_PER_LAYER_MAX;
-use crate::narration::ops::{Direction, Side};
+use crate::narration::ops::{Direction, Placement, Side};
 use crate::protocol::{EdgePath, LineStyle, NodeShape};
 
 /// Vertical space between a parent's bottom and its children's tops.
@@ -28,6 +28,37 @@ const SPREAD_MIN: i32 = 40;
 const SIBLING_GAP: i32 = 24;
 
 impl Board {
+    /// A circle placed `near` a circle `dir="below"` is a tree node whose model forgot `parent`
+    /// (D-181): live, gemma4 never wrote `parent`, so its trees came out as rows. Only below,
+    /// and only circle to circle: a circle beside a circle is a state machine's next state.
+    pub(super) fn place_below_circle(
+        &mut self,
+        layer_id: LayerId,
+        op: OpId,
+        node: NodeRequest<'_>,
+    ) -> Result<Option<Placed>, Rejected> {
+        match self.tree_parent_below(layer_id, &node) {
+            Some(parent) => self.place_child(layer_id, op, node, &parent, None),
+            None => Ok(None),
+        }
+    }
+
+    fn tree_parent_below(&self, layer_id: LayerId, node: &NodeRequest<'_>) -> Option<ElementId> {
+        let Placement::Near {
+            target,
+            direction: Direction::Below,
+        } = node.placement
+        else {
+            return None;
+        };
+        if !matches!(node.shape, None | Some(NodeShape::Circle)) {
+            return None;
+        }
+        let layer = self.layer(layer_id)?;
+        let (_, shape) = parent_node(layer, target)?;
+        (shape == NodeShape::Circle).then(|| target.clone())
+    }
+
     /// Places `node` as a child of `parent`. `None` when the parent isn't on the layer, so the
     /// node continues the flow instead (a hint naming nothing never loses the drawing).
     pub(super) fn place_child(

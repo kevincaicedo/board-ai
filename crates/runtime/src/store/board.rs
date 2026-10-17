@@ -1,7 +1,8 @@
 //! The last board state of a session, rebuilt from its log for `open_session`: the layers still
 //! open at the end, each with its ops in order and its last camera frame (the core frames each
 //! layer on its own). Detours closed before the end are gone from the board, so their ops are
-//! left out, and so are the user's own shapes (artboard 13), which a past board doesn't show yet.
+//! left out, and so are the user's own shapes (artboard 13), which a past board doesn't show yet,
+//! and earlier pages: a page turn (D-177) leaves the next page in front.
 
 use boardai_core::ids::LayerId;
 use boardai_core::protocol::UiEvent;
@@ -47,6 +48,10 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
         };
         match event {
             UiEvent::LayerPush { layer, .. } => layers.push(Layer::opened(layer, Some(event))),
+            UiEvent::PageTurn { .. } => {
+                layers = vec![Layer::opened(LayerId::MAIN, None)];
+                kept = 0;
+            }
             UiEvent::LayerPop { layer } => {
                 if layer != LayerId::MAIN
                     && let Some(position) = layers.iter().rposition(|open| open.id == layer)
@@ -233,5 +238,35 @@ mod tests {
             })
             .collect();
         assert_eq!(frames, vec![(0, 2), (2, 4)]);
+    }
+
+    /// A page turn (D-177) leaves the new page in front: the past board shows it alone.
+    #[test]
+    fn a_page_turn_leaves_only_the_new_page() {
+        let lines = vec![
+            node(0, "lb"),
+            ui(UiEvent::PageTurn {
+                page: 2,
+                title: Some("DNS".into()),
+            }),
+            node(0, "resolver"),
+        ];
+        let board = final_board(lines.into_iter());
+        let ids: Vec<String> = board
+            .events
+            .iter()
+            .filter_map(|event| {
+                if let UiEvent::OpStart {
+                    op: DrawOp::Node { id, .. },
+                    ..
+                } = event
+                {
+                    Some(id.as_str().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(ids, vec!["resolver"]);
     }
 }

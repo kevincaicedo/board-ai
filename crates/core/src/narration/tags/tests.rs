@@ -50,6 +50,7 @@ fn a_minimal_valid_form_of_every_tag_parses() {
         ("message", &[("from", "client"), ("to", "server")]),
         ("cells", &[("id", "arr"), ("count", "4")]),
         ("write", &[("target", "arr.0"), ("text", "7")]),
+        ("page", &[]),
     ];
     assert_eq!(minimal.len(), TAG_NAMES.len());
     for ((name, attributes), expected) in minimal.iter().zip(TAG_NAMES) {
@@ -266,7 +267,7 @@ fn diagram_tags_parse_with_their_defaults() {
             from: id("c"),
             to: id("c"),
             label: Some("retry".into()),
-            style: LineStyle::Dashed,
+            style: Some(LineStyle::Dashed),
         }),
         "a message to itself is allowed, and a return is dashed"
     );

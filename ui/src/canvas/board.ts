@@ -39,10 +39,15 @@ export const LAYERS_MAX = 4;
 export const DETOUR_SPANS_MAX = 8;
 /** A trace dot never laps faster than this, whatever its budget. */
 export const TRACE_PERIOD_MIN_MS = 300;
+/**
+ * The key of the page a page turn sent away (D-177): it leaves on its own layer while layer 0
+ * starts again empty, then goes as a closed detour does.
+ */
+export const LEAVING_PAGE = -1;
 
 export type BoardEvent = Extract<
   UiEvent,
-  { type: "OpStart" | "Freeze" | "Resume" | "LayerPush" | "LayerPop" | "Camera" }
+  { type: "OpStart" | "Freeze" | "Resume" | "LayerPush" | "LayerPop" | "Camera" | "PageTurn" }
 >;
 
 /** Where the pen comes from before an op's first stroke. */
@@ -233,6 +238,9 @@ export class BoardModel {
       case "Camera":
         this.#camera(event.layer, event.frame, event.focus, at, drawnAtIdentity);
         break;
+      case "PageTurn":
+        this.#turnPage(at);
+        break;
     }
   }
 
@@ -422,6 +430,33 @@ export class BoardModel {
       span.closeAt = at;
     }
     this.version += 1;
+  }
+
+  /**
+   * The page turns (D-177): the main board's drawing leaves as it stands (it is kept whole in the
+   * session's record; nothing moves) and layer 0 starts again with no runs and no camera frame.
+   * A page still leaving when the next turn comes is let go at once.
+   */
+  #turnPage(at: number): void {
+    const main = this.layers.get(0);
+    if (main === undefined) {
+      return;
+    }
+    this.layers.set(LEAVING_PAGE, { ...main, id: LEAVING_PAGE, poppedAt: at });
+    this.layers.set(0, {
+      id: 0,
+      title: "",
+      pushedAt: at,
+      poppedAt: null,
+      runs: [],
+      camera: NO_CAMERA,
+    });
+    this.version += 1;
+  }
+
+  /** The page sent away by the last page turn, while it is still kept. */
+  get leavingPage(): Layer | null {
+    return this.layers.get(LEAVING_PAGE) ?? null;
   }
 
   #camera(

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { LEAVING_PAGE } from "../canvas/board.ts";
 import type { UserShape } from "../protocol/generated/UserShape.ts";
 import { USER_SHAPES_PER_LAYER_MAX } from "./limits.ts";
 import { DrawModel } from "./model.ts";
@@ -59,4 +60,21 @@ test("a session's end ends drawing and keeps the shapes for the board's fade", (
   assert.equal(model.drawing.value, false);
   assert.equal(model.hint.value, null);
   assert.notEqual(model.shape(0, "u1"), null);
+});
+
+// D-177: your shapes on the main board leave with the page, never silently lost.
+test("a page turn sends your main-board shapes away with the page", () => {
+  const model = new DrawModel();
+  model.apply({ type: "UserShape", layer: 0, shape: boxed("u1") }, 100);
+  model.apply({ type: "UserShape", layer: 1, shape: boxed("u2") }, 110);
+  const version = model.version;
+  model.turnPage();
+  assert.equal(model.shape(0, "u1"), null, "the fresh page has none of them");
+  assert.equal(model.shape(LEAVING_PAGE, "u1")?.shape.id, "u1", "they leave with the page");
+  assert.equal(model.shape(1, "u2")?.shape.id, "u2", "other layers are untouched");
+  assert.ok(model.version > version);
+  model.apply({ type: "UserShape", layer: 0, shape: boxed("u3") }, 200);
+  model.turnPage();
+  assert.equal(model.shape(LEAVING_PAGE, "u1"), null, "an older leaving page is let go");
+  assert.equal(model.shape(LEAVING_PAGE, "u3")?.shape.id, "u3");
 });

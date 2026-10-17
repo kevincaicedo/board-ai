@@ -7,6 +7,7 @@ import {
   type BoardEvent,
   BoardModel,
   LAYER_ELEMENTS_MAX,
+  LEAVING_PAGE,
   runActive,
   traceRunning,
 } from "./board.ts";
@@ -219,6 +220,28 @@ test("detour layers push, pop, and stop accepting more than the board can hold",
   }
   assert.equal(board.main.runs.length, LAYER_ELEMENTS_MAX);
   assert.equal(board.counters.droppedOps, 5);
+});
+
+// D-177: "clear the board" turns to a fresh page; nothing drawn moves, the old page leaves.
+test("a page turn sends the drawing away whole and starts layer 0 empty", () => {
+  const { board, apply } = scene();
+  apply(start(box("api")), 100);
+  apply({ type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 300, h: 200 }, focus: null }, 100);
+  const before = board.main.runs[0];
+  apply({ type: "PageTurn", page: 2, title: "DNS" }, 2000);
+  assert.equal(board.main.runs.length, 0);
+  assert.equal(board.main.camera.frame, null, "the next stroke brings a new frame");
+  const leaving = board.leavingPage;
+  assert.equal(leaving?.runs[0], before, "the same drawing, unmoved");
+  assert.equal(leaving?.poppedAt, 2000);
+  assert.equal(leaving?.camera.frame?.w, 300, "it leaves from where it was");
+  assert.equal(board.openDetours().length, 0, "a leaving page is no detour");
+  apply(start(box("api")), 2100);
+  assert.equal(board.main.runs.length, 1, "the same id draws again on the new page");
+  assert.equal(board.counters.orphanEvents, 0);
+  board.prune(9000, 5000);
+  assert.equal(board.layers.has(LEAVING_PAGE), false, "it is let go once it has left");
+  assert.equal(board.main.runs.length, 1);
 });
 
 // Review finding 24: the UI dropped ops past 400 runs while the core allows 500 elements per

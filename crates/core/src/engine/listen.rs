@@ -368,6 +368,7 @@ impl Core {
             || self.open_settings_by_voice(&text, effects)
             || self.end_session_by_voice(&text, effects)
             || self.draw_by_voice(now, &text, effects)
+            || self.page_by_voice(&text, &mut context, effects)
         {
             self.user.context = context;
             return;

@@ -201,8 +201,8 @@ fn speaking_while_boardai_thinks_joins_the_same_turn() {
     sim.talker.push(ScriptedReply::says("Unheard."));
     sim.talker
         .push(ScriptedReply::says("Sure. Both paths, then."));
-    sim.user_says(0, "show me the read path");
-    let first_talk = 4 * USER_MS_PER_WORD + END_OF_TURN_SILENCE_MS;
+    sim.user_says(0, "walk me through the read path");
+    let first_talk = 5 * USER_MS_PER_WORD + END_OF_TURN_SILENCE_MS;
     sim.user_says(first_talk + 300, "and the write path");
     sim.run_until(15_000);
     assert_clean(&sim);
@@ -226,7 +226,7 @@ fn speaking_while_boardai_thinks_joins_the_same_turn() {
         .filter(|line| line.starts_with("user:"))
         .collect();
     assert_eq!(users.len(), 1, "{history:#?}");
-    assert!(users[0].contains("show me the read path and the write path"));
+    assert!(users[0].contains("walk me through the read path and the write path"));
     assert!(!history.iter().any(|line| line.contains("Unheard")));
 }
 

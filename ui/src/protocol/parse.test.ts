@@ -310,6 +310,8 @@ const EVERY_EVENT: UiEvent[] = [
   { type: "UserShapeRemove", layer: 0, id: "u2" },
   { type: "LabelHint", hint: { target: "u6", words: "and this one is the" } },
   { type: "LabelHint", hint: null },
+  { type: "PageTurn", page: 2, title: "DNS" },
+  { type: "PageTurn", page: 3, title: null },
 ];
 
 const POINT = { x: 0, y: 0 };
@@ -362,6 +364,8 @@ test("unknown types and malformed fields are rejected, never thrown", () => {
       bounds: { x: 0, y: 0, w: 1, h: 1 },
     }),
     userShapeWith({ kind: "Scribble" }),
+    { type: "PageTurn", page: 1, title: null },
+    { type: "PageTurn", page: 2 },
     {
       type: "OpStart",
       layer: 0,

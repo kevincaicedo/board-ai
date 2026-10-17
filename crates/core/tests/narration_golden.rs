@@ -163,6 +163,13 @@ const PIECES: &[&str] = &[
     "- ",
     "<annotate line=\"4\" code=\"a->b\"/>",
     "<recap bullets=\"a|b\"/>",
+    // Tool calls written as words (D-179), whole and in parts.
+    "list_dir ",
+    "path ",
+    "read_file(",
+    ")",
+    "`",
+    "<page/>",
 ];
 
 /// Random input never panics, keeps every clause within its cap, keeps the op cap, and stays

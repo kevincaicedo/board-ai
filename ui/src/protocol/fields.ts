@@ -14,6 +14,7 @@ export interface RowSkips {
 }
 
 export const U8_MAX = 255;
+export const U16_MAX = 65_535;
 export const U32_MAX = 4_294_967_295;
 export const I32_MIN = -2_147_483_648;
 export const I32_MAX = 2_147_483_647;

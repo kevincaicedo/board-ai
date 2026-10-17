@@ -14,7 +14,7 @@ use crate::board::{
 use crate::geometry::Point;
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::narration::ops::Direction;
-use crate::protocol::{DrawOp, Lifeline};
+use crate::protocol::{DrawOp, Lifeline, LineStyle};
 
 /// From a head's bottom to the first message.
 const FIRST_MESSAGE_GAP: i32 = 44;
@@ -242,6 +242,47 @@ impl Board {
 }
 
 impl Board {
+    /// The style of a message the talker named none for (D-181): a message back along a call
+    /// that is still open (B → A after A → B, with no return for it yet) is that call's return,
+    /// dashed; anything else is a call. Models write returns without `style="return"`, so every
+    /// reply was drawn as a call. Only messages that started count, so one dropped by an
+    /// interruption changes nothing; an explicit style always wins.
+    #[must_use]
+    pub fn implied_style(&self, layer_id: LayerId, from: &ElementId, to: &ElementId) -> LineStyle {
+        let Some(layer) = self.layer(layer_id) else {
+            return LineStyle::Solid;
+        };
+        let mut open: Vec<(&ElementId, &ElementId)> = Vec::new();
+        for element in layer.elements() {
+            let ElementKind::Message {
+                from: caller,
+                to: callee,
+                style,
+                ..
+            } = &element.kind
+            else {
+                continue;
+            };
+            if element.state == ElementState::Pending || caller == callee {
+                continue;
+            }
+            let answered = open
+                .iter()
+                .rposition(|call| *call == (callee, caller))
+                .filter(|_| *style == LineStyle::Dashed);
+            match answered {
+                Some(index) => open.truncate(index),
+                None if *style == LineStyle::Solid => open.push((caller, callee)),
+                None => {}
+            }
+        }
+        if from != to && open.contains(&(to, from)) {
+            LineStyle::Dashed
+        } else {
+            LineStyle::Solid
+        }
+    }
+
     /// A message with an end that isn't a participant. On a layer with a sequence diagram, an
     /// end nobody drew is drawn first as a participant named by its id (live runs lost whole
     /// handshakes to a forgotten `participant`); otherwise the message is an edge.

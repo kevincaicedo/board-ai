@@ -24,6 +24,7 @@ import {
   type Tagged,
   tagged,
   text,
+  U16_MAX,
   U32_MAX,
   u8,
   u32,
@@ -592,6 +593,12 @@ const EVENTS: Tagged<UiEvent, "type"> = {
   LabelHint: (f) => {
     const hint = nullable(f.hint, labelHint);
     return hint === undefined ? null : { type: "LabelHint", hint };
+  },
+  PageTurn: (f) => {
+    // The first page is 1, so a turn always leads to page 2 or later (D-177).
+    const page = integer(f.page, 2, U16_MAX);
+    const title = nullable(f.title, text);
+    return page === null || title === undefined ? null : { type: "PageTurn", page, title };
   },
 };
 

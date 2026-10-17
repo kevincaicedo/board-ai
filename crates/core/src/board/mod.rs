@@ -17,6 +17,7 @@ mod free;
 pub mod layout;
 mod lifecycle;
 pub mod metrics;
+pub mod page;
 mod place;
 mod route;
 mod sequence;
@@ -235,6 +236,8 @@ pub enum Rejected {
 pub struct Layer {
     id: LayerId,
     title: String,
+    /// The page it belongs to, from 1: the main layer's page, or the page a detour opened on.
+    page: u16,
     open: bool,
     elements: Vec<Element>,
     index: BTreeMap<ElementId, usize>,
@@ -243,10 +246,11 @@ pub struct Layer {
 }
 
 impl Layer {
-    fn new(id: LayerId, title: String) -> Self {
+    fn new(id: LayerId, title: String, page: u16) -> Self {
         Self {
             id,
             title,
+            page,
             open: true,
             elements: Vec::new(),
             index: BTreeMap::new(),
@@ -399,10 +403,13 @@ pub struct FrozenOp {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Board {
+    /// This page's main layer, then every detour of the session as it opened (closed ones too).
     layers: Vec<Layer>,
     tones: Tones,
     /// The number of your last shape's id (`u3`); ids of yours never repeat in a session.
     next_user: u32,
+    /// Earlier pages and the current page's number and title (D-177).
+    pages: page::Pages,
 }
 
 impl Default for Board {
@@ -415,9 +422,10 @@ impl Board {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            layers: vec![Layer::new(LayerId::MAIN, "main".to_owned())],
+            layers: vec![Layer::new(LayerId::MAIN, "main".to_owned(), 1)],
             tones: Tones::default(),
             next_user: 0,
+            pages: page::Pages::default(),
         }
     }
 
@@ -443,7 +451,8 @@ impl Board {
             return None;
         }
         let id = LayerId(u8::try_from(self.layers.len()).ok()?);
-        self.layers.push(Layer::new(id, title.to_owned()));
+        let page = self.pages.current();
+        self.layers.push(Layer::new(id, title.to_owned(), page));
         Some(id)
     }
 
@@ -467,6 +476,9 @@ impl Board {
         if let Placement::Child { parent, side } = node.placement
             && let Some(placed) = self.place_child(layer_id, op, node, parent, *side)?
         {
+            return Ok(placed);
+        }
+        if let Some(placed) = self.place_below_circle(layer_id, op, node)? {
             return Ok(placed);
         }
         let shape = node.shape.unwrap_or(NodeShape::Service);

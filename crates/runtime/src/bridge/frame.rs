@@ -110,7 +110,8 @@ impl Frame {
             | UiEvent::DrawMode { .. }
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
-            | UiEvent::LabelHint { .. } => key,
+            | UiEvent::LabelHint { .. }
+            | UiEvent::PageTurn { .. } => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -148,7 +149,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::DrawMode { .. }
         | UiEvent::UserShape { .. }
         | UiEvent::UserShapeRemove { .. }
-        | UiEvent::LabelHint { .. } => None,
+        | UiEvent::LabelHint { .. }
+        | UiEvent::PageTurn { .. } => None,
     }
 }
 

@@ -11,8 +11,11 @@ mod draw;
 mod gate;
 mod listen;
 mod memory;
+mod nudge;
 mod ops;
+pub mod pages;
 mod reply;
+mod repo_names;
 mod sources;
 mod stage;
 mod stop;
@@ -143,6 +146,8 @@ pub struct Core {
     written_reads: written::WrittenReads,
     /// Whether the user is drawing, and what BoardAI keeps while it watches (artboard 13).
     drawing: Drawing,
+    /// What the repo tools returned, for checking a module map's labels (D-180).
+    repo_names: repo_names::RepoNames,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -183,6 +188,7 @@ impl Core {
             ending: stage::SessionEnding::Continuing,
             written_reads: written::WrittenReads::default(),
             drawing: Drawing::Off,
+            repo_names: repo_names::RepoNames::default(),
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }

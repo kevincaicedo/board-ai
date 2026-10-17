@@ -18,7 +18,7 @@ use crate::protocol::{LineStyle, Mark, NodeShape};
 
 #[must_use]
 pub fn summary(board: &Board) -> String {
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = pages(board).into_iter().collect();
     let mut detour = 0;
     for layer in board.layers().iter().filter(|layer| layer.is_open()) {
         let body = layer_summary(layer);
@@ -30,6 +30,28 @@ pub fn summary(board: &Board) -> String {
         }
     }
     bounded(&lines.join("\n"), BOARD_SUMMARY_MAX_BYTES)
+}
+
+/// After a page turn (D-177): `page 2 "DNS" (earlier pages are kept in the record, off the
+/// board: 1 "Request path")`, so the talker knows its earlier drawing is gone from view.
+fn pages(board: &Board) -> Option<String> {
+    if board.earlier_pages().is_empty() {
+        return None;
+    }
+    let named = |number: u16, title: Option<&str>| match title {
+        Some(title) => format!("{number} \"{title}\""),
+        None => number.to_string(),
+    };
+    let earlier: Vec<String> = board
+        .earlier_pages()
+        .iter()
+        .map(|page| named(page.number, page.title.as_deref()))
+        .collect();
+    Some(format!(
+        "page {} (earlier pages are kept in the record, off the board: {})",
+        named(board.page_number(), board.page_title()),
+        earlier.join(", ")
+    ))
 }
 
 fn visible(element: &Element) -> bool {

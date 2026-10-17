@@ -324,6 +324,7 @@ impl Checker {
             UiEvent::LayerPush { .. } => self.layer_pushes += 1,
             UiEvent::LayerPop { .. } => self.layer_pops += 1,
             UiEvent::SessionEnd => self.check_session_end(now, core, speech),
+            UiEvent::PageTurn { .. } => self.on_page_turn(now, core),
             UiEvent::Thread { detours, .. } => {
                 if detours.len() > DETOUR_DEPTH_MAX {
                     self.violate(now, format!("I4: {} detours open", detours.len()));
@@ -348,6 +349,22 @@ impl Checker {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. } => {}
+        }
+    }
+
+    /// A page turn (D-177) retires the main layer whole: what was drawn on it is no longer on
+    /// the board, so ids may be drawn afresh, and the next stroke needs a new frame (I11). The
+    /// detours closed before it (I4).
+    fn on_page_turn(&mut self, now: SessionTime, core: &Core) {
+        let main = LayerId::MAIN;
+        self.boxes.retain(|(layer, _), _| *layer != main);
+        self.paths.retain(|(layer, _), _| *layer != main);
+        self.lifelines.retain(|(layer, _), _| *layer != main);
+        self.arrows.retain(|(layer, _), _| *layer != main);
+        self.cells.retain(|(layer, _), _| *layer != main);
+        self.frames.remove(&main);
+        if core.thread().depth() > 0 {
+            self.violate(now, "a page turned with a detour open".into());
         }
     }
 

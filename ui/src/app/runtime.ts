@@ -3,6 +3,7 @@
 // window is hidden (PRODUCT §8.6: the orb rests when nobody can see it).
 
 import { createContext } from "preact";
+import { LEAVING_PAGE } from "../canvas/board.ts";
 import { emptyArea, type FitArea, stageArea, type Viewport } from "../canvas/camera.ts";
 import {
   cardBounds,
@@ -252,7 +253,8 @@ export class Runtime {
       }
     }
     for (const layer of layers.values()) {
-      if (layer.id === 0) {
+      // The main board and the page a page turn sent away are drawn on the stage, not in a card.
+      if (layer.id === 0 || layer.id === LEAVING_PAGE) {
         continue;
       }
       let card = this.detourCards.get(layer.id);

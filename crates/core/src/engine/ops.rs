@@ -14,8 +14,8 @@ use crate::engine::{Core, milestone};
 use crate::geometry::Rect;
 use crate::ids::{ClauseId, ElementId, LayerId, OpId};
 use crate::limits::{OP_BUDGET_MAX_MS, OP_BUDGET_MIN_MS, OP_SPACING_MIN_MS};
-use crate::narration::ops::NarrationOp;
-use crate::protocol::{DrawOp, LineStyle, UiEvent};
+use crate::narration::ops::{NarrationOp, Placement};
+use crate::protocol::{DrawOp, LineStyle, NodeShape, UiEvent};
 use crate::surfaces::SurfaceRefused;
 use crate::thread::Detour;
 use crate::time::SessionTime;
@@ -74,6 +74,7 @@ impl OpQueue {
             .fold(depth, |depth, queued| match queued.op {
                 NarrationOp::Detour { .. } => depth + 1,
                 NarrationOp::Resume => depth.saturating_sub(1),
+                NarrationOp::Page { .. } => 0,
                 NarrationOp::Plan { .. }
                 | NarrationOp::Step { .. }
                 | NarrationOp::Node { .. }
@@ -216,10 +217,12 @@ impl Core {
                 stack,
                 fill,
             } => {
+                let (label, shape) = self.checked_label(label, *shape);
+                let shape = self.group_or_box(id, shape);
                 let node = NodeRequest {
                     id,
-                    label,
-                    shape: *shape,
+                    label: &label,
+                    shape,
                     placement,
                     stack: *stack,
                     fill: *fill,
@@ -270,9 +273,53 @@ impl Core {
             | NarrationOp::Cell { .. }
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
-            | NarrationOp::Recap { .. } => Placed::Unchanged,
+            | NarrationOp::Recap { .. }
+            | NarrationOp::Page { .. } => Placed::Unchanged,
         };
         Ok((layer, placed))
+    }
+
+    /// A group no queued op of the reply places a member in is drawn as a box (D-181): models
+    /// declare a group per folder or area and never fill it (gpt-oss-120b left 22 of 22 empty
+    /// in its tours), and an empty frame reads as nothing. Ops still being written can't be
+    /// seen, so a member written later is placed beside the box instead.
+    fn group_or_box(&self, id: &ElementId, shape: Option<NodeShape>) -> Option<NodeShape> {
+        if shape != Some(NodeShape::Group) {
+            return shape;
+        }
+        let member = self.queue.ops.iter().any(|queued| {
+            let placement = match &queued.op {
+                NarrationOp::Node { placement, .. } => placement,
+                NarrationOp::Cells(spec) => &spec.placement,
+                NarrationOp::Plan { .. }
+                | NarrationOp::Step { .. }
+                | NarrationOp::Edge { .. }
+                | NarrationOp::Annotate { .. }
+                | NarrationOp::Strike { .. }
+                | NarrationOp::Focus { .. }
+                | NarrationOp::Detour { .. }
+                | NarrationOp::Resume
+                | NarrationOp::Code { .. }
+                | NarrationOp::Line { .. }
+                | NarrationOp::Trace { .. }
+                | NarrationOp::Compare { .. }
+                | NarrationOp::Cell { .. }
+                | NarrationOp::Close { .. }
+                | NarrationOp::MarkCode { .. }
+                | NarrationOp::Recap { .. }
+                | NarrationOp::Participant { .. }
+                | NarrationOp::Message { .. }
+                | NarrationOp::Write { .. }
+                | NarrationOp::Cite { .. }
+                | NarrationOp::Page { .. } => return false,
+            };
+            matches!(placement, Placement::Inside { group, .. } if group == id)
+        });
+        if member {
+            shape
+        } else {
+            Some(NodeShape::Service)
+        }
     }
 
     /// Lays out a sequence diagram's or a row of cells' op.
@@ -287,9 +334,11 @@ impl Core {
                 to,
                 label,
                 style,
-            } => self
-                .board
-                .place_message(layer, op, link(from, to, label, *style)),
+            } => {
+                let style = style.unwrap_or_else(|| self.board.implied_style(layer, from, to));
+                self.board
+                    .place_message(layer, op, link(from, to, label, style))
+            }
             NarrationOp::Cells(spec) => self.board.place_cells(layer, op, spec),
             NarrationOp::Write { target, text } => self.board.place_write(layer, op, target, text),
             NarrationOp::Node { .. }
@@ -309,7 +358,8 @@ impl Core {
             | NarrationOp::Cell { .. }
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
-            | NarrationOp::Recap { .. } => Ok(Placed::Unchanged),
+            | NarrationOp::Recap { .. }
+            | NarrationOp::Page { .. } => Ok(Placed::Unchanged),
         }
     }
 
@@ -496,6 +546,7 @@ impl Core {
                 self.cite(path, *line, &mut events);
                 true
             }
+            NarrationOp::Page { title } => self.page_by_tag(title.as_deref(), effects),
             NarrationOp::Node { .. }
             | NarrationOp::Edge { .. }
             | NarrationOp::Annotate { .. }
@@ -576,7 +627,8 @@ impl Core {
             | NarrationOp::Message { .. }
             | NarrationOp::Cells(_)
             | NarrationOp::Write { .. }
-            | NarrationOp::Cite { .. } => false,
+            | NarrationOp::Cite { .. }
+            | NarrationOp::Page { .. } => false,
         }
     }
 

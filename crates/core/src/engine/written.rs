@@ -242,8 +242,34 @@ impl Core {
         )
     }
 
+    /// Tells the talker about tool calls stream `index` wrote as words (D-179): they were kept
+    /// out of speech, and nothing ran.
+    pub(super) fn notice_spoken_calls(&mut self, index: usize) {
+        let Some(calls) = self
+            .reply
+            .as_ref()
+            .and_then(|reply| reply.streams.get(index))
+            .map(|stream| stream.narration.spoken_calls())
+            .filter(|calls| !calls.is_empty())
+        else {
+            return;
+        };
+        let lines: Vec<String> = calls
+            .iter()
+            .map(|call| format!("- {}", bounded(&call.written, LABEL_MAX_BYTES)))
+            .collect();
+        self.context.notice(format!(
+            "Your last reply wrote tool calls as words. They were not spoken and nothing ran: \
+             call tools as tools, never in your speech.\n{}",
+            lines.join("\n")
+        ));
+    }
+
     /// Reads a view for a tag; the answer shows it (`on_written_read`).
     fn read_written_view(&mut self, call: ToolCall, effects: &mut Vec<Effect>) {
+        if let Some(reply) = self.reply.as_mut() {
+            reply.shown = true;
+        }
         let reads = &mut self.written_reads;
         let Some(id) = ToolCallId::parse(&format!("written-{}", reads.next)) else {
             return;

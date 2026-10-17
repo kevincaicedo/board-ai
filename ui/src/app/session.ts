@@ -254,6 +254,8 @@ export class SessionStore {
       case "UserShape":
       case "UserShapeRemove":
       case "LabelHint":
+      // The core closes the detours and cards a page turn takes away with their own events.
+      case "PageTurn":
         break;
     }
   }

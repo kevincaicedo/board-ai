@@ -85,6 +85,10 @@ export class Scene implements BatchSink {
       case "LayerPop":
         this.board.apply(event, at, this.#lead);
         break;
+      case "PageTurn":
+        this.board.apply(event, at, this.#lead);
+        this.draw.turnPage();
+        break;
       case "ViewShow":
         this.views.show(event.view, event.today, at);
         break;

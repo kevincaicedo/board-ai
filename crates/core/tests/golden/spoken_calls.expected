@@ -1,0 +1,30 @@
+clause 0 [talker@0]
+  caption: "Let me look at the repo first."
+  speech:  "Let me look at the repo first."
+clause 1 [talker@31]
+  caption: "Then I'll read the entry points."
+  speech:  "Then I'll read the entry points."
+clause 2 [talker@64]
+  caption: "I'll open it: and see what it exports."
+  speech:  "I'll open it: and see what it exports."
+clause 3 [talker@103]
+  caption: "finds nothing, so the core crate is clean."
+  speech:  "finds nothing, so the core crate is clean."
+op 0 at clause 3 byte 22: Node { id: ElementId("core"), label: "crates/core", shape: None, placement: Auto, stack: 1, fill: None }
+clause 4 [talker@146]
+  caption: "We could later."
+  speech:  "We could later."
+clause 5 [talker@162]
+  caption: "Research shows caches help, and I recall the review: list_dir shows folders."
+  speech:  "Research shows caches help, and I recall the review: list dir shows folders."
+clause 6 [talker@239]
+  caption: "Please remember kind=\"note\" this: plain names need a bracket."
+  speech:  "Please remember kind=\"note\" this: plain names need a bracket."
+clause 7 [talker@302]
+  caption: "start_line=3) breaks at the line end."
+  speech:  "start line=3) breaks at the line end."
+clause 8 [talker@340]
+  caption: "list_dir ui holds the interface, as ui/src/main.tsx:3 shows."
+  speech:  "list dir ui holds the interface, as ui slash src slash main dot tsx, line 3 shows."
+op 1 at clause 8 byte 9: Node { id: ElementId("ui"), label: "ui/", shape: None, placement: Auto, stack: 1, fill: None }
+op 2 at clause 8 byte 36: Cite { path: "ui/src/main.tsx", line: 3 }

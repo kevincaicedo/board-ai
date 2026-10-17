@@ -59,6 +59,10 @@ impl Yours {
             UiEvent::UserShapeRemove { layer, id } => {
                 self.shapes.remove(&(*layer, id.clone()));
             }
+            // The page turned (D-177): the user's shapes on it went with it, kept in the record.
+            UiEvent::PageTurn { .. } => {
+                self.shapes.retain(|(layer, _), _| *layer != LayerId::MAIN);
+            }
             UiEvent::OpStart { layer, op, .. } => {
                 if let Some(problem) = self.over_yours(*layer, op) {
                     violate(problem);

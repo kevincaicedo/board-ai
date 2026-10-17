@@ -177,6 +177,17 @@ pub enum UiEvent {
     LabelHint {
         hint: Option<LabelHint>,
     },
+    /// The board turned to a fresh, empty page (D-177): the main layer's drawing leaves with a
+    /// page turn and layer 0 starts again with nothing on it and no camera frame, so its next
+    /// stroke brings a new `Camera`. Nothing drawn moved (I6): the old page, with the shapes you
+    /// drew on it, is kept whole in the session's record and export, and leaves the screen with
+    /// them. Open detours were closed first (`LayerPop`s before it).
+    /// `page` is the new page's number, from 2; `title` is the talker's name for it, `None`
+    /// when the user asked for a clean board.
+    PageTurn {
+        page: u16,
+        title: Option<String>,
+    },
 }
 
 /// The orb states on the design canvas (frame 10a).

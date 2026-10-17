@@ -82,6 +82,8 @@ const FRAGMENTS: &[&str] = &[
     "See internal/user/service.go:42 for the lookup. ",
     // A local model writing tool calls as tags (D-143).
     r#"Noted. <remember kind="note" text="the cache is warm" about="you"/>Here are your notes. <show_memory/>"#,
+    // A new topic on a fresh page (D-177).
+    r#"<page title="DNS"/>Now, names. A <node id="client" label="Laptop" kind="actor"/>laptop asks first. "#,
 ];
 
 const QUESTIONS: &[&str] = &[
@@ -104,6 +106,8 @@ const CONTROLS: &[&str] = &[
     "back to the main board",
     "ok, go on",
     "we can stop here",
+    "clear the board",
+    "clear the board and explain DNS",
 ];
 
 const CUES: &[&str] = &[
@@ -438,6 +442,9 @@ const PATHS: &[(&str, Reached)] = &[
     ("camera", |effect| {
         matches!(effect, Effect::Ui(UiEvent::Camera { .. }))
     }),
+    ("page turn", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::PageTurn { .. }))
+    }),
     (
         "change",
         |effect| matches!(effect, Effect::RunHarness { spec, .. } if matches!(spec.kind, HarnessKind::Change { .. })),
@@ -647,6 +654,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "undone",
         "label hint",
         "drawing turn",
+        "page turn",
     ]);
 }
 

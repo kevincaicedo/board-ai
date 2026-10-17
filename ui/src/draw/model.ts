@@ -5,6 +5,7 @@
 // moves.
 
 import { signal } from "@preact/signals";
+import { LEAVING_PAGE } from "../canvas/board.ts";
 import type { LabelHint } from "../protocol/generated/LabelHint.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { UserShape } from "../protocol/generated/UserShape.ts";
@@ -82,6 +83,20 @@ export class DrawModel {
         this.echoes.value += 1;
         break;
     }
+  }
+
+  /**
+   * The page turned (D-177): your shapes on the main board leave with it (the core keeps them
+   * with the earlier page), drawn on the leaving page's layer until it is let go.
+   */
+  turnPage(): void {
+    const main = this.layers.get(0);
+    this.layers.delete(LEAVING_PAGE);
+    if (main !== undefined) {
+      this.layers.set(LEAVING_PAGE, main);
+      this.layers.delete(0);
+    }
+    this.version += 1;
   }
 
   /** Your shape `id` on `layer`, if it is on the board. */

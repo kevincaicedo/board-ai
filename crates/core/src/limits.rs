@@ -134,6 +134,11 @@ pub const CELL_VALUE_MAX_BYTES: usize = 24;
 /// Longest spoken token read as a `path:line` citation; a longer token is just speech.
 pub const CITATION_TOKEN_MAX_BYTES: usize = 200;
 
+/// Longest tool call written as words that is kept out of speech (D-179): `list_dir path "."`
+/// or `read_file("src/main.rs")`. Past it the call is taken to have ended and the rest is
+/// speech again, so an unclosed bracket can't silence a reply; a line end ends one too.
+pub const SPOKEN_CALL_MAX_BYTES: usize = 240;
+
 /// The system prompt and the tool schemas (as JSON), together. Local models load with a small
 /// context (gemma4 on Ollama: 4,096 tokens), and a request whose prompt doesn't fit loses the
 /// system prompt from the front, so the model answers without drawing. At 9,150 + 5,188 bytes
@@ -170,6 +175,11 @@ pub const SURFACES_BESIDE_CANVAS_MAX: usize = 2;
 /// and a code card for it is refused until it is read again.
 pub const READ_FILES_MAX: usize = 64;
 
+/// Repo paths (with their folders) the core keeps from repo tool results, to check a module
+/// map's labels against (D-180). Past it nothing more is kept and labels are no longer checked,
+/// so a real name that wasn't kept is never marked as invented.
+pub const REPO_NAMES_MAX: usize = 2_048;
+
 /// Lines kept per read file; lines past it are not kept.
 pub const READ_FILE_LINES_MAX: usize = 4_000;
 
@@ -191,6 +201,12 @@ pub const CAMERA_MARGIN_UNITS: i32 = 60;
 /// the view doesn't twitch with every mark; a new node always moves it.
 pub const CAMERA_REFRAME_STEP_UNITS: i32 = 40;
 
+/// Pages one session may use, the first included (D-177). A page turn past it is refused: the
+/// board stays as it is, the user hears so when they asked, and the talker gets a notice. Every
+/// page is kept whole for the session's export, so this bounds that memory (each page holds at
+/// most `ELEMENTS_PER_LAYER_MAX` elements).
+pub const PAGES_PER_SESSION_MAX: u16 = 32;
+
 /// Board summary sent to the talker; longer summaries end with "…".
 pub const BOARD_SUMMARY_MAX_BYTES: usize = 4 * 1024;
 
@@ -205,6 +221,12 @@ pub const TALKER_NOTICES_MAX: usize = 8;
 
 /// Tool calls in one talker response; extra calls get an error result.
 pub const TOOL_CALLS_PER_RESPONSE_MAX: usize = 16;
+
+/// Times the core asks the talker once more in one turn, when the reply drew nothing though a
+/// drawing was asked for, or wrote a repo read instead of calling it (D-178). Past it the reply
+/// ends as it is: one more ask that still misses means the model can't, and a loop would hold
+/// the floor.
+pub const NUDGES_PER_TURN_MAX: usize = 1;
 
 /// Tool rounds in one turn. Past it the calls get error results, the turn ends, and the user
 /// hears a failure line.

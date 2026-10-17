@@ -88,12 +88,13 @@ pub enum NarrationOp {
         label: String,
     },
     /// A message between two participants' lifelines in the next row (`from == to` is a
-    /// message to itself); a `Dashed` style is a return.
+    /// message to itself); a `Dashed` style is a return. `None` when the talker named no style:
+    /// a message back along a call still open is its return (D-181).
     Message {
         from: ElementId,
         to: ElementId,
         label: Option<String>,
-        style: LineStyle,
+        style: Option<LineStyle>,
     },
     /// A row (or column) of cells; cell `i` is the element `{id}.{i}`.
     Cells(CellsSpec),
@@ -107,6 +108,10 @@ pub enum NarrationOp {
     Cite {
         path: String,
         line: u32,
+    },
+    /// Turns to a fresh, empty page for a new topic (D-177); the old page is kept.
+    Page {
+        title: Option<String>,
     },
 }
 
@@ -160,7 +165,8 @@ impl NarrationOp {
             | Self::Cell { .. }
             | Self::Close { .. }
             | Self::MarkCode { .. }
-            | Self::Recap { .. } => false,
+            | Self::Recap { .. }
+            | Self::Page { .. } => false,
         }
     }
 }

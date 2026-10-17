@@ -1,0 +1,9 @@
+Let me look at the repo first. list_dir path "." Then I'll read the entry points.
+I'll open it: read_file("crates/core/src/lib.rs") and see what it exports.
+`search_code query="TODO" glob="*.rs"` finds nothing, so the <node id="core" label="crates/core"/>core crate is clean.
+We could research(question="why so slow", depth="quick") later.
+Research shows caches help, and I recall the review: list_dir shows folders.
+Please remember kind="note" this: plain names need a bracket.
+read_file(path="crates/app/src/main.rs",
+start_line=3) breaks at the line end.
+list_dir <node id="ui" label="ui/"/>ui holds the interface, as ui/src/main.tsx:3 shows.

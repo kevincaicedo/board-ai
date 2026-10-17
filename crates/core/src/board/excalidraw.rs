@@ -54,33 +54,59 @@ pub fn export_layer(layer: &Layer) -> String {
     document(layer_elements(layer))
 }
 
-/// The whole board as one document: a frame per layer that has any drawing (the main board,
-/// then each detour in the order it opened), side by side with their tops aligned. Each
-/// element names its frame, so Excalidraw moves and exports them together.
+/// The whole board as one document: a frame per layer that has any drawing, side by side with
+/// their tops aligned: each page of the main board (D-177), then the detours opened on it in the
+/// order they opened. Each element names its frame, so Excalidraw moves and exports them
+/// together.
 #[must_use]
 pub fn export_board(board: &Board) -> String {
+    let paged = !board.earlier_pages().is_empty();
+    let current = board.layer(crate::ids::LayerId::MAIN);
+    let pages = board
+        .earlier_pages()
+        .iter()
+        .map(|page| (page.number, page.title.as_deref(), &page.layer))
+        .chain(current.map(|main| (board.page_number(), board.page_title(), main)));
+    let mut frames = Vec::new();
+    for (number, title, main) in pages {
+        let name = match (paged, title) {
+            (false, _) => "Main board".to_owned(),
+            (true, Some(title)) => format!("Page {number}: {title}"),
+            (true, None) => format!("Page {number}"),
+        };
+        // Page 1 keeps the ids a one-page export always had.
+        let (key, frame_id) = if number == 1 {
+            ("l0".to_owned(), "frame:0".to_owned())
+        } else {
+            (format!("p{number}"), format!("frame:p{number}"))
+        };
+        frames.push((key, frame_id, name, main));
+        for detour in board
+            .layers()
+            .iter()
+            .filter(|layer| layer.id().0 != 0 && layer.page() == number)
+        {
+            let id = detour.id().0;
+            let name = format!("Detour: {}", detour.title());
+            frames.push((format!("l{id}"), format!("frame:{id}"), name, detour));
+        }
+    }
     let mut elements = Vec::new();
     let mut left = 0_i32;
-    for layer in board.layers() {
+    for (key, frame_id, name, layer) in frames {
         let Some(bounds) = layer.bounds() else {
             continue;
         };
         // A group's label sits above its frame, outside the bounds.
         let area = layout::inflate(bounds, FRAME_PADDING, GROUP_LABEL_ABOVE);
         let (dx, dy) = (left - area.x, -area.y);
-        let frame_id = format!("frame:{}", layer.id().0);
-        for mut element in layer_elements(layer) {
+        for mut element in elements_with_prefix(layer, &key) {
             shift(&mut element, dx, dy);
             if let Value::Object(fields) = &mut element {
                 fields.insert("frameId".into(), json!(frame_id));
             }
             elements.push(element);
         }
-        let name = if layer.id().0 == 0 {
-            "Main board".to_owned()
-        } else {
-            format!("Detour: {}", layer.title())
-        };
         elements.push(frame(
             &frame_id,
             &name,
@@ -129,11 +155,16 @@ fn frame(id: &str, name: &str, rect: Rect) -> Value {
 
 /// A layer's drawn elements as Excalidraw elements, in world coordinates.
 fn layer_elements(layer: &Layer) -> Vec<Value> {
-    let prefix = format!("l{}", layer.id().0);
+    elements_with_prefix(layer, &format!("l{}", layer.id().0))
+}
+
+/// The same, with ids under `prefix`: every page's main layer is layer 0, so pages after the
+/// first need their own.
+fn elements_with_prefix(layer: &Layer, prefix: &str) -> Vec<Value> {
     let mut elements = Vec::new();
     for element in layer.elements() {
         if element.state != ElementState::Pending {
-            export_element(&mut elements, layer, &prefix, element);
+            export_element(&mut elements, layer, prefix, element);
         }
     }
     elements

@@ -38,6 +38,7 @@ pub const TAG_NAMES: &[&str] = &[
     "message",
     "cells",
     "write",
+    "page",
 ];
 
 /// Why a well-formed tag was dropped. For the log and golden files only.
@@ -203,15 +204,13 @@ pub fn to_op(tag: &RawTag) -> Result<NarrationOp, BadTag> {
                 id,
             })
         }
-        "message" => Ok(NarrationOp::Message {
-            from: attributes.id("from")?,
-            to: attributes.id("to")?,
-            label: attributes
-                .get("label")
-                .map(|label| bounded(label, LABEL_MAX_BYTES)),
-            style: lenient(MESSAGE_STYLES, attributes.get("style"), LineStyle::Solid),
-        }),
+        "message" => message(&attributes),
         "cells" => cells(&attributes),
+        "page" => Ok(NarrationOp::Page {
+            title: attributes
+                .get("title")
+                .map(|title| bounded(title, TITLE_MAX_BYTES)),
+        }),
         "write" => Ok(NarrationOp::Write {
             target: attributes.id("target")?,
             text: bounded(
@@ -431,6 +430,21 @@ fn cells(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
         vertical,
         placement: placement(attributes)?,
     }))
+}
+
+/// A message's style is `None` when the talker named none, so a reply can be told from a call
+/// by what came before it (D-181).
+fn message(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {
+    Ok(NarrationOp::Message {
+        from: attributes.id("from")?,
+        to: attributes.id("to")?,
+        label: attributes
+            .get("label")
+            .map(|label| bounded(label, LABEL_MAX_BYTES)),
+        style: attributes
+            .get("style")
+            .map(|style| lenient(MESSAGE_STYLES, Some(style), LineStyle::Solid)),
+    })
 }
 
 fn edge(attributes: &Attributes<'_>) -> Result<NarrationOp, BadTag> {

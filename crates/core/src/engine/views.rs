@@ -133,6 +133,7 @@ impl Core {
                         | UiEvent::SurfaceShow { .. }
                         | UiEvent::DrawMode { drawing: true }
                         | UiEvent::UserShape { .. }
+                        | UiEvent::PageTurn { .. }
                 )
             )
         };

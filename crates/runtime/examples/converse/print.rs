@@ -14,7 +14,7 @@ use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::narration::quality::{NarrationQuality, assess};
 use boardai_core::narration::tags::TAG_NAMES;
-use boardai_core::protocol::{DrawOp, OrbState, Speaker, Surface, UiEvent};
+use boardai_core::protocol::{ChipKind, DrawOp, OrbState, SourceRef, Speaker, Surface, UiEvent};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::logging::bound;
@@ -223,9 +223,10 @@ impl Printer {
             UiEvent::Resume { layer, budget_ms } => {
                 line(at, "resume", &format!("L{} budget {budget_ms} ms", layer.0));
             }
-            UiEvent::LayerPush { .. } | UiEvent::Thread { .. } | UiEvent::Camera { .. } => {
-                board_line(at, event);
-            }
+            UiEvent::LayerPush { .. }
+            | UiEvent::Thread { .. }
+            | UiEvent::Camera { .. }
+            | UiEvent::PageTurn { .. } => board_line(at, event),
             UiEvent::LayerPop { layer } => line(at, "detour", &format!("close L{}", layer.0)),
             UiEvent::SurfaceShow { surface } => line(at, "surface", &surface_line(surface)),
             UiEvent::SurfaceUpdate { id, update } => {
@@ -233,10 +234,7 @@ impl Printer {
             }
             UiEvent::SurfaceDismiss { id } => line(at, "surface", &format!("close #{}", id.0)),
             UiEvent::Chip { kind, text, source } => {
-                let opens = source.as_ref().map_or_else(String::new, |source| {
-                    format!(" (opens {}:{})", source.path, source.line)
-                });
-                line(at, "chip", &format!("{kind:?} {text}{opens}"));
+                line(at, "chip", &chip_line(*kind, text, source))
             }
             UiEvent::Problem { spoken, detail } => {
                 line(at, "problem", &format!("\"{spoken}\" ({detail})"));
@@ -444,7 +442,7 @@ fn line(at: SessionTime, label: &str, text: &str) {
     println!("[{seconds:>4}.{millis:03}] {label:<8} {text}");
 }
 
-/// Detours, the thread and the camera, which take a few fields each.
+/// Detours, the thread, the camera and page turns, which take a few fields each.
 fn board_line(at: SessionTime, event: &UiEvent) {
     if let UiEvent::LayerPush {
         layer,
@@ -484,7 +482,18 @@ fn board_line(at: SessionTime, event: &UiEvent) {
             layer.0, frame.w, frame.h, frame.x, frame.y
         );
         line(at, "camera", &text);
+    } else if let UiEvent::PageTurn { page, title } = event {
+        let title = title.as_deref().unwrap_or("(untitled)");
+        line(at, "page", &format!("turned to page {page} {title}"));
     }
+}
+
+/// A chip, and the line a source chip opens.
+fn chip_line(kind: ChipKind, text: &str, source: &Option<SourceRef>) -> String {
+    let opens = source.as_ref().map_or_else(String::new, |source| {
+        format!(" (opens {}:{})", source.path, source.line)
+    });
+    format!("{kind:?} {text}{opens}")
 }
 
 fn ms(value: Option<u64>) -> String {

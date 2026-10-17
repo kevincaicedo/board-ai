@@ -60,6 +60,11 @@ impl Cameras {
         })
     }
 
+    /// The layer starts over empty (a page turn, D-177): its next stroke sends a first frame.
+    pub(super) fn reset(&mut self, layer: LayerId) {
+        self.views.remove(&layer);
+    }
+
     /// A `focus` tag: frame the element and sharpen it.
     pub(super) fn focus(&mut self, layer: LayerId, target: &ElementId, bounds: Rect) -> UiEvent {
         let frame = layout::inflate(bounds, CAMERA_MARGIN_UNITS, 0);
@@ -125,7 +130,8 @@ mod tests {
             | UiEvent::DrawMode { .. }
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
-            | UiEvent::LabelHint { .. } => None,
+            | UiEvent::LabelHint { .. }
+            | UiEvent::PageTurn { .. } => None,
         }
     }
 

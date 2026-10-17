@@ -7,7 +7,14 @@ import type { YoursView } from "../draw/inkView.ts";
 import type { PointerTarget } from "../protocol/generated/PointerTarget.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
-import { type BoardModel, type Layer, type Run, runActive, traceRunning } from "./board.ts";
+import {
+  type BoardModel,
+  type Layer,
+  LEAVING_PAGE,
+  type Run,
+  runActive,
+  traceRunning,
+} from "./board.ts";
 import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
 import type { DetourCard } from "./detourCard.ts";
 import type { Vec } from "./geometry.ts";
@@ -117,6 +124,8 @@ interface LayerView {
   lastBlur: number;
   /** A detour layer's viewBox last written: its card's size, one unit per CSS pixel (D-151). */
   lastViewBox: string;
+  /** How far a leaving page had gone when last written (D-177); NaN forces the next write. */
+  lastLeave: number;
 }
 
 export class BoardView {
@@ -225,6 +234,10 @@ export class BoardView {
         this.#renderLayer(view, layer, at, stage);
         continue;
       }
+      if (view.id === LEAVING_PAGE) {
+        this.#renderLeaving(view, layer, at, stage);
+        continue;
+      }
       const card = cards.get(view.id);
       if (card !== undefined) {
         this.#sizeDetour(view, card);
@@ -271,9 +284,10 @@ export class BoardView {
 
   #createLayer(id: number): LayerView {
     const root = document.createElementNS(SVG, "svg");
-    root.setAttribute("class", id === 0 ? "board-svg" : "board-svg board-svg-detour");
+    const onStage = id === 0 || id === LEAVING_PAGE;
+    root.setAttribute("class", onStage ? "board-svg" : "board-svg board-svg-detour");
     root.setAttribute("aria-hidden", "true");
-    if (id !== 0) {
+    if (!onStage) {
       root.setAttribute("viewBox", `0 0 ${this.#options.card.width} ${this.#options.card.height}`);
     }
     const defs = svg("defs", root);
@@ -292,9 +306,9 @@ export class BoardView {
     const strokes = svg("g", camera);
     const labels = svg("g", camera);
     this.#options.yours?.attach(id, svg("g", camera));
-    const host = this.#hosts.get(id) ?? null;
+    const host = id === LEAVING_PAGE ? this.#mainHost : (this.#hosts.get(id) ?? null);
     if (host !== null) {
-      if (id === 0) {
+      if (onStage) {
         host.insertBefore(root, this.#nib);
       } else {
         host.append(root);
@@ -315,6 +329,7 @@ export class BoardView {
       lastTransform: Float64Array.of(Number.NaN, Number.NaN, Number.NaN),
       lastBlur: -1,
       lastViewBox: "",
+      lastLeave: Number.NaN,
     };
   }
 
@@ -492,6 +507,37 @@ export class BoardView {
         this.#renderRun(runView, at);
       }
     }
+  }
+
+  /**
+   * The page a page turn sent away (D-177): it keeps its camera and lifts off to the left,
+   * blurring and fading as a dismissed card does, while the fresh page starts under it. The
+   * board's own push-back and end fade still apply around both.
+   */
+  #renderLeaving(view: LayerView, layer: Layer, at: number, stage: FitArea): void {
+    const tokens = this.#options.tokens;
+    const turnedAt = layer.poppedAt ?? at;
+    const gone = easeOut(ramp(at, turnedAt, turnedAt + tokens.durationSceneMs));
+    const style = view.svg.style;
+    if (gone >= 1) {
+      if (style.display !== "none") {
+        style.display = "none";
+        view.lastLeave = Number.NaN;
+      }
+      return;
+    }
+    this.#renderLayer(view, layer, at, stage);
+    // Only a changed amount is written, as the push-back does, so a still frame writes nothing.
+    const amount = Math.round(gone * 1000) / 1000;
+    if (amount === view.lastLeave) {
+      return;
+    }
+    view.lastLeave = amount;
+    const shift = round1(-tokens.detourPushShift * 2 * amount);
+    style.display = "";
+    style.opacity = String(round2(1 - amount));
+    style.filter = `blur(${round1(amount * tokens.surfaceBlurOut)}px)`;
+    style.transform = `translate(${shift}px, ${round1(shift / 4)}px)`;
   }
 
   #renderRun(view: RunView, at: number): void {
