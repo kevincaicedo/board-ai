@@ -6,10 +6,12 @@
 //! clause speech out refused, a tool that can't run) are stepped before it waits again.
 //!
 //! It also runs the session's life (LLD §3.6): the store opens a session when the loop starts,
-//! and the core starts with its context. After `SESSION_IDLE_TIMEOUT_MS` without input the
-//! session ends (its digest is written in the background) and the loop rests; the next words
-//! open a new session with a fresh core, and session time starts again from zero. Closing ends
-//! the session within a bounded time, so quitting never hangs.
+//! and the core starts with its context. After `SESSION_IDLE_TIMEOUT_MS` without input, or when
+//! the core ends the session because the user said so (`UiEvent::SessionEnd`, D-181), the
+//! session ends (its digest is written in the background) and the loop rests: the stage clears,
+//! and once the digest is written the library shows the session just ended (D-182). The next
+//! words open a new session with a fresh core, and session time starts again from zero. Closing
+//! ends the session within a bounded time, so quitting never hangs.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -27,7 +29,7 @@ use tokio::task::JoinHandle;
 use super::deadlines::Deadlines;
 use super::inbox::{Envelope, Inbox};
 use super::listening::{Listening, ListeningPublisher};
-use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreSink};
+use super::ports::{SessionClose, SessionOpened, SpeechOut, StoreRead, StoreSink};
 use super::talker::Talker;
 use super::work::Work;
 use crate::bridge::BridgeHandle;
@@ -36,9 +38,10 @@ use crate::clock::{Clock, TokioClock};
 use crate::limits::{
     SCRIBE_DIGEST_DEADLINE_MS, SESSION_FINISH_CANCEL_WAIT_MS, SESSION_FINISH_WRITE_MS,
     SESSION_FLUSH_TIMEOUT_MS, SESSION_IDLE_TIMEOUT_MS, SESSION_QUIT_DIGEST_MS,
-    SESSION_START_TIMEOUT_MS,
+    SESSION_START_TIMEOUT_MS, SESSION_TOOL_TIMEOUT_MS,
 };
 use crate::llm::LlmProvider;
+use boardai_core::tools::ToolOutput;
 
 /// Counters the session reports when it closes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,11 +64,13 @@ enum Phase {
         last_activity: SessionTime,
         store: StoreSession,
     },
-    /// The last session ended after an idle timeout; the next words open a new one. A muted
-    /// session stays muted: only an unmute opens the next.
+    /// The last session ended (an idle timeout, or the user ended it); the next words open a
+    /// new one. A muted session stays muted: only an unmute opens the next.
     Resting {
         muted: bool,
         finishing: Option<Finishing>,
+        /// The library shows on the resting stage, so Esc can close it.
+        library: bool,
     },
 }
 
@@ -105,6 +110,9 @@ pub(crate) struct Orchestrator {
     pub(crate) stats: SessionStats,
     /// Counts user turns, so latency marks of one turn can be grouped.
     pub(crate) turn: u64,
+    /// The core ended the session in this step (`UiEvent::SessionEnd`); it rests once the
+    /// step's effects are applied.
+    end_requested: bool,
 }
 
 /// The receiving ends the loop waits on.
@@ -140,6 +148,7 @@ impl Orchestrator {
             ui_events: Vec::new(),
             stats: SessionStats::default(),
             turn: 0,
+            end_requested: false,
         }
     }
 
@@ -181,6 +190,9 @@ impl Orchestrator {
                     }
                 }
                 () = sleep_until(idle_at), if idle_at.is_some() => self.on_idle().await,
+                () = digest_written(&mut self.phase), if self.is_finishing() => {
+                    self.show_resting_library().await;
+                }
                 Some(()) = self.work.reap() => {}
             }
         }
@@ -244,7 +256,11 @@ impl Orchestrator {
             Envelope::Input(input) => {
                 if let Phase::Resting { muted, .. } = &self.phase {
                     if !opens_a_session(&input, *muted) {
-                        self.stats.resting_inputs += 1;
+                        if matches!(input, Input::Command(UiCommand::CloseView)) {
+                            self.close_resting_library().await;
+                        } else {
+                            self.stats.resting_inputs += 1;
+                        }
                         return;
                     }
                     self.wake().await;
@@ -286,6 +302,10 @@ impl Orchestrator {
         self.core.step(now, input, &mut effects);
         self.apply_all(now, &mut effects).await;
         self.effects = effects;
+        if std::mem::take(&mut self.end_requested) {
+            tracing::info!("the user ended the session");
+            self.rest(false).await;
+        }
     }
 
     async fn apply_all(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
@@ -328,6 +348,9 @@ impl Orchestrator {
                 self.own_answers.extend(answer);
             }
             Effect::CancelHarness { task } => self.work.cancel_harness(task),
+            // The user ended the session: it rests once this step is applied, and the UI hears
+            // of it then. The session's log never holds it (D-182).
+            Effect::Ui(UiEvent::SessionEnd) => self.end_requested = true,
             Effect::Ui(event) => {
                 self.store.ui_event(now, &event);
                 self.ui_events.push(event);
@@ -434,12 +457,7 @@ impl Orchestrator {
     async fn on_idle(&mut self) {
         let now = self.clock.now();
         let state = self.core.state().clone();
-        let Phase::Active {
-            spoke,
-            last_activity,
-            store,
-        } = &mut self.phase
-        else {
+        let Phase::Active { last_activity, .. } = &mut self.phase else {
             return;
         };
         let muted = match state {
@@ -453,9 +471,22 @@ impl Orchestrator {
                 return;
             }
         };
+        tracing::info!(muted, "the session ended after its idle timeout");
+        self.rest(muted).await;
+    }
+
+    /// Ends the open session and rests: its digest is written in the background with the
+    /// scribe's full deadline, and the stage clears (`SessionEnd`, never logged: the session's
+    /// log is closed, and a replay must end on its board).
+    async fn rest(&mut self, muted: bool) {
+        let now = self.clock.now();
+        let Phase::Active { spoke, store, .. } = &self.phase else {
+            return;
+        };
         let (spoke, store) = (*spoke, *store);
         self.quiet_down().await;
-        tracing::info!(muted, "the session ended after its idle timeout");
+        // Answers the loop owed the ended core go with it.
+        self.own_answers.clear();
         let finishing = match store {
             StoreSession::Opened => {
                 let cancel = CancelToken::new();
@@ -466,7 +497,67 @@ impl Orchestrator {
             }
             StoreSession::Unanswered => None,
         };
-        self.phase = Phase::Resting { muted, finishing };
+        self.phase = Phase::Resting {
+            muted,
+            finishing,
+            library: false,
+        };
+        self.send_resting(vec![UiEvent::SessionEnd]).await;
+    }
+
+    fn is_finishing(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Resting {
+                finishing: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// The ended session's digest is written: the resting stage shows the library, the session
+    /// just ended first (D-182). A store that doesn't answer within `SESSION_TOOL_TIMEOUT_MS`,
+    /// or fails, leaves the stage clear.
+    async fn show_resting_library(&mut self) {
+        let Phase::Resting { finishing, .. } = &mut self.phase else {
+            return;
+        };
+        *finishing = None;
+        let closing = self.closing.clone();
+        let bound = Duration::from_millis(SESSION_TOOL_TIMEOUT_MS);
+        let read = tokio::select! {
+            biased;
+            () = closing.cancelled() => return,
+            read = tokio::time::timeout(bound, self.store.read(StoreRead::Library)) => read,
+        };
+        let Ok(ToolOutput::View { view, today }) = read else {
+            tracing::warn!("the library could not be read for the resting stage");
+            return;
+        };
+        if let Phase::Resting { library, .. } = &mut self.phase {
+            *library = true;
+        }
+        let view = *view;
+        self.send_resting(vec![UiEvent::ViewShow { view, today }])
+            .await;
+    }
+
+    /// Esc on the resting library closes it.
+    async fn close_resting_library(&mut self) {
+        let Phase::Resting { library, .. } = &mut self.phase else {
+            return;
+        };
+        if std::mem::take(library) {
+            self.send_resting(vec![UiEvent::ViewDismiss]).await;
+        }
+    }
+
+    /// Events for the resting stage: straight to the UI, never to the ended session's log.
+    async fn send_resting(&mut self, events: Vec<UiEvent>) {
+        let now = self.clock.now();
+        if self.bridge.send(now, events).await.is_err() {
+            tracing::error!("the UI bridge has stopped; UI events are lost");
+        }
     }
 
     /// The first words after resting: the last digest gets a moment (its scribe is cancelled,
@@ -501,6 +592,7 @@ impl Orchestrator {
         let resting = Phase::Resting {
             muted: false,
             finishing: None,
+            library: false,
         };
         let deadline = Duration::from_millis(SESSION_QUIT_DIGEST_MS);
         let bound = deadline + Duration::from_millis(SESSION_FINISH_WRITE_MS);
@@ -623,6 +715,22 @@ pub(crate) struct OrchestratorParts {
     pub(crate) bridge: BridgeHandle,
     pub(crate) listening: Arc<watch::Sender<Listening>>,
     pub(crate) closing: CancelToken,
+}
+
+/// Resolves when the digest being written while resting is done; never otherwise. The handle is
+/// taken out of the phase right after, so it is never awaited again.
+async fn digest_written(phase: &mut Phase) {
+    if let Phase::Resting {
+        finishing: Some(finishing),
+        ..
+    } = phase
+    {
+        if let Err(error) = (&mut finishing.task).await {
+            tracing::warn!(%error, "the session's digest task ended abnormally");
+        }
+    } else {
+        std::future::pending::<()>().await;
+    }
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {

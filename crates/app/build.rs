@@ -12,6 +12,7 @@ fn main() {
         "setup_download",
         "setup_microphone",
         "setup_finish",
+        "setup_open_microphone_settings",
         "dev_say",
     ]);
     let attributes = tauri_build::Attributes::new().app_manifest(manifest);

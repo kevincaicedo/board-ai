@@ -136,6 +136,8 @@ impl LlmProvider for ScriptedTalker {
 #[derive(Default)]
 struct Recorder {
     events: Mutex<Vec<(SessionTime, UiEvent)>>,
+    /// UI events written to the session's log, as the store would get them.
+    logged: Mutex<Vec<UiEvent>>,
     inputs: Mutex<Vec<Input>>,
     marks: Mutex<Vec<Milestone>>,
     flushed: Mutex<bool>,
@@ -154,6 +156,13 @@ impl Recorder {
             .map(|events| events.clone())
             .unwrap_or_default();
         events.into_iter().map(|(_, event)| event).collect()
+    }
+
+    fn logged(&self) -> Vec<UiEvent> {
+        self.logged
+            .lock()
+            .map(|logged| logged.clone())
+            .unwrap_or_default()
     }
 
     fn inputs(&self) -> Vec<Input> {
@@ -212,7 +221,11 @@ impl StoreSink for Recorder {
         }
     }
 
-    fn ui_event(&self, _at: SessionTime, _event: &UiEvent) {}
+    fn ui_event(&self, _at: SessionTime, event: &UiEvent) {
+        if let Ok(mut logged) = self.logged.lock() {
+            logged.push(event.clone());
+        }
+    }
 
     fn log(&self, _at: SessionTime, record: &LogRecord) {
         if let (LogRecord::Milestone { milestone }, Ok(mut marks)) = (record, self.marks.lock()) {

@@ -88,6 +88,9 @@ impl Core {
         abandon_question: bool,
         effects: &mut Vec<Effect>,
     ) {
+        // A stop, an interruption or mute cut the reply off: if it was the end-of-session line,
+        // the user is still here, so the session goes on.
+        self.keep_session();
         if let Some(reply) = &mut self.reply {
             if reply.in_flight {
                 effects.push(Effect::CancelTalk);
@@ -235,14 +238,17 @@ impl Core {
         self.end_reply();
         match std::mem::replace(&mut self.state, ConversationState::Idle) {
             ConversationState::Speaking | ConversationState::Thinking | ConversationState::Idle => {
+                self.maybe_end_session(effects);
             }
             // The user started talking just as BoardAI finished: their words are a new turn.
             ConversationState::Ducked(barge_in) => {
+                self.keep_session();
                 self.set_gain(Gain::FULL, effects);
                 self.hand_floor(barge_in.into_utterance(), effects);
             }
             state @ (ConversationState::Listening(_) | ConversationState::Muted) => {
-                self.state = state
+                self.keep_session();
+                self.state = state;
             }
         }
     }

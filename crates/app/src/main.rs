@@ -33,6 +33,7 @@ fn main() -> ExitCode {
             setup::commands::setup_download,
             setup::commands::setup_microphone,
             setup::commands::setup_finish,
+            setup::commands::setup_open_microphone_settings,
             #[cfg(debug_assertions)]
             dev::dev_say,
         ])

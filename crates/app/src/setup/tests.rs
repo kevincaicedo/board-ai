@@ -60,6 +60,7 @@ fn probes() -> Probes {
         },
         input_devices: Vec::new(),
         started: false,
+        mic_attributed_to: None,
     }
 }
 

@@ -5,6 +5,7 @@
 
 pub mod barge_in;
 pub mod cues;
+pub mod stage_cues;
 pub mod utterance;
 
 use crate::protocol::OrbState;

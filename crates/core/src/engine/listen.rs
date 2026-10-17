@@ -352,11 +352,20 @@ impl Core {
             return;
         }
         self.cancel_by_voice(&text, effects);
-        if self.memory_control(&text, effects) || self.open_settings_by_voice(&text, effects) {
+        if self.memory_control(&text, effects)
+            || self.open_settings_by_voice(&text, effects)
+            || self.end_session_by_voice(&text, effects)
+        {
             self.user.context = context;
             return;
         }
-        self.turn_question = self.question_of(&text, &context);
+        // "Back to the main board" closes the detours here; the talker still answers the words.
+        let back = self.back_to_main_board(now, &text, context.interrupted, effects);
+        self.turn_question = if back {
+            None
+        } else {
+            self.question_of(&text, &context)
+        };
         let message = self.user_message(&text, &context);
         self.user.pending = Some(PendingUser {
             text,

@@ -77,6 +77,11 @@ const TRAVEL_LIFT_MAX = 18;
 export class Presence {
   readonly transitions: OrbTransition[] = [];
   condenseAt: number | null = null;
+  /**
+   * When the session ended: a docked orb grows back to the center (frame 1), as it condensed
+   * from there; it stays there until the next session's start resets the stage (D-182).
+   */
+  restAt: number | null = null;
   readonly freezes: number[] = [];
   lastAcknowledgeAt: number | null = null;
   readonly #tokens: PresenceTokens;
@@ -92,6 +97,7 @@ export class Presence {
   reset(): void {
     this.transitions.length = 0;
     this.condenseAt = null;
+    this.restAt = null;
     this.freezes.length = 0;
     this.lastAcknowledgeAt = null;
   }
@@ -108,6 +114,11 @@ export class Presence {
     if (state === "Drawing" && this.condenseAt === null) {
       this.condenseAt = at;
     }
+  }
+
+  /** The session ended: the orb goes back to the center. */
+  rest(at: number): void {
+    this.restAt ??= at;
   }
 
   /** The board started drawing; if the orb never condensed, it does so now. */
@@ -439,5 +450,16 @@ export function orbPlacement(
   out.opacity = Math.min(1, grow * 1.4);
   out.docked = 1;
   out.condense = 0.25 * (1 - Math.min(1, grow));
+  const restAt = presence.restAt;
+  if (restAt !== null && at >= restAt) {
+    // The session ended: the docked orb grows back to the center over a condense's time.
+    const back = easeInOutCubic(ramp(at, restAt, restAt + tokens.durationOrbCondenseMs));
+    out.x = lerp(out.x, anchors.center[0], back);
+    out.y = lerp(out.y, anchors.center[1], back);
+    out.size = lerp(out.size, tokens.orbSize, back);
+    out.opacity = lerp(out.opacity, 1, back);
+    out.docked = 1 - back;
+    out.condense = out.condense * (1 - back);
+  }
   return out;
 }

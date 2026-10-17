@@ -1,6 +1,8 @@
 // The surface column in the right half of the stage (frames 4–6): the open detour's card and at
-// most two surfaces, stacked from the top, or one centered. Cards rise out of a blur when they arrive, glide on a spring when the
-// column makes room, and blur out when they leave.
+// most two surfaces, stacked from the top, or one centered. Cards rise out of a blur when they
+// arrive, glide on a spring when the column makes room, and blur out when they leave. A detour
+// card is sized from its drawing each frame (D-188): it grows taller, and wider to the left of
+// the column, when the drawing would no longer read at frame 4's size.
 
 import { useMemo, useRef } from "preact/hooks";
 import { round1, round2 } from "../canvas/math.ts";
@@ -32,11 +34,23 @@ export function Column() {
   const write = useMemo(styleWriter, []);
 
   useFrame((at) => {
-    const tops = columnTops(items, at, tokens);
+    const cards = runtime.detourCards;
+    const sized = items.map((item) => {
+      const height = item.kind === "detour" ? cards.get(item.layer)?.height : undefined;
+      return height === undefined ? item : { ...item, height };
+    });
+    const tops = columnTops(sized, at, tokens);
+    const column = runtime.columnWidth;
     for (const item of items) {
       const card = cardRefs.current.get(item.key) ?? null;
       if (card === null) {
         continue;
+      }
+      const size = item.kind === "detour" ? cards.get(item.layer) : undefined;
+      if (size !== undefined) {
+        write(card, "height", `${size.height}px`);
+        write(card, "width", `${size.width}px`);
+        write(card, "left", `${column - size.width}px`);
       }
       const motion = surfaceMotion(item, at, tokens.durationStandardMs);
       const visible = at >= item.enterAt && motion.exit < 1;
@@ -58,7 +72,8 @@ export function Column() {
         <section
           key={item.key}
           class={`surface surface-${item.kind === "detour" ? "detour" : item.surface.kind.toLowerCase()}`}
-          style={{ height: `${item.height}px` }}
+          // A detour card's size is written each frame from its drawing.
+          style={item.kind === "detour" ? undefined : { height: `${item.height}px` }}
           ref={(element) => {
             if (element === null) {
               cardRefs.current.delete(item.key);

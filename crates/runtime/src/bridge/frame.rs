@@ -105,7 +105,8 @@ impl Frame {
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
-            | UiEvent::OpenSettings => key,
+            | UiEvent::OpenSettings
+            | UiEvent::SessionEnd => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -137,7 +138,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::SessionStart { .. }
         | UiEvent::ViewShow { .. }
         | UiEvent::ViewDismiss
-        | UiEvent::OpenSettings => None,
+        | UiEvent::OpenSettings
+        | UiEvent::SessionEnd => None,
     }
 }
 

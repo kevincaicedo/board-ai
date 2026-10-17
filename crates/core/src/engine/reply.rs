@@ -140,6 +140,11 @@ impl Core {
     /// Sends the talker the whole history plus the pending user message. Board, thread and
     /// notices that changed go first, as a system message (history is append-only).
     pub(super) fn request_talk(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
+        // No reply yet: a new turn (the user's next question, or a harness report), so the
+        // topic has moved on (D-185). A tool round continues the same reply.
+        if self.reply.is_none() {
+            self.recap_leaves(effects);
+        }
         let planned_depth = self.queue.planned_depth(self.thread.depth());
         if self.reply.as_ref().is_some_and(|reply| reply.in_flight) {
             effects.push(Effect::CancelTalk);
@@ -261,6 +266,9 @@ impl Core {
         let has_calls = !stream.calls.is_empty();
         self.take_outputs(index, out, effects);
         self.notice_dropped_ops(index);
+        if !matches!(stop, StopReason::Refusal | StopReason::Failed { .. }) {
+            self.carry_out_written_calls(index, effects);
+        }
         // A proposed change is asked about only when the reply ends normally; a refusal or a
         // failure ends the reply with a problem line, and the proposal is dropped with it.
         match stop {
@@ -591,6 +599,9 @@ impl Core {
         output: ToolOutput,
         effects: &mut Vec<Effect>,
     ) {
+        let Some(output) = self.on_written_read(id, output, effects) else {
+            return;
+        };
         let Some(slot) = self.reply.as_mut().and_then(|reply| {
             reply
                 .tools
@@ -682,7 +693,8 @@ impl Core {
     pub(super) fn maybe_report(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         let idle = self.state == crate::conversation::ConversationState::Idle
             && self.reply.is_none()
-            && self.stop.is_none();
+            && self.stop.is_none()
+            && !self.has_ended();
         if idle && !self.context.reports.is_empty() {
             // The report turn asks its own questions: a yes to one of them must not answer
             // BoardAI's question about a change (I9).

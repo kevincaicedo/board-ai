@@ -119,6 +119,15 @@ export class SetupController {
     return this.#request("microphone", () => this.#transport.requestMicrophone());
   }
 
+  /** "Open Microphone settings": a failure is said on the microphone card. */
+  async openMicrophoneSettings(): Promise<void> {
+    try {
+      await this.#transport.openMicrophoneSettings();
+    } catch (error) {
+      this.#dispatch({ type: "refused", card: "microphone", reason: reason(error) });
+    }
+  }
+
   pickMode(mode: MicChoice): Promise<void> {
     if (this.state.value.status?.mic_mode === mode) {
       return Promise.resolve();

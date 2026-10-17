@@ -229,3 +229,14 @@ test("leaving settings asks the app even with a blocker, which decides; start do
   assert.equal(controller.value.finished, true, "nothing was saved, so it just closes");
   assert.equal(transport.calls.filter((call) => call.kind === "finish").length, 2);
 });
+
+test("opening the microphone pane goes to the app; a failure is said on the card", async () => {
+  const { transport, controller } = setup({ ...firstLaunch(), microphone: "Denied" });
+  await controller.load();
+  await controller.openMicrophoneSettings();
+  assert.ok(transport.calls.some((call) => call.kind === "openMicrophoneSettings"));
+  assert.equal(controller.value.problems.microphone, null);
+  transport.refuse.openMicrophoneSettings = "System Settings didn't open.";
+  await controller.openMicrophoneSettings();
+  assert.equal(controller.value.problems.microphone, "System Settings didn't open.");
+});

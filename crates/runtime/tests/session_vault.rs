@@ -439,3 +439,138 @@ async fn the_views_show_what_the_vault_holds() {
     running.session.close().await;
     close(store, store_task).await;
 }
+
+const SECOND_NOTE: &str =
+    r#"{"kind":"note","text":"The leader replicates entries in order","about":"systems"}"#;
+const SECOND_TASK: &str = r#"{"title":"Read Raft section 5.4","project":"Harness"}"#;
+
+/// The owner's report: notes said by voice were kept in the first session, never in the next.
+/// A settings change ends the session the way quitting does and starts a new one on the same
+/// store; its notes and tasks must reach the vault like the first session's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notes_are_kept_in_the_session_after_a_restart() {
+    let folder = TempFolder::new("session-vault-restart");
+    let (test, store, store_task) = open(&folder).await;
+    let first = Arc::new(Replies::default());
+    first.calls("Noted.", &[("remember", NOTE)]);
+    first.says("Anything else?");
+    let mut running = start_session(&store, &test, first);
+    running.say("note that cache-aside reads Redis first").await;
+    let note = test.vault().join("notes/cache-aside-reads-redis-first.md");
+    eventually("the first session's note is written", || note.is_file()).await;
+    running.session.close().await;
+
+    let second = Arc::new(Replies::default());
+    second.calls(
+        "Noted.",
+        &[("remember", SECOND_NOTE), ("add_task", SECOND_TASK)],
+    );
+    second.says("Done.");
+    let mut running = start_session(&store, &test, second);
+    running
+        .say("note that the leader replicates entries in order, and add a task")
+        .await;
+    let note = test
+        .vault()
+        .join("notes/the-leader-replicates-entries-in-order.md");
+    eventually("the second session's note is written", || note.is_file()).await;
+    eventually("the second session's task is written", || {
+        std::fs::read_to_string(test.vault().join("projects/harness.md"))
+            .is_ok_and(|text| text.contains("Read Raft section 5.4"))
+    })
+    .await;
+    running.session.close().await;
+    close(store, store_task).await;
+}
+
+/// The same across a relaunch: the store is shut down and opened again on the same vault.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notes_are_kept_in_the_session_after_a_relaunch() {
+    let folder = TempFolder::new("session-vault-relaunch");
+    let (test, store, store_task) = open(&folder).await;
+    let first = Arc::new(Replies::default());
+    first.calls("Noted.", &[("remember", NOTE)]);
+    first.says("Anything else?");
+    let mut running = start_session(&store, &test, first);
+    running.say("note that cache-aside reads Redis first").await;
+    let note = test.vault().join("notes/cache-aside-reads-redis-first.md");
+    eventually("the first session's note is written", || note.is_file()).await;
+    running.session.close().await;
+    close(store, store_task).await;
+
+    let (store, store_task, _) = test.open().await;
+    let second = Arc::new(Replies::default());
+    second.calls("Noted.", &[("remember", SECOND_NOTE)]);
+    second.says("Done.");
+    let mut running = start_session(&store, &test, second);
+    running
+        .say("note that the leader replicates entries in order")
+        .await;
+    let note = test
+        .vault()
+        .join("notes/the-leader-replicates-entries-in-order.md");
+    eventually("the second session's note is written", || note.is_file()).await;
+    running.session.close().await;
+    close(store, store_task).await;
+}
+
+/// The same after an idle rest: the session ends after `SESSION_IDLE_TIMEOUT_MS`, and the next
+/// words open a new one with a fresh core, on the same orchestrator and store.
+#[tokio::test(start_paused = true)]
+async fn notes_are_kept_in_the_session_after_an_idle_rest() {
+    let folder = TempFolder::new("session-vault-idle");
+    let (test, store, store_task) = open(&folder).await;
+    let talker = Arc::new(Replies::default());
+    talker.calls("Noted.", &[("remember", NOTE)]);
+    talker.says("Anything else?");
+    talker.calls("Noted.", &[("remember", SECOND_NOTE)]);
+    talker.says("Done.");
+    let mut running = start_session(&store, &test, talker);
+    running.say("note that cache-aside reads Redis first").await;
+    let note = test.vault().join("notes/cache-aside-reads-redis-first.md");
+    eventually("the first session's note is written", || note.is_file()).await;
+    let idle = boardai_runtime::limits::SESSION_IDLE_TIMEOUT_MS + 1_000;
+    tokio::time::sleep(Duration::from_millis(idle)).await;
+
+    running
+        .say("note that the leader replicates entries in order")
+        .await;
+    let note = test
+        .vault()
+        .join("notes/the-leader-replicates-entries-in-order.md");
+    eventually("the second session's note is written", || note.is_file()).await;
+    running.session.close().await;
+    close(store, store_task).await;
+}
+
+/// The owner's report as it happened (session log of 2026-10-16): the first session's note was
+/// a tool call and was kept; in the next session gemma4 wrote every call as a tag, so the note
+/// was dropped while BoardAI said it was made. A note written as a tag is kept (D-180).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_note_written_as_a_tag_in_the_next_session_is_kept() {
+    let folder = TempFolder::new("session-vault-written-note");
+    let (test, store, store_task) = open(&folder).await;
+    let first = Arc::new(Replies::default());
+    first.calls("Noted.", &[("remember", NOTE)]);
+    first.says("Anything else?");
+    let mut running = start_session(&store, &test, first);
+    running.say("note that cache-aside reads Redis first").await;
+    let note = test.vault().join("notes/cache-aside-reads-redis-first.md");
+    eventually("the first session's note is written", || note.is_file()).await;
+    running.session.close().await;
+
+    let second = Arc::new(Replies::default());
+    second.says(
+        "I can create that note for you. <remember kind=\"note\" text=\"story consensus \
+         protocol\" about=\"you\"/> I have made a note for you about the story consensus \
+         protocol.",
+    );
+    let mut running = start_session(&store, &test, second);
+    running
+        .say("Let's create one note, reminding me to review the consensus protocol.")
+        .await;
+    let note = test.vault().join("notes/story-consensus-protocol.md");
+    eventually("the note written as a tag is kept", || note.is_file()).await;
+    running.session.close().await;
+    close(store, store_task).await;
+}

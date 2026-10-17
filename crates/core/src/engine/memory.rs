@@ -101,6 +101,20 @@ impl Memory {
     }
 }
 
+/// Which file a memory goes to: a note is always yours; the rest follow the talker's `about`.
+fn subject_of(kind: MemoryKind, about: Subject) -> Subject {
+    match kind {
+        MemoryKind::Note => Subject::You,
+        MemoryKind::SessionRecord
+        | MemoryKind::LearningSignal
+        | MemoryKind::Stated
+        | MemoryKind::Inferred
+        | MemoryKind::Task
+        | MemoryKind::RawAudio
+        | MemoryKind::Secret => about,
+    }
+}
+
 impl Core {
     /// The talker's `remember`: the policy decides, the store keeps it, a chip flies.
     pub(super) fn remember(
@@ -113,25 +127,39 @@ impl Core {
         effects: &mut Vec<Effect>,
     ) -> String {
         let kind = memory_policy::remember_kind(kind);
-        let subject = match kind {
-            MemoryKind::Note => Subject::You,
-            MemoryKind::SessionRecord
-            | MemoryKind::LearningSignal
-            | MemoryKind::Stated
-            | MemoryKind::Inferred
-            | MemoryKind::Task
-            | MemoryKind::RawAudio
-            | MemoryKind::Secret => about,
-        };
-        let (capture, action) = match self.write_memory(kind, text, links, None, subject, effects) {
-            Ok(written) => written,
-            Err(reason) => return reason.tool_text(),
-        };
+        let (capture, action) =
+            match self.write_memory(kind, text, links, None, subject_of(kind, about), effects) {
+                Ok(written) => written,
+                Err(reason) => return reason.tool_text(),
+            };
         match action {
             MemoryAction::Keep => "Remembered.".to_owned(),
             MemoryAction::OnRequest => "Saved.".to_owned(),
             MemoryAction::Propose => self.open_proposal(now, capture, text),
             MemoryAction::Never => NotStored::Never.tool_text(),
+        }
+    }
+
+    /// A `remember` the talker wrote as a tag instead of calling it (D-180): the same policy,
+    /// chip and capture, but an inferred memory opens no gate. Nobody asked the user about it,
+    /// so it waits in the session digest.
+    pub(super) fn remember_written(
+        &mut self,
+        kind: RememberKind,
+        text: &str,
+        about: Subject,
+        links: &[String],
+        effects: &mut Vec<Effect>,
+    ) -> String {
+        let kind = memory_policy::remember_kind(kind);
+        match self.write_memory(kind, text, links, None, subject_of(kind, about), effects) {
+            Ok((_, MemoryAction::Keep)) => "Remembered.".to_owned(),
+            Ok((_, MemoryAction::OnRequest)) => "Saved.".to_owned(),
+            Ok((_, MemoryAction::Propose)) => {
+                "Proposed, not kept: it waits in the session digest.".to_owned()
+            }
+            Ok((_, MemoryAction::Never)) => NotStored::Never.tool_text(),
+            Err(reason) => reason.tool_text(),
         }
     }
 
@@ -397,7 +425,7 @@ impl Core {
 
     /// A reply the core speaks itself: one short line, no talker request. The turn ends when
     /// it has played, like any reply.
-    fn say(&mut self, line: &str, effects: &mut Vec<Effect>) {
+    pub(super) fn say(&mut self, line: &str, effects: &mut Vec<Effect>) {
         let clause = self.voice.add(
             line.to_owned(),
             Speakable::from_caption(line),

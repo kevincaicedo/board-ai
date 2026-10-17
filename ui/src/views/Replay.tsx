@@ -84,6 +84,41 @@ function CloseButton({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * A replay that played to its end holds its last frame, then returns where it was opened
+ * (D-183): a card's replay to the library or the recall view, the core's replay view to the
+ * library it was opened over, or to the live stage. A seek or a replay from the start cancels it.
+ */
+function useReturnWhenFinished(loaded: Loaded, onClose: () => void): void {
+  const holdMs = useRuntime().tokens.durationReplayEndHoldMs;
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (loaded.kind !== "ready") {
+      return;
+    }
+    const replay = loaded.replay;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const check = (): void => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (replay.finished) {
+        timer = setTimeout(() => close.current(), holdMs);
+      }
+    };
+    const unsubscribe = replay.subscribe(check);
+    check();
+    return () => {
+      unsubscribe();
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+    };
+  }, [loaded, holdMs]);
+}
+
 export function ReplayOverlay({
   card,
   today,
@@ -96,6 +131,7 @@ export function ReplayOverlay({
 }) {
   const outer = useRuntime();
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
+  useReturnWhenFinished(loaded, onClose);
   useEffect(() => {
     let current = true;
     setLoaded({ kind: "loading" });

@@ -15,6 +15,7 @@ export type FakeCall =
   | { readonly kind: "saveKey"; readonly name: KeyName; readonly length: number }
   | { readonly kind: "download"; readonly model: string }
   | { readonly kind: "requestMicrophone" }
+  | { readonly kind: "openMicrophoneSettings" }
   | { readonly kind: "finish" };
 
 interface PendingDownload {
@@ -79,6 +80,10 @@ export class FakeSetupTransport implements SetupTransport {
     return this.current;
   }
 
+  async openMicrophoneSettings(): Promise<void> {
+    this.#record({ kind: "openMicrophoneSettings" });
+  }
+
   async finish(): Promise<void> {
     this.#record({ kind: "finish" });
   }
@@ -132,6 +137,7 @@ export function firstLaunch(): SetupStatus {
     input: { kind: "SystemDefault" },
     input_devices: [],
     harnesses: { claude_code: true, pi: false },
+    mic_attributed_to: null,
     blockers: [
       { kind: "TalkerKey", provider: "Claude" },
       { kind: "HearingNotReady" },
@@ -147,11 +153,16 @@ function ready(status: SetupStatus): SetupStatus {
   };
 }
 
+/** A device name longer than the picker: it is cut with an ellipsis, never over the status. */
+const LONG_DEVICE = "Jabra Evolve2 65 Flex USB-C Wireless Headset Microphone";
+
 export const PRESETS = [
   "downloading",
   "ready",
   "key-saved",
   "mic-denied",
+  "mic-elsewhere",
+  "mic-long-name",
   "ollama",
   "settings",
   "download-error",
@@ -220,6 +231,24 @@ export function presetTransport(preset: Preset): FakeSetupTransport {
         microphone: "Denied",
         mic_mode: "PushToTalk",
         blockers: [{ kind: "MicrophoneDenied" }],
+      };
+      break;
+    // `just dev` in an editor's terminal: macOS asks about the editor (D-186).
+    case "mic-elsewhere":
+      transport.current = {
+        ...keySaved,
+        microphone: "Denied",
+        input: { kind: "Named", name: LONG_DEVICE },
+        input_devices: [LONG_DEVICE, "MacBook Pro Microphone"],
+        mic_attributed_to: "Visual Studio Code",
+        blockers: [{ kind: "MicrophoneDenied" }],
+      };
+      break;
+    case "mic-long-name":
+      transport.current = {
+        ...keySaved,
+        input: { kind: "Named", name: LONG_DEVICE },
+        input_devices: [LONG_DEVICE, "MacBook Pro Microphone"],
       };
       break;
     case "download-error":

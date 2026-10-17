@@ -13,9 +13,11 @@ mod memory;
 mod ops;
 mod reply;
 mod sources;
+mod stage;
 mod stop;
 pub mod text;
 pub mod views;
+mod written;
 
 use std::collections::BTreeSet;
 
@@ -130,6 +132,13 @@ pub struct Core {
     memory: Memory,
     /// The view on screen, if any (LLD §3.7).
     view: Option<ViewKind>,
+    /// The library on screen, and the one a replay opened over: closing that replay shows it
+    /// again (D-183).
+    library_return: views::LibraryReturn,
+    /// Whether "end the session" was said, and whether the session has ended (D-181).
+    ending: stage::SessionEnding,
+    /// Views read for tool calls the talker wrote as tags (D-180).
+    written_reads: written::WrittenReads,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -166,6 +175,9 @@ impl Core {
             next_task: 0,
             memory: Memory::default(),
             view: None,
+            library_return: views::LibraryReturn::default(),
+            ending: stage::SessionEnding::Continuing,
+            written_reads: written::WrittenReads::default(),
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }

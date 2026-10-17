@@ -217,6 +217,10 @@ pub struct SetupStatus {
     pub input_devices: Vec<String>,
     pub harnesses: HarnessesFound,
     pub blockers: Vec<SetupBlocker>,
+    /// The app macOS asks about the microphone instead of BoardAI, because BoardAI was started
+    /// from it (a terminal or an editor, "Visual Studio Code"); `None` when macOS asks about
+    /// BoardAI itself, or it can't be told (D-186).
+    pub mic_attributed_to: Option<String>,
 }
 
 /// One change from the screen, saved to `settings.toml` at once.
@@ -371,6 +375,7 @@ mod tests {
                 pi: false,
             },
             blockers: Vec::new(),
+            mic_attributed_to: None,
         }
     }
 

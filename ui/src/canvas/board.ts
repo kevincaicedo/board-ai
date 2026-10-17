@@ -6,6 +6,7 @@ import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Vec } from "./geometry.ts";
+import { easeOut, ramp } from "./math.ts";
 import {
   labelOf,
   labelOfTarget,
@@ -144,6 +145,11 @@ export class BoardModel {
   readonly layers = new Map<number, Layer>();
   readonly detours: DetourSpan[] = [];
   readonly counters: BoardCounters = { droppedOps: 0, orphanEvents: 0 };
+  /**
+   * When the session ended (`SessionEnd`): the board fades out and the nib rests, until the
+   * next session's start resets the board (D-182).
+   */
+  endedAt: number | null = null;
   /** Bumped on every structural change (a run added or replaced, a layer pushed or popped). */
   version = 0;
   readonly #tokens: PlanTokens;
@@ -155,6 +161,7 @@ export class BoardModel {
   }
 
   reset(): void {
+    this.endedAt = null;
     this.layers.clear();
     this.detours.length = 0;
     this.counters.droppedOps = 0;
@@ -176,6 +183,17 @@ export class BoardModel {
       throw new Error("the main layer always exists");
     }
     return main;
+  }
+
+  /** The session ended at `at`: its board fades out (the first end counts). */
+  end(at: number): void {
+    this.endedAt ??= at;
+  }
+
+  /** How far the ended board has faded out at `at`, from 0 to 1. */
+  endedAmount(at: number, durationMs: number): number {
+    const endedAt = this.endedAt;
+    return endedAt === null ? 0 : easeOut(ramp(at, endedAt, endedAt + durationMs));
   }
 
   /** Open detour layers, outermost first. */

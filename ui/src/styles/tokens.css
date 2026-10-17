@@ -126,6 +126,8 @@
   --duration-suggestion-out: 450ms;
   --duration-code-mark: 500ms;
   --duration-view-stagger: 100ms;
+  /* A replay that played to its end holds its last frame this long, then returns (D-183). */
+  --duration-replay-end-hold: 1600ms;
 
   /* Type (bundled locally: the CSP allows no remote fonts) */
   --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -210,6 +212,11 @@
   --detour-board-bottom: 0px;
   --detour-board-side: 0px;
   --camera-scale-max: 1;
+  /* A detour card keeps frame 4's size while its drawing reads at this scale or more; past it the
+     card grows, taller first, then wider to the left, up to the board's area. A small detour is
+     enlarged up to --detour-camera-scale-max, never on a focus (D-188). */
+  --detour-scale-min: 0.75;
+  --detour-camera-scale-max: 1.25;
   --caption-rise: 10px;
   --caption-previous-rise: 30px;
   --caption-width: 1000px;
@@ -280,10 +287,9 @@
   --type-link-chip: 11px;
   --type-recap: 18px;
   --type-recap-line: 28px;
+  /* Beside the panels the orb and captions are centered in the free space (D-187). */
   --view-orb-tasks: 200px;
-  --view-orb-tasks-x: 0.62;
   --view-orb-memory: 180px;
-  --view-orb-memory-x: 0.547;
   --recall-card-width: 520px;
   --recall-memory-top: 112px;
   --recall-memory-height: 236px;
@@ -323,6 +329,8 @@
   --size-setup-small: 36px;
   /* The microphone card's input picker (11b): a 32 px pill. */
   --size-setup-input: 32px;
+  /* The Input picker's narrowest (label and select); past it the picker takes its own line. */
+  --setup-input-min: 168px;
   --type-setup-title: 40px;
   --type-setup-title-line: 48px;
   --type-setup-lede: 16px;

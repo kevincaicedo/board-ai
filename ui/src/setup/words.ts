@@ -163,6 +163,20 @@ export function downloadProblem(problem: DownloadProblem): string {
 export const MIC_DENIED =
   "Turn the microphone on in System Settings › Privacy & Security › Microphone, then come back. This screen notices on its own.";
 
+/**
+ * Where to turn the microphone on when macOS said no. Started from a terminal or an editor,
+ * BoardAI's microphone is that app's, so the switch to turn on is that app's (D-186).
+ */
+export function micDenied(attributedTo: string | null): string {
+  if (attributedTo === null) {
+    return MIC_DENIED;
+  }
+  return `macOS asks about ${attributedTo} here, because BoardAI was started from it. Turn on ${attributedTo} in System Settings › Privacy & Security › Microphone, then come back.`;
+}
+
+/** The button under a denied microphone's words: System Settings at its pane. */
+export const OPEN_MIC_SETTINGS = "Open Microphone settings";
+
 export const OLLAMA_UNREACHABLE =
   "Ollama isn't answering. Start it, then come back to this window.";
 

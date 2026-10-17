@@ -33,6 +33,7 @@ export type TauriCommand =
   | "setup_key"
   | "setup_download"
   | "setup_microphone"
+  | "setup_open_microphone_settings"
   | "setup_finish";
 
 /** The two Tauri calls the transports need, injectable so tests don't need a webview. */

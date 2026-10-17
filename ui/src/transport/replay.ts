@@ -35,6 +35,8 @@ export class ReplayTransport implements Transport {
   #sink: BatchSink | null = null;
   #nextBatch = 0;
   #playing = false;
+  /** The playhead reached the end by playing (not by a seek or pause). */
+  #finished = false;
   #speed: ReplaySpeed = 1;
   /** Playhead at page time #anchorPageMs. */
   #anchorPositionMs = 0;
@@ -67,6 +69,14 @@ export class ReplayTransport implements Transport {
     this.#listeners.clear();
   }
 
+  /**
+   * The replay played to its end: a session's replay then returns to where it was opened
+   * (D-183). A seek, or playing again, clears it.
+   */
+  get finished(): boolean {
+    return this.#finished;
+  }
+
   get state(): ReplayState {
     return {
       playing: this.#playing,
@@ -96,6 +106,7 @@ export class ReplayTransport implements Transport {
       this.#anchorPositionMs = this.log.durationMs;
       this.#anchorPageMs = pageNowMs;
       this.#playing = false;
+      this.#finished = true;
       this.#notify();
     }
     this.#deliverThrough(position);
@@ -112,6 +123,7 @@ export class ReplayTransport implements Transport {
     }
     this.#anchorPageMs = pageNowMs;
     this.#playing = true;
+    this.#finished = false;
     this.#notify();
   }
 
@@ -135,6 +147,7 @@ export class ReplayTransport implements Transport {
 
   seek(positionMs: number, pageNowMs: number): void {
     const target = Math.max(0, Math.min(positionMs, this.log.durationMs));
+    this.#finished = false;
     const delivered = this.log.batches[this.#nextBatch - 1];
     if (delivered !== undefined && delivered.at > target) {
       this.#nextBatch = 0;

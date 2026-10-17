@@ -42,4 +42,10 @@ hearing_files: Array<ModelFileStatus>, microphone: MicPermission, mic_mode: MicC
 /**
  * Input devices macOS lists by name; empty until the audio layer can list them.
  */
-input_devices: Array<string>, harnesses: HarnessesFound, blockers: Array<SetupBlocker>, };
+input_devices: Array<string>, harnesses: HarnessesFound, blockers: Array<SetupBlocker>, 
+/**
+ * The app macOS asks about the microphone instead of BoardAI, because BoardAI was started
+ * from it (a terminal or an editor, "Visual Studio Code"); `None` when macOS asks about
+ * BoardAI itself, or it can't be told (D-186).
+ */
+mic_attributed_to: string | null, };

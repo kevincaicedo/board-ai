@@ -175,6 +175,26 @@ test("replay stops at the end and plays again from the start", async () => {
   assert.ok(changes >= 3);
 });
 
+test("a replay that plays to its end is finished; seeking or playing again is not", async () => {
+  const replay = demoReplay();
+  await replay.connect(new RecordingSink());
+  const end = replay.log.durationMs;
+  replay.seek(end, 0);
+  replay.sessionTime(10);
+  assert.equal(replay.finished, false, "a seek to the end did not play there");
+  replay.play(100);
+  assert.equal(replay.finished, false);
+  replay.sessionTime(100 + end + 50);
+  assert.equal(replay.finished, true);
+  replay.seek(end / 2, 200 + end);
+  assert.equal(replay.finished, false);
+  replay.play(300 + end);
+  replay.sessionTime(300 + 2 * end);
+  assert.equal(replay.finished, true);
+  replay.play(400 + 2 * end);
+  assert.equal(replay.finished, false, "playing again starts over");
+});
+
 test("the session clock follows batch stamps and never runs backwards", () => {
   const clock = new SessionClock();
   assert.equal(clock.now(500), 0);

@@ -265,12 +265,12 @@ pub fn has_interruption_cue(text: &str) -> bool {
 
 /// True when every word belongs to a phrase of `table` or to `fillers`, and at least one phrase
 /// matched. Longer phrases are tried first so "got it" is not read as "got" + "it".
-fn made_of(text: &str, table: &[&str], fillers: &[&str]) -> bool {
+pub(crate) fn made_of(text: &str, table: &[&str], fillers: &[&str]) -> bool {
     made_of_any(text, &[table], fillers)
 }
 
 /// [`made_of`] over several tables at once.
-fn made_of_any(text: &str, tables: &[&[&str]], fillers: &[&str]) -> bool {
+pub(crate) fn made_of_any(text: &str, tables: &[&[&str]], fillers: &[&str]) -> bool {
     let words = words(text);
     let mut index = 0;
     let mut phrases = 0;

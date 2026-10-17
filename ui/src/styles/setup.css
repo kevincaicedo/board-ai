@@ -352,6 +352,14 @@
 
 /* Card 3: the microphone */
 
+/* Denied: where to turn it on, then the button that opens that pane (D-186). */
+.setup-mic-denied {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 /* One row at the artboard's width; on a narrow window the input picker wraps under. */
 .setup-mic-row {
   display: flex;
@@ -383,8 +391,9 @@
 /* It gives way to the input picker, as on 11b ("Microphone / off" on two lines): only the
    "Allow microphone" button, which can't shrink, sends the picker to the next line. */
 .setup-mic-state {
-  flex: 1 1 0;
-  min-width: 0;
+  /* "Microphone off" and "Microphone allowed" never wrap into the picker. */
+  flex: none;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -427,18 +436,27 @@
   stroke: var(--ink-2);
 }
 
-/* "Input" and its picker, a small pill (11b). */
+/* "Input" and its picker, a small pill (11b). It takes the rest of the row, at the right; a
+   long device name is cut with an ellipsis, and below its minimum the picker takes its own line. */
 .setup-input {
+  flex: 1 1 var(--setup-input-min);
+  min-width: var(--setup-input-min);
+  max-width: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  max-width: 60%;
   font-size: var(--type-setup-note);
   color: var(--ink-2);
 }
 
 .setup-input-select {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   height: var(--size-setup-input);
   padding: 0 10px;
   border-radius: calc(var(--size-setup-input) / 2);

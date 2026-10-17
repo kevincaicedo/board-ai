@@ -211,6 +211,26 @@ impl Checker {
         }
     }
 
+    /// A session ends only once BoardAI is quiet (D-181): no talker stream in flight, nothing
+    /// playing or waiting to play, and nobody holding the floor. Anything still going would be
+    /// cut off when the orchestrator ends the session.
+    fn check_session_end(&mut self, now: SessionTime, core: &Core, speech: &FakeSpeech) {
+        let quiet =
+            !self.talk_in_flight && !speech.is_active() && *core.state() == ConversationState::Idle;
+        if !quiet {
+            self.violate(
+                now,
+                format!(
+                    "SessionEnd while BoardAI is not quiet (stream in flight: {}, speech \
+                     active: {}, state: {})",
+                    self.talk_in_flight,
+                    speech.is_active(),
+                    core.state().name()
+                ),
+            );
+        }
+    }
+
     /// I9: a change runs only on a yes begun after BoardAI's own question naming exactly that
     /// branch and instruction played to its end.
     fn check_change(&mut self, now: SessionTime, branch: &str, brief: &str, speech: &FakeSpeech) {
@@ -296,6 +316,7 @@ impl Checker {
             }
             UiEvent::LayerPush { .. } => self.layer_pushes += 1,
             UiEvent::LayerPop { .. } => self.layer_pops += 1,
+            UiEvent::SessionEnd => self.check_session_end(now, core, speech),
             UiEvent::Thread { detours, .. } => {
                 if detours.len() > DETOUR_DEPTH_MAX {
                     self.violate(now, format!("I4: {} detours open", detours.len()));

@@ -693,6 +693,7 @@ const EVENTS: Tagged<UiEvent, "type"> = {
   },
   ViewDismiss: () => ({ type: "ViewDismiss" }),
   OpenSettings: () => ({ type: "OpenSettings" }),
+  SessionEnd: () => ({ type: "SessionEnd" }),
 };
 
 export function parseUiEvent(value: unknown, skips: RowSkips = { rows: 0 }): UiEvent | null {

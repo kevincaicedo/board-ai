@@ -14,10 +14,11 @@ import {
   keyHint,
   keyLabel,
   keyNote,
-  MIC_DENIED,
   MODES,
+  micDenied,
   micStep,
   OLLAMA_UNREACHABLE,
+  OPEN_MIC_SETTINGS,
   PROVIDERS,
   percent,
   providerKey,
@@ -367,7 +368,19 @@ export function MicrophoneCard(props: CardProps) {
         )}
         <InputPicker {...props} busy={busy} />
       </div>
-      <Problem text={permission === "Denied" ? MIC_DENIED : state.problems.microphone} />
+      {permission === "Denied" ? (
+        <div class="setup-mic-denied">
+          <Problem text={micDenied(status.mic_attributed_to)} />
+          <button
+            type="button"
+            class="setup-again"
+            onClick={() => void controller.openMicrophoneSettings()}
+          >
+            {OPEN_MIC_SETTINGS}
+          </button>
+        </div>
+      ) : null}
+      <Problem text={state.problems.microphone} />
       <div role="radiogroup" aria-label="Microphone mode" class="setup-modes">
         {MODES.map((mode) => (
           <label key={mode.id} class="setup-mode">

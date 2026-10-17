@@ -1,7 +1,9 @@
 // Where things sit while a view is open (the canvas's 8 · Library, 9 · Brain and memory frames):
 // the panels' widths, the free space left of them, and where the orb and the captions go. The
 // library and the boards dock the orb at bottom center; the panels move the conversing orb (and
-// its captions) into the space beside them. Pure functions, blended by each view's motion.
+// its captions) to the middle of the space beside them (D-187: the canvas's 1440 px offsets,
+// kept as ratios, drifted right on a wider window). Pure functions, blended by each view's
+// motion.
 
 import type { ViewKindName } from "../app/views.ts";
 import type { Viewport } from "../canvas/camera.ts";
@@ -18,9 +20,7 @@ export type ViewLayoutTokens = Pick<
   | "panelMemoryWidth"
   | "panelMemoryGap"
   | "viewOrbTasks"
-  | "viewOrbTasksX"
   | "viewOrbMemory"
-  | "viewOrbMemoryX"
   | "orbDockSize"
   | "orbDockSwell"
   | "captionWidth"
@@ -61,13 +61,13 @@ export function orbSpot(kind: ViewKindName, stage: Viewport, tokens: ViewLayoutT
       return { kind: "dock", size: tokens.orbDockSize + tokens.orbDockSwell };
     case "Tasks": {
       const free = stage.width - tokens.panelRight - tasksPanelWidth(stage, tokens);
-      return { kind: "aside", x: free * tokens.viewOrbTasksX, size: tokens.viewOrbTasks, free };
+      return { kind: "aside", x: free / 2, size: tokens.viewOrbTasks, free };
     }
     case "Memory": {
       const used =
         tokens.panelMemoryRight + 2 * memoryPanelWidth(stage, tokens) + tokens.panelMemoryGap;
       const free = stage.width - used;
-      return { kind: "aside", x: free * tokens.viewOrbMemoryX, size: tokens.viewOrbMemory, free };
+      return { kind: "aside", x: free / 2, size: tokens.viewOrbMemory, free };
     }
   }
 }

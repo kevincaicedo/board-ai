@@ -108,6 +108,13 @@ pub async fn setup_microphone(
     current_status(&app, &state, ollama).await
 }
 
+/// "Open Microphone settings": System Settings at Privacy & Security › Microphone, where the
+/// app macOS asks about (BoardAI, or the one it was started from) is turned on (D-186).
+#[tauri::command]
+pub async fn setup_open_microphone_settings() -> Result<(), String> {
+    blocking(permission::open_microphone_settings).await
+}
+
 /// "Start talking": refused while `core::setup::blockers` names anything; otherwise sets the
 /// setup-complete flag and starts the session (once). Opened as settings over a running
 /// session, it closes the screen, and when something was saved it restarts the session the
@@ -156,6 +163,7 @@ async fn current_status(
             },
             input_devices: input_device_names(),
             started,
+            mic_attributed_to: permission::attributed_to(),
         };
         let models = ModelStore::new(paths.models.clone()).map_err(|error| error.to_string())?;
         Ok(status::gather(

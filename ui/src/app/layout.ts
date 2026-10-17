@@ -74,7 +74,10 @@ function visibleAt(items: readonly Placed[], at: number): Placed[] {
   );
 }
 
-/** Tops for a set of items: one is centered on the column's middle; more stack from the top. */
+/**
+ * Tops for a set of items: one is centered on the column's middle, but never above the column's
+ * top (a detour card grown for its drawing, D-188); more stack from the top.
+ */
 function stackTops(
   visible: readonly Placed[],
   tokens: ColumnTokens,
@@ -82,7 +85,7 @@ function stackTops(
 ): void {
   const only = visible[0];
   if (visible.length === 1 && only !== undefined) {
-    out.set(only.key, tokens.surfaceCenter - only.height / 2);
+    out.set(only.key, Math.max(tokens.surfaceTop, tokens.surfaceCenter - only.height / 2));
     return;
   }
   let top = tokens.surfaceTop;
@@ -141,7 +144,7 @@ function holdTop(items: readonly Placed[], item: Placed, tokens: ColumnTokens): 
   const at = hidden === null ? item.shownAt : hidden - 0.5;
   const tops = new Map<string, number>();
   stackTops(visibleAt(items, at), tokens, tops);
-  return tops.get(item.key) ?? tokens.surfaceCenter - item.height / 2;
+  return tops.get(item.key) ?? Math.max(tokens.surfaceTop, tokens.surfaceCenter - item.height / 2);
 }
 
 export interface Motion {

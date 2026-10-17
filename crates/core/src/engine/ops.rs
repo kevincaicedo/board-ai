@@ -641,7 +641,7 @@ impl Core {
         true
     }
 
-    fn close_detour(&mut self, events: &mut Vec<UiEvent>) {
+    pub(super) fn close_detour(&mut self, events: &mut Vec<UiEvent>) {
         let Some(detour) = self.thread.pop_detour() else {
             return;
         };

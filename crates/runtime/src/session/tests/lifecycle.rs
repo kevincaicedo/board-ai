@@ -205,3 +205,116 @@ async fn a_session_whose_start_stalls_still_opens() {
     assert_eq!(stats.sessions, 1);
     assert_eq!(recorder.lifecycle(), vec!["start"]);
 }
+
+fn position(events: &[UiEvent], matches: impl Fn(&UiEvent) -> bool) -> Option<usize> {
+    events.iter().position(matches)
+}
+
+/// D-181, D-182: "we can stop here" ends the session once "Session saved." has played; the
+/// stage clears, the library rests on it once the digest is written, and the next words open a
+/// new session. `SessionEnd` never reaches the session's log.
+#[tokio::test(start_paused = true)]
+async fn ending_the_session_by_voice_rests_on_the_library() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    talker.says("Welcome back.");
+    let harness = start(Arc::clone(&talker), false);
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    assert!(say_typed(&link, "I think we can stop here.").await.is_ok());
+    assert!(run_until(20_000, || recorder.lifecycle() == vec!["start", "digest"]).await);
+    assert!(run_until(2_000, || recorder.events().iter().any(is_library)).await);
+    let events = recorder.events();
+    let saved = position(
+        &events,
+        |event| matches!(event, UiEvent::Caption { text, is_final: true, .. } if text == "Session saved."),
+    );
+    let ended = position(&events, |event| matches!(event, UiEvent::SessionEnd));
+    let library = position(&events, is_library);
+    assert!(
+        saved < ended && ended < library && saved.is_some(),
+        "{events:?}"
+    );
+    assert_eq!(
+        talker.requests().len(),
+        1,
+        "the core answered the end itself"
+    );
+    assert!(
+        !recorder
+            .logged()
+            .iter()
+            .any(|event| matches!(event, UiEvent::SessionEnd | UiEvent::ViewShow { .. })),
+        "the resting stage is never in the ended session's log"
+    );
+
+    assert!(say_typed(&link, "where were we").await.is_ok());
+    assert!(run_until(20_000, || talker.requests().len() == 2).await);
+    assert_eq!(recorder.lifecycle(), vec!["start", "digest", "start"]);
+    assert_eq!(session_starts(&recorder.events()), 2);
+    let (stats, _, _) = close(harness).await;
+    assert_eq!(stats.sessions, 2);
+}
+
+fn is_library(event: &UiEvent) -> bool {
+    matches!(
+        event,
+        UiEvent::ViewShow {
+            view: boardai_core::views::View::Library { .. },
+            ..
+        }
+    )
+}
+
+/// Esc on the resting library closes it without opening a session.
+#[tokio::test(start_paused = true)]
+async fn esc_closes_the_resting_library() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    let harness = start(Arc::clone(&talker), false);
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    assert!(say_typed(&link, "end the session").await.is_ok());
+    assert!(run_until(20_000, || recorder.events().iter().any(is_library)).await);
+    assert!(harness.session.command(UiCommand::CloseView).is_ok());
+    assert!(
+        run_until(2_000, || recorder
+            .events()
+            .iter()
+            .any(|event| matches!(event, UiEvent::ViewDismiss)))
+        .await
+    );
+    let (stats, recorder, _) = close(harness).await;
+    assert_eq!(recorder.lifecycle(), vec!["start", "digest"]);
+    assert_eq!(stats.sessions, 1, "Esc opens no session");
+}
+
+/// The idle rest clears the stage the same way.
+#[tokio::test(start_paused = true)]
+async fn an_idle_rest_clears_the_stage() {
+    let talker = Arc::new(ScriptedTalker::default());
+    talker.says("Sure.");
+    let harness = start(Arc::clone(&talker), false);
+    let link = harness.session.speech_in();
+    assert!(say_typed(&link, "explain Raft").await.is_ok());
+    let recorder = Arc::clone(&harness.recorder);
+    assert!(run_until(20_000, || idle_after_speaking(&recorder)).await);
+    past_the_idle_timeout().await;
+    assert!(
+        recorder
+            .events()
+            .iter()
+            .any(|event| matches!(event, UiEvent::SessionEnd))
+    );
+    let (_, recorder, _) = close(harness).await;
+    assert!(
+        !recorder
+            .logged()
+            .iter()
+            .any(|event| matches!(event, UiEvent::SessionEnd))
+    );
+}

@@ -6,7 +6,8 @@ import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import { styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
 import type { ViewEntry } from "../app/views.ts";
 import { viewMotion } from "../app/views.ts";
-import { cardArea, emptyArea, type Viewport } from "../canvas/camera.ts";
+import type { Viewport } from "../canvas/camera.ts";
+import type { DetourCard } from "../canvas/detourCard.ts";
 import type { Vec } from "../canvas/geometry.ts";
 import { easeOut, ramp, round1, round2 } from "../canvas/math.ts";
 import { Presence } from "../canvas/presence.ts";
@@ -52,8 +53,9 @@ function usePastBoard(
     });
     resize.observe(element);
     const anchors: { center: Vec; dock: Vec } = { center: [0, 0], dock: [0, 0] };
-    const cardFit = cardArea(card, tokens, emptyArea());
-    const stop = runtime.onFrame((at) => board.render(at, pastArea(viewport), cardFit, anchors));
+    // A past board shows its main layer only: no detour card hosts its other layers here.
+    const noCards = new Map<number, DetourCard>();
+    const stop = runtime.onFrame((at) => board.render(at, pastArea(viewport), noCards, anchors));
     return () => {
       stop();
       resize.disconnect();

@@ -249,14 +249,21 @@ test("views move the orb: the library docks it, panels set it beside them", () =
   const beside = orbSpot("Tasks", stage, tokens);
   assert.equal(beside.kind, "aside");
   if (beside.kind === "aside") {
-    // The canvas's 9 · Brain: a 440 px panel 32 px from the right, the orb centered at x 600.
+    // The canvas's 9 · Brain: a 440 px panel 32 px from the right; the orb in the middle of the
+    // 968 px left of it (D-187).
     assert.equal(beside.free, 968);
-    assert.ok(Math.abs(beside.x - 600) < 1);
+    assert.ok(Math.abs(beside.x - 484) < 1);
   }
   const memory = orbSpot("Memory", stage, tokens);
   if (memory.kind === "aside") {
     assert.equal(memory.free, 640);
-    assert.ok(Math.abs(memory.x - 350) < 1);
+    assert.ok(Math.abs(memory.x - 320) < 1);
+  }
+  // The owner's window: still in the middle of the free space, not drifting toward the panels.
+  const owner = { width: 2000, height: 1283 };
+  for (const kind of ["Tasks", "Memory"] as const) {
+    const spot = orbSpot(kind, owner, tokens);
+    assert.ok(spot.kind === "aside" && Math.abs(spot.x - spot.free / 2) < 1, kind);
   }
   const narrow = { width: 960, height: 640 };
   assert.ok(tasksPanelWidth(narrow, tokens) <= 960 - tokens.panelRight - tokens.viewFreeMin);
@@ -264,8 +271,8 @@ test("views move the orb: the library docks it, panels set it beside them", () =
   const orb = { x: 720, y: 388, size: 236, opacity: 1, docked: 0, condense: 0 };
   const captions = { shift: 0, width: tokens.captionWidth };
   placeForView(beside, 1, stage, [720, 857], tokens, orb, captions);
-  assert.ok(Math.abs(orb.x - 600) < 1 && orb.size === tokens.viewOrbTasks);
-  assert.ok(Math.abs(captions.shift + 120) < 1 && captions.width <= 968);
+  assert.ok(Math.abs(orb.x - 484) < 1 && orb.size === tokens.viewOrbTasks);
+  assert.ok(Math.abs(captions.shift + 236) < 1 && captions.width <= 968);
   const docked = { x: 720, y: 857, size: 48, opacity: 1, docked: 1, condense: 0 };
   placeForView(beside, 1, stage, [720, 857], tokens, docked, captions);
   assert.equal(docked.x, 720, "an orb docked for drawing stays docked beside a panel");

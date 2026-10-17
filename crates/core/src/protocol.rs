@@ -148,6 +148,12 @@ pub enum UiEvent {
     /// "Open settings": the UI shows the settings screen (the first-run screen, LLD §3.8)
     /// over the stage. A replay ignores it.
     OpenSettings,
+    /// The session ended (D-182): the stage clears to the idle stage until the next session's
+    /// `SessionStart`. The core sends it when the user ended the session by voice and its last
+    /// line has played; the orchestrator, which owns the session's life (LLD §3.6), ends the
+    /// session when it applies it, and sends it itself after the idle timeout. It is never
+    /// written to the session's log, so a replay never sees it.
+    SessionEnd,
 }
 
 /// The orb states on the design canvas (frame 10a).

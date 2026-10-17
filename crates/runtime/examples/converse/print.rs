@@ -248,7 +248,8 @@ impl Printer {
             UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
-            | UiEvent::OpenSettings => {
+            | UiEvent::OpenSettings
+            | UiEvent::SessionEnd => {
                 print_session_event(at, event);
             }
             UiEvent::Orb { state, .. } => {
@@ -402,6 +403,8 @@ fn print_session_event(at: SessionTime, event: &UiEvent) {
         line(at, "view", "closed");
     } else if let UiEvent::OpenSettings = event {
         line(at, "settings", "opened");
+    } else if let UiEvent::SessionEnd = event {
+        line(at, "session", "ended");
     }
 }
 

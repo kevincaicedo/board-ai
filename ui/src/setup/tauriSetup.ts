@@ -6,6 +6,7 @@
 //   invoke("setup_key", { name, value })            → SetupStatus (never the key)
 //   invoke("setup_download", { model, progress })   → resolves when verified; events on the channel
 //   invoke("setup_microphone")                      → SetupStatus
+//   invoke("setup_open_microphone_settings")        → opens System Settings at the microphone
 //   invoke("setup_finish")                          → starts the session
 
 import type { DownloadEvent } from "../protocol/generated/DownloadEvent.ts";
@@ -67,6 +68,14 @@ export class TauriSetupTransport implements SetupTransport {
 
   requestMicrophone(): Promise<SetupStatus> {
     return this.#status("setup_microphone", {});
+  }
+
+  async openMicrophoneSettings(): Promise<void> {
+    try {
+      await this.#bridge.invoke("setup_open_microphone_settings", {});
+    } catch (error) {
+      throw new Error(reason(error));
+    }
   }
 
   async finish(): Promise<void> {

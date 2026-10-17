@@ -239,6 +239,9 @@ export class SessionStore {
       case "OpenSettings":
         this.settingsRequests.value += 1;
         break;
+      case "SessionEnd":
+        this.#end(at);
+        break;
       case "Acknowledge":
       case "OpStart":
       case "Freeze":
@@ -248,6 +251,22 @@ export class SessionStore {
       case "ViewShow":
       case "ViewDismiss":
         break;
+    }
+  }
+
+  /**
+   * The session ended (D-182): every card leaves as a dismissed one does, the thread goes, the
+   * suggestion is cleared and the lines close so they fade.
+   */
+  #end(at: number): void {
+    this.column.value = this.column.value.map((item) =>
+      item.leftAt === null ? { ...item, leftAt: at } : item,
+    );
+    this.thread.value = null;
+    this.#suggest(null, at);
+    const { current, previous } = this.captions.value;
+    if (current !== null && current.finalAt === null) {
+      this.captions.value = { current: { ...current, finalAt: at }, previous };
     }
   }
 

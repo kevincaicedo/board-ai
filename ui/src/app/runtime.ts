@@ -3,7 +3,15 @@
 // window is hidden (PRODUCT §8.6: the orb rests when nobody can see it).
 
 import { createContext } from "preact";
-import { cardArea, emptyArea, type FitArea, stageArea, type Viewport } from "../canvas/camera.ts";
+import { emptyArea, type FitArea, stageArea, type Viewport } from "../canvas/camera.ts";
+import {
+  cardBounds,
+  columnWidth,
+  type DetourCard,
+  detourCardAt,
+  emptyCard,
+  type Size,
+} from "../canvas/detourCard.ts";
 import type { Vec } from "../canvas/geometry.ts";
 import { type OrbPlacement, orbPlacement } from "../canvas/presence.ts";
 import { BoardView } from "../canvas/renderer.ts";
@@ -54,9 +62,13 @@ export class Runtime {
   #generation = -1;
   #stage: Viewport = { width: 0, height: 0 };
   #card: Viewport = { width: 0, height: 0 };
-  /** Where each layer fits its camera frame; recomputed on resize, never per frame. */
+  /** Where the main layer fits its camera frame; recomputed on resize, never per frame. */
   readonly #stageArea: FitArea = emptyArea();
-  readonly #cardArea: FitArea = emptyArea();
+  /** Frame 4's detour card for this stage, and the largest a detour card may grow (D-188). */
+  readonly #cardBase: Size = { width: 0, height: 0 };
+  readonly #cardMax: Size = { width: 0, height: 0 };
+  /** Each open detour layer's card this frame: its size and where its drawing fits. */
+  readonly detourCards = new Map<number, DetourCard>();
   #anchors: { center: Vec; dock: Vec } = { center: [0, 0], dock: [0, 0] };
   #placement: OrbPlacement = { x: 0, y: 0, size: 0, opacity: 0, docked: 0, condense: 0 };
   #params = emptyParams();
@@ -78,7 +90,6 @@ export class Runtime {
     this.reducedMotion = reducedMotion;
     this.scene = new Scene(tokens);
     this.#card = { width: tokens.surfaceWidth, height: tokens.detourCardHeight };
-    cardArea(this.#card, tokens, this.#cardArea);
     this.viewDurations = { sceneMs: tokens.durationSceneMs, standardMs: tokens.durationStandardMs };
   }
 
@@ -159,6 +170,7 @@ export class Runtime {
     this.#stage = { width: stage.clientWidth, height: stage.clientHeight };
     const tokens = this.tokens;
     stageArea(this.#stage, tokens, this.#stageArea);
+    cardBounds(this.#stage, tokens, this.#cardBase, this.#cardMax);
     this.#anchors = {
       center: [this.#stage.width / 2, this.#stage.height / 2 - tokens.orbCenterLift],
       dock: [this.#stage.width / 2, this.#stage.height - tokens.orbDockBottom],
@@ -194,7 +206,8 @@ export class Runtime {
       this.#generation = scene.generation;
       this.#board?.reset();
     }
-    this.#board?.render(at, this.#stageArea, this.#cardArea, this.#anchors);
+    this.#sizeDetourCards(at);
+    this.#board?.render(at, this.#stageArea, this.detourCards, this.#anchors);
     orbPlacement(scene.board, scene.presence, at, this.#anchors, this.#placement);
     this.#placeForViews(at);
     const freezeAt = scene.presence.lastFreezeAt(at);
@@ -221,6 +234,32 @@ export class Runtime {
       callback(at);
     }
     this.#record(performance.now() - begin);
+  }
+
+  /** The column's width on this stage: a detour card grows leftward from its right edge. */
+  get columnWidth(): number {
+    return columnWidth(this.#stage, this.tokens);
+  }
+
+  /** Each detour layer's card for this frame, from its camera (reusing the objects). */
+  #sizeDetourCards(at: number): void {
+    const layers = this.scene.board.layers;
+    for (const id of this.detourCards.keys()) {
+      if (!layers.has(id)) {
+        this.detourCards.delete(id);
+      }
+    }
+    for (const layer of layers.values()) {
+      if (layer.id === 0) {
+        continue;
+      }
+      let card = this.detourCards.get(layer.id);
+      if (card === undefined) {
+        card = emptyCard();
+        this.detourCards.set(layer.id, card);
+      }
+      detourCardAt(layer.camera, at, this.#cardBase, this.#cardMax, this.tokens, card);
+    }
   }
 
   /** Open views move the orb (docked, or beside the panels) and the captions with it. */

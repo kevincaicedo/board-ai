@@ -6,6 +6,10 @@
 //! the live stage is used again (a stroke, a detour or a card): the board is the core's, and a
 //! view never hides what is being explained. "Open settings" opens the settings screen, which
 //! the UI and the app own.
+//!
+//! A replay opened over the library returns to it when it closes (D-183): by Esc, by "close
+//! that", or when it has played to its end (the UI then sends `CloseView`). Opened from the live
+//! stage, it returns to the live stage.
 
 use std::fmt::Write as _;
 
@@ -17,18 +21,53 @@ use crate::narration::tags::bounded;
 use crate::protocol::{DrawOp, UiEvent};
 use crate::views::{NoteRow, PastLayer, SessionCard, TaskRow, View, ViewKind};
 
+/// The library while it is on screen, and the library a replay was opened over: closing that
+/// replay shows it again (D-183). A view as read, with the day it was read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct LibraryReturn {
+    on_screen: Option<Box<(View, String)>>,
+    under_replay: Option<Box<(View, String)>>,
+}
+
 impl Core {
-    /// Shows a view the store read, replacing any open one.
+    /// Shows a view the store read, replacing any open one. A replay replacing the library (or
+    /// a replay that replaced it) keeps the library to go back to.
     pub(super) fn show_view(&mut self, view: View, today: String, effects: &mut Vec<Effect>) {
-        self.view = Some(view.kind());
+        let kind = view.kind();
+        let back = &mut self.library_return;
+        back.under_replay = if kind == ViewKind::Replay {
+            match self.view {
+                Some(ViewKind::Library) => back.on_screen.take(),
+                Some(ViewKind::Replay) => back.under_replay.take(),
+                Some(ViewKind::Tasks | ViewKind::Memory | ViewKind::PastSession) | None => None,
+            }
+        } else {
+            None
+        };
+        back.on_screen =
+            (kind == ViewKind::Library).then(|| Box::new((view.clone(), today.clone())));
+        self.view = Some(kind);
         effects.push(Effect::Ui(UiEvent::ViewShow { view, today }));
     }
 
-    /// Esc. The talker hears about it with its next request.
+    /// Esc, or a replay that played to its end. The talker hears about it with its next request.
     pub(super) fn close_view(&mut self, effects: &mut Vec<Effect>) {
         if let Some(kind) = self.dismiss_view(effects) {
-            self.context
-                .notice(format!("The user closed the {} view.", kind_name(kind)));
+            self.context.notice(format!(
+                "The user closed the {} view.{}",
+                kind_name(kind),
+                self.back_on_screen()
+            ));
+        }
+    }
+
+    /// What is on screen after a view closed, for the talker: the library a replay went back
+    /// to, or nothing.
+    fn back_on_screen(&self) -> &'static str {
+        if self.view == Some(ViewKind::Library) {
+            " The library it was opened from is on screen again."
+        } else {
+            ""
         }
     }
 
@@ -40,8 +79,9 @@ impl Core {
         if let Some(kind) = self.dismiss_view(effects) {
             effects.push(Effect::Ui(UiEvent::Acknowledge));
             self.context.notice(format!(
-                "The user said \"{text}\" and the {} view closed.",
-                kind_name(kind)
+                "The user said \"{text}\" and the {} view closed.{}",
+                kind_name(kind),
+                self.back_on_screen()
             ));
         }
         true
@@ -61,9 +101,21 @@ impl Core {
         true
     }
 
+    /// Closes the open view; a replay opened over the library shows the library again instead.
     fn dismiss_view(&mut self, effects: &mut Vec<Effect>) -> Option<ViewKind> {
         let kind = self.view.take()?;
-        effects.push(Effect::Ui(UiEvent::ViewDismiss));
+        self.library_return.on_screen = None;
+        let back = match kind {
+            ViewKind::Replay => self.library_return.under_replay.take(),
+            ViewKind::Library | ViewKind::Tasks | ViewKind::Memory | ViewKind::PastSession => None,
+        };
+        match back {
+            Some(library) => {
+                let (view, today) = *library;
+                self.show_view(view, today, effects);
+            }
+            None => effects.push(Effect::Ui(UiEvent::ViewDismiss)),
+        }
         Some(kind)
     }
 
@@ -89,6 +141,7 @@ impl Core {
             return;
         };
         self.view = None;
+        self.library_return = LibraryReturn::default();
         effects.insert(first + offset, Effect::Ui(UiEvent::ViewDismiss));
     }
 

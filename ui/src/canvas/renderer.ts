@@ -8,6 +8,7 @@ import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import { type BoardModel, type Layer, type Run, runActive, traceRunning } from "./board.ts";
 import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
+import type { DetourCard } from "./detourCard.ts";
 import type { Vec } from "./geometry.ts";
 import { clamp, easeInOutCubic, easeOut, ramp, round1, round2 } from "./math.ts";
 import { type Anchors, type NibFrame, nibAt, type Presence, type Transform } from "./presence.ts";
@@ -35,6 +36,7 @@ type RenderTokens = Pick<
   | "detourPushShift"
   | "detourPushShrink"
   | "detourPushFade"
+  | "surfaceBlurOut"
   | "dofBlur"
   | "dofFade"
   | "handDash"
@@ -110,6 +112,8 @@ interface LayerView {
   /** Scale, x and y last written, so an unchanged camera writes nothing. */
   readonly lastTransform: Float64Array;
   lastBlur: number;
+  /** A detour layer's viewBox last written: its card's size, one unit per CSS pixel (D-188). */
+  lastViewBox: string;
 }
 
 export class BoardView {
@@ -132,7 +136,8 @@ export class BoardView {
   };
   #syncedVersion = -1;
   /** NaN forces the first write, so a reset never leaves a stale push-back on the board. */
-  #lastPush = Number.NaN;
+  /** The push-back and end fade last written (`push|end`), so an unchanged board writes nothing. */
+  #lastPush = "";
   #lastNib = "";
   #hovered: { layer: number; key: string } | null = null;
   #maskSerial = 0;
@@ -188,12 +193,20 @@ export class BoardView {
     }
     this.#layers.clear();
     this.#syncedVersion = -1;
-    this.#lastPush = Number.NaN;
+    this.#lastPush = "";
     this.#hovered = null;
   }
 
-  /** `stage` and `card` are where the main and detour layers fit their camera frames. */
-  render(at: number, stage: FitArea, card: FitArea, anchors: Anchors): void {
+  /**
+   * `stage` is where the main layer fits its camera frame; each detour layer fits its own in its
+   * card (`cards`, sized from its drawing, D-188).
+   */
+  render(
+    at: number,
+    stage: FitArea,
+    cards: ReadonlyMap<number, DetourCard>,
+    anchors: Anchors,
+  ): void {
     if (this.#syncedVersion !== this.#model.version) {
       this.#sync();
       this.#syncedVersion = this.#model.version;
@@ -203,7 +216,15 @@ export class BoardView {
       if (layer === undefined) {
         continue;
       }
-      this.#renderLayer(view, layer, at, view.id === 0 ? stage : card);
+      if (view.id === 0) {
+        this.#renderLayer(view, layer, at, stage);
+        continue;
+      }
+      const card = cards.get(view.id);
+      if (card !== undefined) {
+        this.#sizeDetour(view, card);
+        this.#renderLayer(view, layer, at, card.area);
+      }
     }
     this.#renderPush(at);
     this.#renderNib(at, anchors);
@@ -286,6 +307,7 @@ export class BoardView {
       host,
       lastTransform: Float64Array.of(Number.NaN, Number.NaN, Number.NaN),
       lastBlur: -1,
+      lastViewBox: "",
     };
   }
 
@@ -410,6 +432,15 @@ export class BoardView {
       this.#hovered = null;
       layer.hover.classList.remove("on");
       this.#options.onPointer(null);
+    }
+  }
+
+  /** A detour layer draws one unit per pixel of its card, whatever size the card has grown to. */
+  #sizeDetour(view: LayerView, card: DetourCard): void {
+    const box = `0 0 ${card.width} ${card.height}`;
+    if (box !== view.lastViewBox) {
+      view.lastViewBox = box;
+      view.svg.setAttribute("viewBox", box);
     }
   }
 
@@ -543,7 +574,10 @@ export class BoardView {
     );
   }
 
-  /** The board steps back while a detour is open: blurred, faded, nudged left (frame 4). */
+  /**
+   * The board steps back while a detour is open: blurred, faded, nudged left (frame 4). When the
+   * session ends it fades out for good, blurring as a card leaves (D-182).
+   */
   #renderPush(at: number): void {
     const tokens = this.#options.tokens;
     let amount = 0;
@@ -561,23 +595,36 @@ export class BoardView {
       break;
     }
     const rounded = amount <= 0.001 ? 0 : Math.round(amount * 1000) / 1000;
-    if (rounded === this.#lastPush) {
+    const ended = this.#model.endedAmount(at, tokens.durationSceneMs);
+    const gone = ended <= 0.001 ? 0 : Math.round(ended * 1000) / 1000;
+    const key = `${rounded}|${gone}`;
+    if (key === this.#lastPush) {
       return;
     }
-    this.#lastPush = rounded;
+    this.#lastPush = key;
     const host = this.#mainHost.style;
-    if (rounded === 0) {
+    if (rounded === 0 && gone === 0) {
       host.removeProperty("filter");
       host.removeProperty("opacity");
       host.removeProperty("transform");
       return;
     }
-    host.filter = `blur(${round1(rounded * tokens.detourPushBlur)}px)`;
-    host.opacity = String(round2(1 - tokens.detourPushFade * rounded));
+    const blur = rounded * tokens.detourPushBlur + gone * tokens.surfaceBlurOut;
+    host.filter = `blur(${round1(blur)}px)`;
+    host.opacity = String(round2((1 - tokens.detourPushFade * rounded) * (1 - gone)));
     host.transform = `translateX(${round1(-tokens.detourPushShift * rounded)}px) scale(${Math.round((1 - tokens.detourPushShrink * rounded) * 1000) / 1000})`;
   }
 
   #renderNib(at: number, anchors: Anchors): void {
+    const endedAt = this.#model.endedAt;
+    if (endedAt !== null && at >= endedAt) {
+      // The session ended: the pen rests with the orb.
+      if (this.#lastNib !== "none") {
+        this.#lastNib = "none";
+        this.#nib.style.display = "none";
+      }
+      return;
+    }
     const frame = nibAt(
       this.#model,
       this.#presence,

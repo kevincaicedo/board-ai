@@ -85,7 +85,8 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
-            | UiEvent::OpenSettings => {}
+            | UiEvent::OpenSettings
+            | UiEvent::SessionEnd => {}
         }
     }
     let mut events = Vec::new();

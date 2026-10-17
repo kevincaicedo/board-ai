@@ -82,6 +82,13 @@ export class Scene implements BatchSink {
       case "ViewDismiss":
         this.views.dismiss(at);
         break;
+      // The session ended (D-182): the board fades out, the orb returns to the center, and
+      // the open view leaves; the session store lets its cards and lines go.
+      case "SessionEnd":
+        this.board.end(at);
+        this.presence.rest(at);
+        this.views.dismiss(at);
+        break;
       // A new session's stage is reset by the transport before this event arrives (a replay
       // starts with it at time zero, on an empty stage already).
       case "SessionStart":

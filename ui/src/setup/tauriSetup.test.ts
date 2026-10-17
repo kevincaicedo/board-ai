@@ -77,3 +77,27 @@ test("download events are checked and malformed ones dropped", async () => {
   );
   assert.equal(transport.malformedEvents, 2);
 });
+
+// D-186: a shell from before `mic_attributed_to` sends none; a blank one names nothing.
+test("the app macOS asks about is read at the boundary", async () => {
+  const { mic_attributed_to: _left, ...older } = firstLaunch();
+  assert.equal(parseSetupStatus(older)?.mic_attributed_to, null);
+  assert.equal(
+    parseSetupStatus({ ...firstLaunch(), mic_attributed_to: "  " })?.mic_attributed_to,
+    null,
+  );
+  assert.equal(
+    parseSetupStatus({ ...firstLaunch(), mic_attributed_to: "Ghostty" })?.mic_attributed_to,
+    "Ghostty",
+  );
+  const { fake, invoked } = bridge(() => null);
+  await new TauriSetupTransport(fake).openMicrophoneSettings();
+  assert.equal(invoked[0]?.command, "setup_open_microphone_settings");
+  const refusing = bridge(() => {
+    throw "System Settings didn't open. Open it from the Apple menu instead.";
+  });
+  await assert.rejects(
+    new TauriSetupTransport(refusing.fake).openMicrophoneSettings(),
+    /didn't open/,
+  );
+});

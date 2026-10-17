@@ -120,7 +120,8 @@ mod tests {
             | UiEvent::SessionStart { .. }
             | UiEvent::ViewShow { .. }
             | UiEvent::ViewDismiss
-            | UiEvent::OpenSettings => None,
+            | UiEvent::OpenSettings
+            | UiEvent::SessionEnd => None,
         }
     }
 

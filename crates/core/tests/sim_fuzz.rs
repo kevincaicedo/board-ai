@@ -75,6 +75,8 @@ const FRAGMENTS: &[&str] = &[
     r#"The root <node id="n5" label="5" kind="circle"/>five, <node id="n3" label="3" parent="n5" side="left"/>three on its left. "#,
     r#"Buckets <cells id="ht" count="3" vertical="true"/>stand in a column, <node id="k1" label="k1" near="ht.1"/><edge from="ht.1" to="k1"/>one key in bucket one. "#,
     "See internal/user/service.go:42 for the lookup. ",
+    // A local model writing tool calls as tags (D-180).
+    r#"Noted. <remember kind="note" text="the cache is warm" about="you"/>Here are your notes. <show_memory/>"#,
 ];
 
 const QUESTIONS: &[&str] = &[
@@ -94,6 +96,9 @@ const CONTROLS: &[&str] = &[
     "yes, keep it",
     "keep it",
     "close that",
+    "back to the main board",
+    "ok, go on",
+    "we can stop here",
 ];
 
 const CUES: &[&str] = &[
@@ -343,6 +348,12 @@ const PATHS: &[(&str, Reached)] = &[
     ("view closed", |effect| {
         matches!(effect, Effect::Ui(UiEvent::ViewDismiss))
     }),
+    ("detour closed", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::LayerPop { .. }))
+    }),
+    ("session end", |effect| {
+        matches!(effect, Effect::Ui(UiEvent::SessionEnd))
+    }),
     ("diagram", |effect| {
         matches!(
             effect,
@@ -502,6 +513,8 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "keep",
         "view",
         "view closed",
+        "detour closed",
+        "session end",
     ]);
 }
 

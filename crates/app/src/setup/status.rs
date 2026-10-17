@@ -35,6 +35,8 @@ pub struct Probes {
     pub input_devices: Vec<String>,
     /// The session already runs (setup finished, or a dev script skipped it).
     pub started: bool,
+    /// The app macOS asks about the microphone instead of BoardAI (`permission::attributed_to`).
+    pub mic_attributed_to: Option<String>,
 }
 
 /// The settings as the app would start with them, or why it can't.
@@ -102,6 +104,7 @@ pub fn gather(
         input_devices: probes.input_devices,
         harnesses: probes.harnesses,
         blockers: Vec::new(),
+        mic_attributed_to: probes.mic_attributed_to,
     };
     status.blockers = blockers(&status);
     status
