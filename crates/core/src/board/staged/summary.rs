@@ -6,12 +6,15 @@
 //! planned: free, leased, staged`.
 //!
 //! A diagram's notes, connectors, fields and cells are left out: they come with what they
-//! belong to.
+//! belong to. A diagram a source wrote (a research brief's, a document's figure) is told by its
+//! ids alone: its title and labels are the source's words, which reach the talker only between
+//! the task-output marks (D-265): `diagram figure-1, staged from a source (its words are in what
+//! it came with; reveal its parts with <reveal id>): writer drawn; log planned`.
 
 use std::fmt::Write as _;
 
 use crate::board::Layer;
-use crate::board::staged::StagedDiagram;
+use crate::board::staged::{Author, StagedDiagram};
 use crate::ids::ElementId;
 use crate::protocol::StagedPart;
 
@@ -37,11 +40,20 @@ pub fn describe(layer: &Layer) -> Vec<String> {
 }
 
 fn diagram_line(layer: &Layer, diagram: &StagedDiagram) -> String {
-    let mut line = format!(
-        "diagram {} \"{}\", staged (reveal its parts with <reveal id>):",
-        diagram.id.as_str(),
-        diagram.title
-    );
+    let source = diagram.author == Author::Source;
+    let mut line = if source {
+        format!(
+            "diagram {}, staged from a source (its words are in what it came with; reveal its \
+             parts with <reveal id>):",
+            diagram.id.as_str()
+        )
+    } else {
+        format!(
+            "diagram {} \"{}\", staged (reveal its parts with <reveal id>):",
+            diagram.id.as_str(),
+            diagram.title
+        )
+    };
     let tops = diagram
         .entries
         .iter()
@@ -49,7 +61,12 @@ fn diagram_line(layer: &Layer, diagram: &StagedDiagram) -> String {
         .filter(|(_, entry)| entry.parent.is_none() && entry.ends.is_none());
     let mut first = true;
     for (top, entry) in tops {
-        let _ = write!(line, "{} {}", if first { "" } else { ";" }, token(entry));
+        let token = if source {
+            entry.id.as_str().to_owned()
+        } else {
+            token(entry)
+        };
+        let _ = write!(line, "{} {token}", if first { "" } else { ";" });
         first = false;
         let (drawn, planned) = inside(layer, diagram, top);
         let shown = drawn_now(layer, &entry.id);

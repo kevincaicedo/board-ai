@@ -232,6 +232,11 @@ fn chain_from<'a>(
         visited.insert(edge.to);
         let _ = write!(chain, " {} ", arrow(edge));
         match layer.element(edge.to) {
+            // A part of a source's diagram is named by its id: its label is the source's words
+            // (D-265).
+            Some(element) if layer.staged.is_from_source(&element.id) => {
+                chain.push_str(element.id.as_str());
+            }
             Some(element) => chain.push_str(&node_token(element)),
             None => chain.push_str(edge.to.as_str()),
         }

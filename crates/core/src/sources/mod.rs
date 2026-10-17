@@ -11,6 +11,7 @@ pub mod brief;
 pub mod cues;
 pub mod digest;
 pub mod pages;
+pub mod routing;
 pub mod state;
 pub mod tray;
 
@@ -333,14 +334,54 @@ pub enum SourceInput {
     /// folders and every readable code source, so sharing the first one mid-session (or
     /// removing the last) changes it. Sent only when it changes.
     RepoReads { reads: crate::engine::RepoReads },
-    /// The answer to `ReadDocument`: the pages' text as extracted on this Mac (D-256), in page
-    /// order; a page with no text (a scan) or past the end is left out. `page_count` is the
-    /// document's length when the reader knows it.
-    DocumentPages {
-        request: u32,
+    /// The answer to `ReadDocument` (D-256): the pages read, or why they weren't (review 3,
+    /// finding 8).
+    DocumentPages { request: u32, answer: PagesAnswer },
+}
+
+/// What a page read found.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "answer", rename_all = "snake_case")]
+pub enum PagesAnswer {
+    /// The pages' text as extracted on this Mac, in page order; a page with no text (a scan)
+    /// or past the end is left out. `page_count` is the document's length when the reader
+    /// knows it.
+    Read {
         pages: Vec<DocumentPage>,
         page_count: Option<u32>,
     },
+    /// The pages weren't read: the talker hears why, never that they hold no text.
+    Unread { reason: PagesUnread },
+}
+
+/// Why pages weren't read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "why", rename_all = "snake_case")]
+pub enum PagesUnread {
+    /// Not read within the page read's bound (the runtime's `SOURCE_JOB_TIMEOUT_MS`).
+    TimedOut,
+    /// As many source jobs run as may (the runtime's `SOURCE_JOBS_MAX`).
+    Busy,
+    /// No reader takes it, or it isn't shared any more.
+    NoReader,
+    /// The reader couldn't read them: what the tray would say ("It is locked with a password").
+    Failed { reason: String },
+}
+
+impl PagesUnread {
+    /// In words the talker can pass on; a reader's reason is held to the tray's bound.
+    #[must_use]
+    pub fn reason(&self) -> String {
+        match self {
+            Self::TimedOut => "its pages weren't read in time".to_owned(),
+            Self::Busy => "BoardAI was busy reading other sources".to_owned(),
+            Self::NoReader => "no reader reads it now".to_owned(),
+            Self::Failed { reason } => {
+                crate::untrusted::PlainText::parse(reason, crate::limits::SOURCE_REASON_MAX_BYTES)
+                    .into_string()
+            }
+        }
+    }
 }
 
 /// Where a staged diagram came from when it wasn't the talker's own (D-242): a research brief's

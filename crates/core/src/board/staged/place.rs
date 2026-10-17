@@ -85,12 +85,14 @@ impl Board {
         })
     }
 
-    /// Records where staged diagram `id` came from (D-242): its header carries it from then on.
+    /// Records that a source wrote staged diagram `id`, and where it came from when the header
+    /// says so (D-242): its header carries it from then on, and the talker's context names its
+    /// parts by id (D-265).
     pub fn credit_staged(
         &mut self,
         layer_id: LayerId,
         id: &ElementId,
-        provenance: DiagramProvenance,
+        provenance: Option<DiagramProvenance>,
     ) {
         let Ok(layer) = self.layer_mut(layer_id) else {
             return;
@@ -101,8 +103,16 @@ impl Board {
             .iter_mut()
             .find(|diagram| diagram.id == *id)
         {
-            diagram.provenance = Some(provenance);
+            diagram.provenance = provenance;
+            diagram.author = super::Author::Source;
         }
+    }
+
+    /// Whether `id` on `layer_id` is a source's words (a part of a diagram a source wrote).
+    #[must_use]
+    pub fn is_from_source(&self, layer_id: LayerId, id: &ElementId) -> bool {
+        self.layer(layer_id)
+            .is_some_and(|layer| layer.staged.is_from_source(id))
     }
 }
 

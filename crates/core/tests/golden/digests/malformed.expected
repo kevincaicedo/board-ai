@@ -3,9 +3,9 @@ title: "Broken"
 read: DigestRead { extent: Some(Pages(3)), scanned: false, figures_by: None }
 section "Good section" @ p. 2: "Summary."
 figure 1 @ -: "(p. 99999999): bad page" shows "Still kept, without a page."
-figure 2 @ p. 5: "two diagrams" shows "Shows two.", diagram 62 bytes
-figure 3 @ p. 6: "never closed" shows ""
-table 1 @ p. 7: "rows", 2 rows
+figure 2 @ -: "two diagrams" shows "Shows two.", diagram 62 bytes
+figure 3 @ -: "never closed" shows ""
+table 1 @ -: "rows", 2 rows
 claim @ p. 2: "A real claim"
 tray: Partial { reason: "Text read · 4 figures need a model that reads files" }
-dropped: DigestDropped { sections: 1, figures: 3, tables: 1, rows: 0, claims: 0, diagrams: 3, lines: 6, truncated: true }
+dropped: DigestDropped { sections: 1, figures: 3, tables: 1, rows: 0, claims: 0, diagrams: 3, locators: 3, lines: 6, truncated: true }

@@ -9,8 +9,8 @@ use super::{
     BriefTopic, DragOver, Project, SourceId, SourceInfo, SourceKind, SourceState, name_key,
 };
 use crate::limits::{
-    BRIEF_TOPICS_PER_SOURCE_MAX, PROJECT_SOURCES_MAX, READING_GHOSTS_MAX, SESSION_SOURCES_MAX,
-    SOURCE_REASON_MAX_BYTES,
+    BRIEF_TOPICS_PER_SOURCE_MAX, NAME_KEY_MIN_CHARS, PROJECT_SOURCES_MAX, READING_GHOSTS_MAX,
+    SESSION_SOURCES_MAX, SOURCE_REASON_MAX_BYTES,
 };
 use crate::narration::tags::bounded;
 
@@ -270,7 +270,7 @@ impl SharedSources {
         let question = name_key(question);
         let named = code.iter().rev().find(|entry| {
             let key = name_key(&entry.info.title);
-            key.len() >= 3 && question.contains(&key)
+            key.len() >= NAME_KEY_MIN_CHARS && question.contains(&key)
         });
         named.or_else(|| code.last()).map(|entry| entry.info.id)
     }

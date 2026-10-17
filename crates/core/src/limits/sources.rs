@@ -28,6 +28,10 @@ pub const READING_GHOSTS_MAX: usize = 4;
 /// A name said by voice to resolve ("the inf-alloc crate"); longer words are not a name.
 pub const SPOKEN_SOURCE_NAME_MAX_BYTES: usize = 64;
 
+/// A source's or a part's name shorter than this, in letters and digits, names nothing in a
+/// question or a path: "db" or "x" would match almost anything said.
+pub const NAME_KEY_MIN_CHARS: usize = 3;
+
 /// Candidates read out when a spoken name matches several folders; the runtime sends at most
 /// this many, and BoardAI asks which one.
 pub const RESOLVE_CANDIDATES_MAX: usize = 4;

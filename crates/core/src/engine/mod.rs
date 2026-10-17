@@ -319,7 +319,7 @@ impl Core {
             }
             Input::Source { source } => self.on_source(now, source, effects),
             Input::Command(UiCommand::Sources { action }) => {
-                self.on_sources_command(action, effects);
+                self.on_sources_command(now, action, effects);
             }
         }
         if settles {

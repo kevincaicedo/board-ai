@@ -39,6 +39,19 @@ const NOTICE_PARTS_MAX: usize = 24;
 /// reply stages a few at most).
 const STAGINGS_KEPT_MAX: usize = 2 * crate::limits::DIAGRAMS_PER_LAYER_MAX;
 
+/// Whose diagram a staging lays out.
+pub(super) enum StageFor {
+    /// The talker's own `<diagram>` block.
+    Talker,
+    /// A source's: a research brief's diagram or a document's figure (D-242, D-257). `name` is
+    /// how BoardAI names it, in words it chose (a page that turns for it takes it as its title:
+    /// the diagram's own title is the source's words, D-265); `provenance` is the header's chip.
+    Source {
+        name: String,
+        provenance: Option<DiagramProvenance>,
+    },
+}
+
 /// A diagram staged on the active layer.
 pub(super) struct StagedHere {
     pub staged: Staged,
@@ -117,7 +130,7 @@ impl Core {
         spec: &DiagramSpec,
         effects: &mut Vec<Effect>,
     ) -> bool {
-        let here = match self.stage_here(op, spec, None, effects) {
+        let here = match self.stage_here(op, spec, StageFor::Talker, true, effects) {
             Ok(here) => here,
             Err(refused) => {
                 self.refused_diagram(spec, &refused);
@@ -144,12 +157,14 @@ impl Core {
 
     /// Lays `spec` out on the active layer under `op`, nothing drawn yet, and names it in the
     /// header (with where it came from, when it wasn't the talker's: D-242). On a page with
-    /// drawing and no room for it, the page turns first (D-177). Parts it dropped are counted.
+    /// drawing and no room for it, the page turns first (D-177) when `may_turn_page`; otherwise
+    /// staging is refused with `NeedsPage`. Parts it dropped are counted.
     pub(super) fn stage_here(
         &mut self,
         op: OpId,
         spec: &DiagramSpec,
-        provenance: Option<DiagramProvenance>,
+        stage_for: StageFor,
+        may_turn_page: bool,
         effects: &mut Vec<Effect>,
     ) -> Result<StagedHere, StageRefused> {
         let layer = self.thread.active_layer();
@@ -157,9 +172,13 @@ impl Core {
         let inherited = self.inherited_categories();
         let mut page_turned = false;
         let staged = match self.board.stage(layer, op, spec, main, &inherited) {
-            Err(StageRefused::NeedsPage) => {
+            Err(StageRefused::NeedsPage) if may_turn_page => {
                 // The page has drawing and no room for a map this size (D-177).
-                page_turned = self.turn_page(Some(spec.title.clone()), effects).is_ok();
+                let title = match &stage_for {
+                    StageFor::Talker => spec.title.clone(),
+                    StageFor::Source { name, .. } => name.clone(),
+                };
+                page_turned = self.turn_page(Some(title), effects).is_ok();
                 self.board.stage(layer, op, spec, false, &inherited)
             }
             other => other,
@@ -170,10 +189,14 @@ impl Core {
                 count: staged.dropped,
             }));
         }
-        if let Some(provenance) = &provenance {
-            self.board
-                .credit_staged(layer, &staged.id, provenance.clone());
-        }
+        let provenance = match stage_for {
+            StageFor::Talker => None,
+            StageFor::Source { provenance, .. } => {
+                self.board
+                    .credit_staged(layer, &staged.id, provenance.clone());
+                provenance
+            }
+        };
         effects.push(Effect::Ui(UiEvent::Diagram {
             layer,
             title: staged.title.clone(),

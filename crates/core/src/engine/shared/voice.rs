@@ -9,20 +9,22 @@ use crate::engine::shared::briefs::Waiting;
 use crate::limits::SOURCE_RESOLVES_WAITING_MAX;
 use crate::protocol::UiEvent;
 use crate::sources::cues::{self, KeepCue, ShareCue, TrayCue};
-use crate::sources::{BriefTopic, Project, SourceEffect};
+use crate::sources::{BriefTopic, Project, SourceEffect, SourceId};
+use crate::time::SessionTime;
 
 impl Core {
     /// Words about sources. Returns true when the core answered them itself (the talker hears
     /// of it in a notice); false when the words go on to the talker as usual.
     pub(in crate::engine) fn sources_by_voice(
         &mut self,
+        now: SessionTime,
         text: &str,
         effects: &mut Vec<Effect>,
     ) -> bool {
         if self.has_ended() {
             return false;
         }
-        if self.resolve_choice(text, effects) {
+        if self.resolve_choice(now, text, effects) {
             return true;
         }
         if let Some(cue) = cues::tray_cue(text) {
@@ -30,9 +32,9 @@ impl Core {
             return true;
         }
         if let Some((name, rest)) = cues::project_cue(text) {
-            return self.project_by_voice(&name, rest.is_none(), effects);
+            return self.project_by_voice(now, &name, rest.is_none(), effects);
         }
-        if self.keep_control(text, effects) {
+        if self.keep_control(now, text, effects) {
             return true;
         }
         if let Some(cue) = cues::share_cue(text) {
@@ -57,6 +59,7 @@ impl Core {
     /// were a keep (the core answered them).
     pub(in crate::engine) fn keep_control(
         &mut self,
+        now: SessionTime,
         text: &str,
         effects: &mut Vec<Effect>,
     ) -> bool {
@@ -66,13 +69,14 @@ impl Core {
         let Some(cue) = cues::keep_cue(text) else {
             return false;
         };
-        self.keep_by_voice(cue, effects);
+        self.keep_by_voice(now, cue, effects);
         true
     }
 
     /// An open choice is answered by the next words: they pick one, or the choice closes and
-    /// the words are heard as usual.
-    fn resolve_choice(&mut self, text: &str, effects: &mut Vec<Effect>) -> bool {
+    /// the words are heard as usual. The candidates not picked are discarded, except one this
+    /// session already shares or keeps (the runtime names a path by the id it has).
+    fn resolve_choice(&mut self, now: SessionTime, text: &str, effects: &mut Vec<Effect>) -> bool {
         let Some(choice) = self.sources.choice.take() else {
             return false;
         };
@@ -82,7 +86,7 @@ impl Core {
             .map(|candidate| candidate.shown_path.as_str())
             .collect();
         let picked = cues::choice(text, &paths);
-        let mut others = Vec::new();
+        let mut others: Vec<SourceId> = Vec::new();
         let mut chosen = None;
         for (index, candidate) in choice.candidates.into_iter().enumerate() {
             if Some(index) == picked {
@@ -91,25 +95,27 @@ impl Core {
                 others.push(candidate.id);
             }
         }
-        if !others.is_empty() {
-            effects.push(Effect::Source {
-                source: SourceEffect::Discard { sources: others },
-            });
-        }
+        self.discard_unheld(others, effects);
         let Some(chosen) = chosen else {
             return false;
         };
-        self.share_candidate(chosen, &choice.keep, effects);
+        self.share_candidate(now, chosen, &choice.keep, effects);
         self.show_tray(effects);
         true
     }
 
-    fn project_by_voice(&mut self, name: &str, alone: bool, effects: &mut Vec<Effect>) -> bool {
+    fn project_by_voice(
+        &mut self,
+        now: SessionTime,
+        name: &str,
+        alone: bool,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
         let Some(project) = Project::named(name) else {
             return false;
         };
         let spoken = project.name.clone();
-        self.use_project(project, false, effects);
+        self.use_project(now, project, false, effects);
         self.show_tray(effects);
         if alone {
             self.say(&format!("Working on {spoken}."), effects);
@@ -120,14 +126,14 @@ impl Core {
         alone
     }
 
-    fn keep_by_voice(&mut self, cue: KeepCue, effects: &mut Vec<Effect>) {
+    fn keep_by_voice(&mut self, now: SessionTime, cue: KeepCue, effects: &mut Vec<Effect>) {
         let target = match &cue.source {
             Some(name) => self.sources.shared.named(name),
             None => self.sources.shared.newest_in_session(),
         };
         match (target, cue.source) {
             (Some(id), _) => {
-                if let Some(project) = self.keep_source(id, cue.project, effects) {
+                if let Some(project) = self.keep_source(now, id, cue.project, effects) {
                     self.say(&format!("Kept in {project}."), effects);
                 }
             }
@@ -187,6 +193,7 @@ impl Core {
         let Some(entry) = self.sources.shared.get(source) else {
             return;
         };
+        // The part is named by its id in the notes: its name is the brief's words (D-265).
         let title = entry.info.title.clone();
         let part_name = entry
             .component(&part)
@@ -195,13 +202,16 @@ impl Core {
         let harness = self.sources.shared.harness_name().to_owned();
         if entry.delivered.contains(&topic) {
             self.context.notice(format!(
-                "{harness}'s brief on {part_name} of {title} is already in this conversation; \
+                "{harness}'s brief on part {part} of {title} is already in this conversation; \
                  answer from it."
             ));
             return;
         }
         if let Some(task) = self.brief_running(source, &topic) {
-            if let Some(running) = self.sources.briefs.get_mut(&task) {
+            // A call held for it keeps its place: it gets the brief (D-268).
+            if let Some(running) = self.sources.briefs.get_mut(&task)
+                && running.waiting == Waiting::Nobody
+            {
                 running.waiting = Waiting::Talker;
             }
         } else if self
@@ -211,7 +221,7 @@ impl Core {
             return;
         }
         self.context.notice(format!(
-            "{harness} is reading {part_name} of {title} in more detail; its brief arrives soon, \
+            "{harness} is reading part {part} of {title} in more detail; its brief arrives soon, \
              between task-output marks. Say so in a few words, and explain from the brief once \
              it is here."
         ));

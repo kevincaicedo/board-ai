@@ -16,4 +16,4 @@ claim @ p. 4: "A commit is durable once every log server it was pushed to has it
 claim @ p. 5: "Recovery replaces the whole transaction system rather than repairing it."
 claim @ p. 7: "Deterministic simulation found most bugs before release."
 tray: Ready { detail: "7 pages · text, 2 tables and 3 of 3 figures read · figures by Gemini 3.8 Flash" }
-dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, lines: 0, truncated: false }
+dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, locators: 0, lines: 0, truncated: false }

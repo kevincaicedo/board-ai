@@ -21,7 +21,7 @@ use crate::engine::{Core, milestone};
 use crate::history::{AssistantPart, Message, RawAssistant, UserPart};
 use crate::ids::{ClauseId, OpId, ToolCallId};
 use crate::input::StopReason;
-use crate::limits::RESPONSE_TEXT_MAX_BYTES;
+use crate::limits::{OPS_PER_RESPONSE_MAX, RESPONSE_TEXT_MAX_BYTES};
 use crate::narration::speakable::Speakable;
 use crate::narration::{ClauseOrigin, NarrationOutput, NarrationStream, StreamAnchor};
 use crate::protocol::UiEvent;
@@ -69,6 +69,9 @@ impl Stream {
 pub(super) struct ToolSlot {
     id: ToolCallId,
     result: Option<UserPart>,
+    /// The brief or digest its result carries: the talker has it once the result is committed
+    /// (D-271).
+    delivers: Vec<Delivery>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -114,7 +117,7 @@ impl Reply {
     }
 }
 
-pub(super) use context::ContextTracker;
+pub(super) use context::{ContextTracker, Delivery, Report};
 
 impl Core {
     /// Sends the talker the whole history plus the pending user message. Board, thread and
@@ -196,14 +199,20 @@ impl Core {
         // goes in a user turn, fenced as untrusted data (LLD §9). Quiet reports (a prefetched
         // brief) go with a new turn only: in a tool round they would come between a call's
         // result and the reply that uses it.
-        let quiet: Vec<String> = if self.reply.is_none() {
+        let quiet: Vec<Report> = if self.reply.is_none() {
             self.context.quiet.drain(..).collect()
         } else {
             Vec::new()
         };
-        for report in quiet.into_iter().chain(self.context.reports.drain(..)) {
+        let reports: Vec<Report> = quiet
+            .into_iter()
+            .chain(self.context.reports.drain(..))
+            .collect();
+        for report in reports {
+            // Only now does the talker have what it carries (D-271).
+            self.delivered(&report.delivers);
             self.conversation.push(Message::User {
-                parts: vec![UserPart::Text { text: report }],
+                parts: vec![UserPart::Text { text: report.text }],
             });
         }
     }
@@ -362,29 +371,39 @@ impl Core {
             stream.committed = true;
         }
         if !calls.is_empty() {
-            let results = self.take_results(&calls);
+            let (results, delivers) = self.take_results(&calls);
             self.conversation.push(Message::User { parts: results });
+            self.delivered(&delivers);
         }
     }
 
-    /// The results for `calls`, in call order. Answers still on their way are ignored when they
-    /// arrive: their slots are gone.
-    fn take_results(&mut self, calls: &[ToolCallId]) -> Vec<UserPart> {
+    /// The results for `calls`, in call order, and what the answered ones carry. Answers still
+    /// on their way are ignored when they arrive: their slots are gone.
+    fn take_results(&mut self, calls: &[ToolCallId]) -> (Vec<UserPart>, Vec<Delivery>) {
         let mut slots = self
             .reply
             .as_mut()
             .map(|reply| std::mem::take(&mut reply.tools))
             .unwrap_or_default();
-        calls
+        let mut delivers = Vec::new();
+        let results = calls
             .iter()
             .map(|id| {
-                slots
+                let slot = slots
                     .iter_mut()
-                    .find(|slot| slot.id == *id && slot.result.is_some())
-                    .and_then(|slot| slot.result.take())
-                    .unwrap_or_else(|| error_result(id, CALL_NOT_RUN.to_owned()))
+                    .find(|slot| slot.id == *id && slot.result.is_some());
+                match slot {
+                    Some(slot) => {
+                        delivers.append(&mut slot.delivers);
+                        slot.result
+                            .take()
+                            .unwrap_or_else(|| error_result(id, CALL_NOT_RUN.to_owned()))
+                    }
+                    None => error_result(id, CALL_NOT_RUN.to_owned()),
+                }
             })
-            .collect()
+            .collect();
+        (results, delivers)
     }
 
     fn notice_dropped_ops(&mut self, index: usize) {
@@ -395,8 +414,8 @@ impl Core {
             .map_or(0, |stream| stream.dropped_ops);
         if dropped > 0 {
             self.context.notice(format!(
-                "{dropped} drawing tags in your last reply were over the limit of 200 per reply \
-                 and were not drawn."
+                "{dropped} drawing tags in your last reply were over the limit of \
+                 {OPS_PER_RESPONSE_MAX} per reply and were not drawn."
             ));
         }
     }

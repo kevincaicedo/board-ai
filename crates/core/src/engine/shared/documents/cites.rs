@@ -273,7 +273,8 @@ impl Core {
         if !reply.cited.insert(key) {
             return;
         }
-        let title = self.document_title(source);
+        // The file's name: the digest's title is the document's words (D-265).
+        let title = self.file_name(source);
         self.context.notice(format!(
             "You cited {what} of {title}, but it isn't in its digest and wasn't read in this \
              session, so no page chip was shown. Read it with read_file before citing it."

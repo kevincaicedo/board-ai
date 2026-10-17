@@ -377,14 +377,16 @@ pub fn choice(text: &str, candidates: &[&str]) -> Option<usize> {
     if words.len() > NAME_WORDS_MAX + 3 {
         return None;
     }
-    if words.iter().any(|word| word == "last") {
-        return candidates.len().checked_sub(1);
-    }
-    let ordinal = words.iter().find_map(|word| {
-        ORDINALS
+    let last = candidates.len().checked_sub(1);
+    let ordinal = (0..words.len()).find_map(|at| match words[at].as_str() {
+        // "Last" picks only as an ordinal: "the vendor one, not the last" or "the one I used
+        // last week" pick nothing by it.
+        "last" => is_ordinal_at(&words, at).then_some(last).flatten(),
+        word => ORDINALS
             .iter()
-            .find(|(name, _)| name == word)
-            .map(|(_, index)| *index)
+            .find(|(name, _)| *name == word)
+            .filter(|_| is_ordinal_at(&words, at))
+            .map(|(_, index)| *index),
     });
     if let Some(index) = ordinal {
         return (index < candidates.len()).then_some(index);
@@ -410,6 +412,18 @@ pub fn choice(text: &str, candidates: &[&str]) -> Option<usize> {
         }
     }
     picked
+}
+
+/// Whether the word at `at` picks by its place: nothing negates it, and what follows it is
+/// nothing, "one" or "of" ("the second one", "the last of them", "last").
+fn is_ordinal_at(words: &[String], at: usize) -> bool {
+    let negated = at
+        .checked_sub(2)
+        .into_iter()
+        .chain(at.checked_sub(1))
+        .any(|before| matches!(words[before].as_str(), "not" | "no" | "never"));
+    let next = words.get(at + 1).map(String::as_str);
+    !negated && matches!(next, None | Some("one" | "of" | "please"))
 }
 
 #[cfg(test)]
@@ -545,6 +559,10 @@ mod tests {
         assert_eq!(choice("The first one.", &candidates), Some(0));
         assert_eq!(choice("the second", &candidates), Some(1));
         assert_eq!(choice("the last one", &candidates), Some(1));
+        assert_eq!(choice("Last.", &candidates), Some(1));
+        // "Last" picks only as an ordinal (review 3 hygiene).
+        assert_eq!(choice("the crates one, not the last", &candidates), Some(0));
+        assert_eq!(choice("the one I opened last week", &candidates), None);
         assert_eq!(choice("the vendor one", &candidates), Some(1));
         assert_eq!(choice("crates", &candidates), Some(0));
         assert_eq!(choice("inf-alloc", &candidates), None);

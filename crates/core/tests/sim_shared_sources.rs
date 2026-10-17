@@ -275,7 +275,8 @@ fn more_detail_on_a_part_asks_for_its_component_brief() {
             (SourceId(1), BriefTopic::component("Arena"))
         ]
     );
-    assert!(system_texts(&sim, 0).contains("is reading Arena of inf-alloc in more detail"));
+    // The part by its id: its name is the brief's words (D-265).
+    assert!(system_texts(&sim, 0).contains("is reading part arena of inf-alloc in more detail"));
     assert_eq!(
         sim.talker.requests.len(),
         2,

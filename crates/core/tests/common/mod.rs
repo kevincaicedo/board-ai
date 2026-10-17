@@ -1,6 +1,8 @@
 //! Helpers shared by the simulator scenario tests.
 #![allow(dead_code, reason = "each test file uses a different subset")]
 
+pub mod documents;
+
 use boardai_core::effect::{Effect, LogRecord};
 use boardai_core::history::{AssistantPart, Message, UserPart};
 use boardai_core::protocol::{OrbState, UiEvent};
@@ -101,6 +103,58 @@ pub fn transcript(sim: &Sim) -> Vec<String> {
                 format!("assistant({stored}): {}", text.join(" | "))
             }
             Message::System { text } => format!("system: {text}"),
+        })
+        .collect()
+}
+
+/// Everything the talker was sent in request `index` but its own turns, as one text: system
+/// notes, the user's turns and the tool results.
+pub fn request_text(sim: &Sim, index: usize) -> String {
+    sim.talker.requests[index]
+        .messages
+        .iter()
+        .flat_map(|message| match message {
+            Message::User { parts } => parts
+                .iter()
+                .map(|part| match part {
+                    UserPart::Text { text } => text.clone(),
+                    UserPart::ToolResult { content, .. } => content.clone(),
+                })
+                .collect(),
+            Message::System { text } => vec![text.clone()],
+            Message::Assistant { .. } => Vec::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The system messages of request `index`, as one text.
+pub fn system_texts(sim: &Sim, index: usize) -> String {
+    sim.talker.requests[index]
+        .messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::System { text } => Some(text.clone()),
+            Message::User { .. } | Message::Assistant { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+
+/// Request `index` with what the task-output fences hold taken out: BoardAI's own words and the
+/// user's, where a source's words must never be.
+pub fn outside_fences(sim: &Sim, index: usize) -> String {
+    request_text(sim, index)
+        .split("<task-output>")
+        .enumerate()
+        .map(|(at, chunk)| {
+            if at == 0 {
+                chunk.to_owned()
+            } else {
+                chunk
+                    .split_once("</task-output>")
+                    .map_or(String::new(), |(_, after)| after.to_owned())
+            }
         })
         .collect()
 }

@@ -236,13 +236,22 @@ fn a_briefs_diagram_is_staged_when_used_and_revealed_as_it_is_explained() {
     let note = system_text(&sim, 1);
     assert!(
         note.contains(
-            "The diagram of Claude Code's brief on the overview of inf-alloc is staged on the \
-             board (id diagram, \"inf-alloc · memory\"); nothing of it is drawn yet."
+            "The diagram of Claude Code's overview brief of inf-alloc is staged on the board \
+             (id diagram); nothing of it is drawn yet."
+        ),
+        "{note}"
+    );
+    // By id alone: its title and labels are the brief's words, which the talker reads between
+    // the task-output marks (D-265).
+    assert!(
+        note.contains(
+            "Its parts, by id (their words are in the fenced text it came with): \
+                       alloc, arena, slot-pool, pages."
         ),
         "{note}"
     );
     assert!(
-        note.contains("alloc \"inf-alloc\", arena \"Arena\", slot-pool \"Slot pool\""),
+        !note.contains("Slot pool") && !note.contains("inf-alloc · memory"),
         "{note}"
     );
     assert!(user_text(&sim, 1).contains("BoardAI stages its diagram on the board now"));
@@ -343,9 +352,12 @@ fn a_component_briefs_diagram_is_staged_on_its_detail_layer() {
         asked.contains("don't draw its internals yourself"),
         "{asked}"
     );
+    // Review 3 hygiene (red at 2b76809): the note had lost its line continuations and carried
+    // runs of spaces.
+    assert!(!asked.contains("   "), "{asked}");
     let note = system_text(&sim, 3);
     assert!(
-        note.contains("on the detail layer anchored to \"Arena\""),
+        note.contains("on the detail layer anchored to arena, open in front of the board"),
         "{note}"
     );
     let detail: Vec<(LayerId, u8, Option<DiagramProvenance>)> = headers(&sim)
@@ -670,7 +682,8 @@ fn a_briefs_diagram_marks_files_its_checked_citations_dont_name() {
     let note = system_text(&sim, 1);
     assert!(
         note.contains(
-            "1 part was marked \"?\": the brief's checked citations name none of src/heap.rs"
+            "1 part was marked \"?\": the brief's checked citations name none of their paths \
+             (heap-file)."
         ),
         "{note}"
     );

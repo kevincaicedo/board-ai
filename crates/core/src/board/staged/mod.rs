@@ -58,6 +58,20 @@ pub struct StagedDiagram {
     pub part_shown: u8,
     /// Where it came from when the talker didn't write it: a research brief's diagram (D-242).
     pub provenance: Option<DiagramProvenance>,
+    /// Who wrote its words.
+    pub author: Author,
+}
+
+/// Who wrote a staged diagram's words: its title, labels and notes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Author {
+    /// The talker's own `<diagram>` block.
+    #[default]
+    Talker,
+    /// A source's: a research brief's diagram, or a document's figure. Its words are data the
+    /// talker reads only between the task-output marks, so its own context names the parts by
+    /// id (D-265).
+    Source,
 }
 
 /// One part of a staged diagram.
@@ -86,6 +100,18 @@ pub struct LegendEntry {
     pub label: String,
     pub rect: Rect,
     pub drawn: bool,
+}
+
+impl StagedDiagrams {
+    /// Whether `id` is a source's words on this layer: a part (or a field or cell of one) of a
+    /// diagram a source wrote, or that diagram's own id.
+    #[must_use]
+    pub fn is_from_source(&self, id: &ElementId) -> bool {
+        self.diagrams.iter().any(|diagram| {
+            diagram.author == Author::Source
+                && (diagram.id == *id || diagram.entry_of(id).is_some())
+        })
+    }
 }
 
 impl StagedDiagram {

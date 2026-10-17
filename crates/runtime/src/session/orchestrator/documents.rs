@@ -9,7 +9,10 @@ use std::time::Duration;
 
 use boardai_core::input::Input;
 use boardai_core::sources::digest;
-use boardai_core::sources::{DocumentPage, SourceId, SourceInput, SourceKind, SourceState};
+use boardai_core::sources::{
+    DocumentPage, PagesAnswer, PagesUnread as CorePagesUnread, SourceId, SourceInput, SourceKind,
+    SourceState,
+};
 use futures_util::FutureExt;
 
 use super::Orchestrator;
@@ -188,17 +191,11 @@ impl Orchestrator {
     }
 }
 
-/// The answer to `ReadDocument` as the core takes it. Pages that weren't read are not pages
-/// with no text: the core's `DocumentPages` gains that outcome with harden-core-3 (finding 8);
-/// until it does, an unread read answers no pages, and why is logged here.
+/// The answer to `ReadDocument` as the core takes it: the pages read, or why they weren't
+/// (review 3, finding 8), never an unread read passed off as pages with no text.
 fn document_pages(request: u32, read: Result<PagesRead, PagesUnread>) -> Input {
-    let read = read.unwrap_or_else(|unread| {
-        tracing::warn!(reason = %unread.reason(), "a page read was answered without its pages");
-        PagesRead::default()
-    });
-    Input::Source {
-        source: SourceInput::DocumentPages {
-            request,
+    let answer = match read {
+        Ok(read) => PagesAnswer::Read {
             pages: read
                 .pages
                 .into_iter()
@@ -206,5 +203,18 @@ fn document_pages(request: u32, read: Result<PagesRead, PagesUnread>) -> Input {
                 .collect(),
             page_count: read.page_count,
         },
+        Err(unread) => {
+            tracing::warn!(reason = %unread.reason(), "a page read was answered without its pages");
+            let reason = match unread {
+                PagesUnread::TimedOut => CorePagesUnread::TimedOut,
+                PagesUnread::Busy => CorePagesUnread::Busy,
+                PagesUnread::NoReader => CorePagesUnread::NoReader,
+                PagesUnread::Failed { reason } => CorePagesUnread::Failed { reason },
+            };
+            PagesAnswer::Unread { reason }
+        }
+    };
+    Input::Source {
+        source: SourceInput::DocumentPages { request, answer },
     }
 }

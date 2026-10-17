@@ -188,7 +188,7 @@ fn a_question_about_a_figure_opens_the_doc_card_on_it() {
     );
     let answer = request_text(&sim, 1);
     assert!(
-        answer.contains("Figure 1 of Unbundled Transactions, from its digest")
+        answer.contains("Figure 1 of layered-store.pdf, from its digest")
             && answer.contains("<diagram title=\"Figure 1\">"),
         "the figure and its diagram, from the digest: {answer}"
     );
@@ -249,8 +249,8 @@ fn a_citation_nothing_read_shows_no_chip_and_the_talker_is_told() {
     assert!(doc_cards(&sim).is_empty(), "no chip for what wasn't read");
     let next = request_text(&sim, 1);
     assert!(
-        next.contains("You cited p. 9 of Unbundled Transactions")
-            && next.contains("You cited Figure 7 of Unbundled Transactions"),
+        next.contains("You cited p. 9 of layered-store.pdf")
+            && next.contains("You cited Figure 7 of layered-store.pdf"),
         "{next}"
     );
     assert_clean(&sim);
@@ -274,7 +274,7 @@ fn pages_are_read_from_the_extracted_text_and_narrowed_to_the_bound() {
     assert_eq!(page_reads(&sim), [(4, 7)], "at most four pages at a time");
     let result = request_text(&sim, 1);
     for expected in [
-        "Pages 4-7 of Unbundled Transactions, as BoardAI extracted them on this Mac",
+        "Pages 4-7 of layered-store.pdf, as BoardAI extracted them on this Mac",
         "--- p. 5 ---\nRecovery starts when the cluster controller notices a failure.",
         "No text on page 6",
         "Only pages 4-7 were read",
@@ -429,7 +429,7 @@ fn research_about_a_shared_paper_is_answered_from_its_digest() {
     sim.run_until(20_000);
     let answer = request_text(&sim, 1);
     assert!(
-        answer.contains("Table 1 of Unbundled Transactions, from its digest")
+        answer.contains("Table 1 of layered-store.pdf, from its digest")
             && answer.contains("| read | 1 |"),
         "{answer}"
     );
@@ -471,8 +471,12 @@ fn a_figure_read_is_staged_on_the_board_and_revealed() {
         "{answer}"
     );
     assert!(
-        answer.contains("The diagram of Figure 1 of Unbundled Transactions is staged on the board")
-            && answer.contains("proxies \"Proxies\""),
+        answer.contains(
+            "The diagram of Figure 1 of layered-store.pdf is staged on the board (id figure-1)"
+        ) && answer.contains(
+            "Its parts, by id (their words are in the fenced text it came \
+                               with): proxies, sequencer."
+        ),
         "the talker hears the staged ids: {answer}"
     );
     let staged: Vec<(String, Option<String>)> = sim
@@ -509,5 +513,138 @@ fn a_figure_read_is_staged_on_the_board_and_revealed() {
         "the proxies, then what was left planned: {reveals}"
     );
     assert_eq!(doc_cards(&sim).len(), 1, "and the Doc card on it");
+    assert_clean(&sim);
+}
+
+/// Review 3, finding 5 (red at 2b76809): a figure was staged unless a diagram with its id was on
+/// the layer already, and the digest's shape writes no id, so every figure was `diagram`: once
+/// Figure 1 was staged, Figure 2 never was, and the talker heard it was on the board already.
+/// A figure without an id is `figure-<n>`, staged once per layer by its document and number
+/// (D-269).
+#[test]
+fn a_second_figure_is_staged_beside_the_first() {
+    let mut sim = Sim::new(config());
+    sim.at(0, common::documents::opened());
+    sim.share(100, &paper(), false);
+    sim.at(600, read_event(common::documents::DIGEST));
+    sim.run_until(1_000);
+    for (at, figure) in [(2_000, 1), (31_000, 2), (60_000, 1)] {
+        sim.talker.push(ScriptedReply::says("Let me look.").calls(
+            "read_file",
+            &format!(r#"{{"path":"layered-store.pdf#Figure {figure}"}}"#),
+        ));
+        sim.talker
+            .push(ScriptedReply::says(&format!("Figure {figure} shows it.")));
+        sim.user_says(at, &format!("Explain Figure {figure}."));
+        sim.run_until(at + 28_000);
+    }
+    let staged: Vec<String> = sim
+        .ui()
+        .filter_map(|(_, event)| match event {
+            UiEvent::Diagram { part: 0, title, .. } => Some(title.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(staged.len(), 2, "each figure once: {staged:?}");
+    assert!(staged[1].starts_with("Figure 2"), "{staged:?}");
+    let again = request_text(&sim, 5);
+    assert!(
+        again.contains("Its diagram is on the board already"),
+        "Figure 1 read again: {again}"
+    );
+    assert_clean(&sim);
+}
+
+/// Review 3, finding 19 (red at 2b76809), I17: a digest's locator is a model's claim; one past
+/// the document's own page count made that page "held", so a chip opened on a page that doesn't
+/// exist. Locators past the end are dropped where the digest is parsed (D-273).
+#[test]
+fn a_page_past_the_end_never_gets_a_chip() {
+    let digest = "# Digest: Unbundled Transactions
+Read: 7 pages; figures by Gemini 3.8 Flash
+## Sections
+### 2 Architecture (pp. 2–3)
+Clients talk to proxies.
+## Claims
+- Recovery takes under a second. (p. 40)
+";
+    let mut sim = Sim::new(config());
+    sim.at(0, common::documents::opened());
+    sim.share(100, &paper(), false);
+    sim.at(600, read_event(digest));
+    sim.run_until(1_000);
+    sim.talker.push(ScriptedReply::says(
+        "On page 40, recovery takes under a second.",
+    ));
+    sim.user_says(2_000, "How fast is recovery?");
+    sim.run_until(20_000);
+    let chips: Vec<String> = doc_cards(&sim)
+        .into_iter()
+        .filter_map(|card| match card {
+            Surface::Doc { chip, .. } => Some(chip),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        chips.is_empty(),
+        "a 7-page document got a chip for page 40: {chips:?}"
+    );
+    assert_clean(&sim);
+}
+
+/// Review 3, finding 8 (the core's half): a page read the runtime couldn't do (out of time, too
+/// busy, no reader) came back as no pages, and the talker heard "No text on page 4: past the end,
+/// or a scanned page". The answer says the pages weren't read, and why.
+#[test]
+fn pages_that_werent_read_are_never_called_empty() {
+    let mut sim = session_with_paper();
+    sim.sources.pages_unread = Some(boardai_core::sources::PagesUnread::TimedOut);
+    sim.talker
+        .push(ScriptedReply::says("Let me read it.").calls(
+            "read_file",
+            r#"{"path":"layered-store.pdf","start_line":4,"end_line":5}"#,
+        ));
+    sim.talker.push(ScriptedReply::says(
+        "Those pages couldn't be read just now.",
+    ));
+    sim.user_says(2_000, "What does page 4 say?");
+    sim.run_until(30_000);
+    let result = request_text(&sim, 1);
+    assert!(
+        result.contains(
+            "Pages 4-5 of layered-store.pdf weren't read: its pages weren't read in time"
+        ),
+        "{result}"
+    );
+    assert!(!result.contains("No text on page"), "{result}");
+    assert!(doc_cards(&sim).is_empty(), "nothing read, nothing cited");
+    assert_clean(&sim);
+}
+
+/// Review 3 (found while fixing finding 8; red at 2b76809): past `DOCUMENT_READS_WAITING_MAX`
+/// page reads waiting, the oldest was dropped and its call never answered, so the tool round
+/// waited for ever. Its call hears at once that its pages weren't read.
+#[test]
+fn a_page_read_past_the_bound_is_answered_not_lost() {
+    let mut sim = session_with_paper();
+    sim.talker.chunk_interval_ms = 1;
+    let mut reply = ScriptedReply::says("Let me read them all.");
+    for page in 1..=5 {
+        reply = reply.calls(
+            "read_file",
+            &format!(r#"{{"path":"layered-store.pdf","start_line":{page},"end_line":{page}}}"#),
+        );
+    }
+    sim.talker.push(reply);
+    sim.talker
+        .push(ScriptedReply::says("Here is what they say."));
+    sim.user_says(2_000, "Read me every page.");
+    sim.run_until(40_000);
+    assert_eq!(sim.talker.requests.len(), 2, "the tool round went out");
+    let result = request_text(&sim, 1);
+    assert!(
+        result.contains("Page 1 of layered-store.pdf wasn't read: BoardAI was busy"),
+        "{result}"
+    );
     assert_clean(&sim);
 }

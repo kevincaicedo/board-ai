@@ -16,6 +16,7 @@ use crate::limits::{
     BRIEF_TOPIC_MAX_BYTES, TITLE_MAX_BYTES,
 };
 use crate::narration::tags::bounded;
+use crate::untrusted::PlainText;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
@@ -95,11 +96,16 @@ impl Parser {
         // A paragraph written on one long line keeps its start rather than vanishing.
         let (line, cut) = cut_at_char(line, BRIEF_LINE_MAX_BYTES);
         self.brief.dropped.truncated |= cut;
-        if self.block.is_some() {
-            self.block_line(line);
-            return;
-        }
         let trimmed = line.trim();
+        if self.block.is_some() {
+            if !trimmed.starts_with("##") {
+                self.block_line(line);
+                return;
+            }
+            // A heading ends a block that lost its closing tag, so it can't swallow the
+            // sections after it (the digest parser does the same).
+            self.unclosed_block();
+        }
         if trimmed.is_empty() {
             return;
         }
@@ -306,16 +312,21 @@ impl Parser {
         }
     }
 
+    /// A block whose closing tag never came keeps what it had, closed: its end was lost.
+    fn unclosed_block(&mut self) {
+        let Some(block) = self.block.as_mut() else {
+            return;
+        };
+        if block.text.len() + "</diagram>".len() <= BRIEF_DIAGRAM_MAX_BYTES {
+            block.text.push_str("</diagram>");
+        }
+        self.brief.dropped.truncated = true;
+        self.close_block();
+    }
+
     /// Checks what names components against the final list, and fills each diagram's ids.
     fn finish(mut self) -> Brief {
-        if let Some(block) = self.block.as_mut() {
-            // An unclosed block keeps what it had, closed: its end was lost.
-            if block.text.len() + "</diagram>".len() <= BRIEF_DIAGRAM_MAX_BYTES {
-                block.text.push_str("</diagram>");
-            }
-            self.brief.dropped.truncated = true;
-            self.close_block();
-        }
+        self.unclosed_block();
         let known: BTreeSet<ElementId> = self
             .brief
             .components
@@ -433,7 +444,9 @@ fn component(text: &str) -> Option<Component> {
         .unwrap_or((text, ""));
     let mut parts = fields.split(['·', '|']).map(str::trim);
     let id = element_id(parts.next()?)?;
-    let name = field(parts.next()?);
+    // BoardAI's notes may name a part by its name: plain text, parsed here (D-266).
+    let name =
+        PlainText::parse(parts.next()?.trim_matches('`'), BRIEF_FIELD_MAX_BYTES).into_string();
     if name.is_empty() {
         return None;
     }

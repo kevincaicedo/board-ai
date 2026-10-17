@@ -31,6 +31,7 @@ pub mod surfaces;
 pub mod thread;
 pub mod time;
 pub mod tools;
+pub mod untrusted;
 pub mod views;
 pub mod voice;
 

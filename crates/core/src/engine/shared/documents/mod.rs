@@ -16,11 +16,12 @@
 mod cites;
 mod reads;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::engine::Core;
+use crate::engine::reply::Delivery;
 use crate::engine::text::{TASK_OUTPUT_CLOSE, TASK_OUTPUT_OPEN, unfenced};
-use crate::limits::{DOCUMENT_PAGE_TEXT_MAX_BYTES, DOCUMENT_PAGES_KEPT_MAX};
+use crate::limits::{DOCUMENT_PAGE_TEXT_MAX_BYTES, DOCUMENT_PAGES_KEPT_MAX, NAME_KEY_MIN_CHARS};
 use crate::narration::tags::bounded;
 use crate::sources::digest::{self, Digest};
 use crate::sources::{DocumentFormat, SourceId, SourceKind, SourceState, name_key};
@@ -42,6 +43,9 @@ pub(in crate::engine) struct DocumentDesk {
     cues: VecDeque<Cue>,
     /// The document the talker last read or cited: a bare "page 3" means that one.
     last: Option<SourceId>,
+    /// Documents whose digest a request carried: the talker has it (D-271). At most one per
+    /// shared source.
+    delivered: BTreeSet<SourceId>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,9 +87,17 @@ impl DocumentDesk {
         }
     }
 
+    /// A request carried the document's digest.
+    pub(in crate::engine) fn delivered(&mut self, source: SourceId) {
+        if self.digests.contains_key(&source) {
+            self.delivered.insert(source);
+        }
+    }
+
     /// The source is gone: nothing of it is kept or waited for.
     pub(in crate::engine) fn forget(&mut self, source: SourceId) {
         self.digests.remove(&source);
+        self.delivered.remove(&source);
         self.pages.retain(|kept| kept.source != source);
         self.reads.retain(|_, read| read.source != source);
         if self.last == Some(source) {
@@ -181,7 +193,11 @@ impl Core {
             return;
         };
         let report = digest_report(&title, format, &parsed);
-        self.context.quiet_report(report);
+        // A digest read again replaces the one waiting: the talker gets the newest once.
+        let delivery = Delivery::Digest { source };
+        let _ = self.context.take_quiet(&delivery);
+        self.sources.documents.delivered.remove(&source);
+        self.context.quiet_report(report, vec![delivery]);
         self.sources.documents.digests.insert(source, parsed);
         self.sources.documents.last = Some(source);
     }
@@ -190,7 +206,7 @@ impl Core {
     /// without its extension, compared by letters and digits; the newest first.
     fn document_named(&self, name: &str) -> Option<SourceId> {
         let key = name_key(name);
-        if key.len() < 3 {
+        if key.len() < NAME_KEY_MIN_CHARS {
             return None;
         }
         self.sources
@@ -217,7 +233,18 @@ impl Core {
             .map(|entry| entry.info.id)
     }
 
-    /// A document's title as a card or a line names it: its digest's, else its file name.
+    /// A document's name in BoardAI's own words to the talker: its file's name, never its
+    /// digest's title, which is the document's words (D-265).
+    fn file_name(&self, source: SourceId) -> String {
+        self.sources
+            .shared
+            .get(source)
+            .map(|entry| entry.info.title.clone())
+            .unwrap_or_default()
+    }
+
+    /// A document's title as its Doc card names it: its digest's (plain text, D-266), else its
+    /// file name.
     fn document_title(&self, source: SourceId) -> String {
         self.sources
             .documents

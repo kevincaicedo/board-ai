@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::conversation::ConversationState;
 use crate::effect::Effect;
 use crate::engine::Core;
-use crate::ids::TaskId;
+use crate::ids::{ElementId, LayerId, TaskId};
 use crate::protocol::UiEvent;
 use crate::sources::cues::KeepIn;
 use crate::sources::state::{AddRefused, SharedSources, first_state, reason};
@@ -50,6 +50,12 @@ pub(super) struct SourceDesk {
     pub briefs: BTreeMap<TaskId, BriefTask>,
     /// Briefs' diagrams read and waiting to be staged (D-242).
     diagrams: VecDeque<diagrams::WaitingDiagram>,
+    /// Stagings waiting for the reply's earlier words to draw (D-270), at most
+    /// `BRIEF_DIAGRAMS_WAITING_MAX` like the diagrams they came from.
+    deferred: VecDeque<diagrams::Deferred>,
+    /// Each document figure staged, by document, number and layer: staged once per layer
+    /// (D-269). A record whose diagram left the board is dropped when the next is made.
+    figures: BTreeMap<(SourceId, u32, LayerId), ElementId>,
     next_request: u32,
     /// Documents' digests, the pages read, and citations waiting for the voice (D-186).
     pub documents: DocumentDesk,
@@ -82,16 +88,16 @@ impl Core {
                 self.sources.shared.set_harness(harness);
                 // The tray shows once there is something in it; its loading answer brings it.
                 if let Some(project) = project {
-                    self.use_project(project, false, effects);
+                    self.use_project(now, project, false, effects);
                 }
                 return;
             }
-            SourceInput::Shared { source, keep } => self.on_shared(source, keep, effects),
+            SourceInput::Shared { source, keep } => self.on_shared(now, source, keep, effects),
             SourceInput::Resolved {
                 request,
                 candidates,
                 ..
-            } => self.on_resolved(request, candidates, effects),
+            } => self.on_resolved(now, request, candidates, effects),
             SourceInput::ProjectLoaded {
                 project,
                 kept,
@@ -127,19 +133,20 @@ impl Core {
                 self.config.repo_reads = reads;
                 return;
             }
-            SourceInput::DocumentPages {
-                request,
-                pages,
-                page_count,
-            } => {
-                self.on_document_pages(now, request, &pages, page_count, effects);
+            SourceInput::DocumentPages { request, answer } => {
+                self.on_document_pages(now, request, answer, effects);
                 return;
             }
         }
         self.show_tray(effects);
     }
 
-    pub(super) fn on_sources_command(&mut self, action: SourceAction, effects: &mut Vec<Effect>) {
+    pub(super) fn on_sources_command(
+        &mut self,
+        now: SessionTime,
+        action: SourceAction,
+        effects: &mut Vec<Effect>,
+    ) {
         if self.has_ended() {
             return;
         }
@@ -150,10 +157,10 @@ impl Core {
                 }
             }
             SourceAction::Keep { source } => {
-                let _ = self.keep_source(source, KeepIn::CurrentProject, effects);
+                let _ = self.keep_source(now, source, KeepIn::CurrentProject, effects);
             }
             SourceAction::Unkeep { source } => self.unkeep_source(source, effects),
-            SourceAction::Remove { source } => self.remove_source(source, effects),
+            SourceAction::Remove { source } => self.remove_source(now, source, effects),
         }
         self.show_tray(effects);
     }
@@ -181,13 +188,19 @@ impl Core {
         quiet
     }
 
-    fn on_shared(&mut self, source: SourceInfo, keep: bool, effects: &mut Vec<Effect>) {
+    fn on_shared(
+        &mut self,
+        now: SessionTime,
+        source: SourceInfo,
+        keep: bool,
+        effects: &mut Vec<Effect>,
+    ) {
         let id = source.id;
         if !self.add_source(source, effects) {
             return;
         }
         if keep {
-            let _ = self.keep_source(id, KeepIn::CurrentProject, effects);
+            let _ = self.keep_source(now, id, KeepIn::CurrentProject, effects);
         }
         self.announce_shared(id, effects);
     }
@@ -270,15 +283,14 @@ impl Core {
 
     fn on_resolved(
         &mut self,
+        now: SessionTime,
         request: u32,
         candidates: Vec<SourceInfo>,
         effects: &mut Vec<Effect>,
     ) {
         let Some(resolving) = self.sources.resolving.remove(&request) else {
-            let sources = candidates.iter().map(|candidate| candidate.id).collect();
-            effects.push(Effect::Source {
-                source: SourceEffect::Discard { sources },
-            });
+            let sources: Vec<SourceId> = candidates.iter().map(|candidate| candidate.id).collect();
+            self.discard_unheld(sources, effects);
             return;
         };
         match candidates.len() {
@@ -289,7 +301,7 @@ impl Core {
             1 => {
                 let candidate = candidates.into_iter().next();
                 if let Some(candidate) = candidate {
-                    self.share_candidate(candidate, &resolving.keep, effects);
+                    self.share_candidate(now, candidate, &resolving.keep, effects);
                 }
             }
             _ => {
@@ -311,8 +323,29 @@ impl Core {
         }
     }
 
+    /// The runtime may forget these ids, except those this session holds: the runtime names a
+    /// path by the id it already has, so a candidate or a loaded source can be one that is
+    /// shared or kept now, and forgetting it would make it unreadable (review 3, finding 12).
+    pub(super) fn discard_unheld(&self, sources: Vec<SourceId>, effects: &mut Vec<Effect>) {
+        let sources: Vec<SourceId> = sources
+            .into_iter()
+            .filter(|id| self.sources.shared.get(*id).is_none())
+            .collect();
+        if !sources.is_empty() {
+            effects.push(Effect::Source {
+                source: SourceEffect::Discard { sources },
+            });
+        }
+    }
+
     /// A resolved candidate becomes readable and is shared like a drop.
-    fn share_candidate(&mut self, candidate: SourceInfo, keep: &KeepIn, effects: &mut Vec<Effect>) {
+    fn share_candidate(
+        &mut self,
+        now: SessionTime,
+        candidate: SourceInfo,
+        keep: &KeepIn,
+        effects: &mut Vec<Effect>,
+    ) {
         let id = candidate.id;
         effects.push(Effect::Source {
             source: SourceEffect::Share { source: id },
@@ -323,23 +356,25 @@ impl Core {
         match keep {
             KeepIn::Session => {}
             KeepIn::CurrentProject | KeepIn::Named(_) => {
-                let _ = self.keep_source(id, keep.clone(), effects);
+                let _ = self.keep_source(now, id, keep.clone(), effects);
             }
         }
         self.announce_shared(id, effects);
     }
 
     /// The session works on `project` now: its kept sources load, and the next session starts
-    /// with it. The sources the previous project kept are no longer shared.
+    /// with it. The sources the previous project kept are no longer shared: each is let go as
+    /// the tray's Remove lets one go (review 3, finding 18).
     pub(super) fn use_project(
         &mut self,
+        now: SessionTime,
         project: Project,
         proposed: bool,
         effects: &mut Vec<Effect>,
     ) {
         let gone = self.sources.shared.set_project(project.clone(), proposed);
-        self.forget_diagrams_of(&gone);
         if !gone.is_empty() {
+            self.let_go(now, &gone, effects);
             effects.push(Effect::Source {
                 source: SourceEffect::Discard { sources: gone },
             });
@@ -365,9 +400,7 @@ impl Core {
             .is_some_and(|choice| choice.project.id == project.id && !choice.proposed);
         if !current {
             let sources = kept.iter().map(|kept| kept.source.id).collect();
-            effects.push(Effect::Source {
-                source: SourceEffect::Discard { sources },
-            });
+            self.discard_unheld(sources, effects);
             return;
         }
         let mut titles = Vec::new();
@@ -378,7 +411,7 @@ impl Core {
             match self.sources.shared.add(kept.source, true, state) {
                 Ok(entry) => {
                     if let Some(overview) = kept.overview {
-                        entry.components = overview.components;
+                        entry.components = kept_components(overview.components);
                     }
                     titles.push(title);
                 }
@@ -409,6 +442,7 @@ impl Core {
     /// a new one named after the source (said out loud then). Returns the project's name.
     pub(super) fn keep_source(
         &mut self,
+        now: SessionTime,
         id: SourceId,
         keep: KeepIn,
         effects: &mut Vec<Effect>,
@@ -436,7 +470,7 @@ impl Core {
             .project()
             .is_none_or(|choice| choice.proposed || choice.project.id != project.id);
         if switching {
-            self.use_project(project.clone(), false, effects);
+            self.use_project(now, project.clone(), false, effects);
         }
         if !self.sources.shared.set_kept(id, true) {
             let _ = self.say_if_quiet(SOURCES_FULL_LINE, effects);
@@ -478,33 +512,31 @@ impl Core {
         }
     }
 
-    fn remove_source(&mut self, id: SourceId, effects: &mut Vec<Effect>) {
+    fn remove_source(&mut self, now: SessionTime, id: SourceId, effects: &mut Vec<Effect>) {
         self.unkeep_source(id, effects);
         let Some(entry) = self.sources.shared.remove(id) else {
             return;
         };
-        self.forget_diagrams_of(&[id]);
-        let running: Vec<TaskId> = self
-            .sources
-            .briefs
-            .iter()
-            .filter(|(_, task)| task.source == id)
-            .map(|(task, _)| *task)
-            .collect();
-        for task in running {
-            self.sources.briefs.remove(&task);
-            self.context.forget_task(task);
-            effects.push(Effect::CancelHarness { task });
-        }
-        self.sources.shared.finish_reading(id, None);
-        self.sources.documents.forget(id);
-        effects.push(Effect::Source {
-            source: SourceEffect::Discard { sources: vec![id] },
-        });
+        // Before a held call is answered: the request that answer sends carries the notice.
         self.context.notice(format!(
             "The user removed {} from the sources: it can't be read any more.",
             entry.info.title
         ));
+        effects.push(Effect::Source {
+            source: SourceEffect::Discard { sources: vec![id] },
+        });
+        self.let_go(now, &[id], effects);
+    }
+
+    /// Sources no longer shared: nothing of them waits to be staged, read or reported, their
+    /// briefs stop, and every research call held for one is answered (D-268).
+    fn let_go(&mut self, now: SessionTime, gone: &[SourceId], effects: &mut Vec<Effect>) {
+        self.forget_diagrams_of(gone);
+        self.drop_briefs_of(now, gone, effects);
+        for id in gone {
+            self.sources.shared.finish_reading(*id, None);
+            self.sources.documents.forget(*id);
+        }
     }
 
     fn on_source_failed(
@@ -529,6 +561,20 @@ impl Core {
         }));
         self.context.notice(format!("{spoken} ({detail})"));
     }
+}
+
+/// A kept overview's parts as the runtime read them from the vault: ids that parse, names as
+/// plain text (D-266), since BoardAI's notes may name them.
+fn kept_components(components: Vec<(String, String)>) -> Vec<(String, String)> {
+    components
+        .into_iter()
+        .filter(|(id, _)| crate::ids::ElementId::parse(id).is_some())
+        .map(|(id, name)| {
+            let name =
+                crate::untrusted::PlainText::parse(&name, crate::limits::BRIEF_FIELD_MAX_BYTES);
+            (id, name.into_string())
+        })
+        .collect()
 }
 
 /// How a kept source starts in a new session: failed when its path is gone, ready when a fresh

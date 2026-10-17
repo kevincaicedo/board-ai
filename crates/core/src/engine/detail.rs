@@ -78,7 +78,11 @@ impl Core {
             || board_layer.and_then(Layer::bounds).unwrap_or_default(),
             crate::board::Element::area,
         );
-        let label = element.map_or_else(|| of.as_str().to_owned(), |element| element.label.clone());
+        // A source's part is named by its id: its label is the source's words, and the layer's
+        // title reaches the talker's context (D-265).
+        let label = element
+            .filter(|_| !self.board.is_from_source(layer, of))
+            .map_or_else(|| of.as_str().to_owned(), |element| element.label.clone());
         let anchor = DetailAnchor {
             layer,
             element: of.clone(),
@@ -177,11 +181,11 @@ impl Core {
         let Some((id, label)) = self.named_part(layer, &cue.target) else {
             return false;
         };
+        let part = part_named(&id, &label);
         if self.thread.depth() >= DETOUR_DEPTH_MAX {
             self.context.notice(format!(
-                "The user asked for more detail on {} \"{label}\", but the board is already \
-                 {DETOUR_DEPTH_MAX} levels deep; answer here, or suggest backing out first.",
-                id.as_str()
+                "The user asked for more detail on {part}, but the board is already \
+                 {DETOUR_DEPTH_MAX} levels deep; answer here, or suggest backing out first."
             ));
             return false;
         }
@@ -193,22 +197,24 @@ impl Core {
             // A shared source's brief on this part is on its way: its diagram is staged here
             // when it arrives (D-242), so the talker doesn't draw a guess under it.
             Some(harness) => format!(
-                "{harness} is reading it, and its brief's diagram will be staged on this layer                  when it arrives. Say so in a few words; don't draw its internals yourself."
+                "{harness} is reading it, and its brief's diagram will be staged on this layer \
+                 when it arrives. Say so in a few words; don't draw its internals yourself."
             ),
-            None => "Draw its internals there at once: one <diagram> block with its parts and                      their fields, then <reveal> them as you explain."
+            None => "Draw its internals there at once: one <diagram> block with its parts and \
+                     their fields, then <reveal> them as you explain."
                 .to_owned(),
         };
         self.context.notice(format!(
-            "The user said \"{text}\", so a detail layer anchored to {} \"{label}\" is open and \
-             fills the board. {fill} Write <resume/> only when you are done with it; the user can \
-             also say \"back out\".",
-            id.as_str()
+            "The user said \"{text}\", so a detail layer anchored to {part} is open and fills \
+             the board. {fill} Write <resume/> only when you are done with it; the user can also \
+             say \"back out\"."
         ));
         true
     }
 
     /// The part of `layer` the spoken words name: a drawn element whose label or id has those
-    /// words, the closest match first (containers before the parts inside them, by size).
+    /// words, the closest match first (containers before the parts inside them, by size). A
+    /// source's part comes with its id for a label: its label is the source's words (D-265).
     fn named_part(&self, layer: LayerId, target: &str) -> Option<(ElementId, String)> {
         let wanted = name_words(target);
         if wanted.is_empty() {
@@ -234,7 +240,23 @@ impl Core {
                 ))
             })
             .max_by_key(|(score, area, _, _)| (*score, *area))
-            .map(|(_, _, id, label)| (id, label))
+            .map(|(_, _, id, label)| {
+                if self.board.is_from_source(layer, &id) {
+                    let named = id.as_str().to_owned();
+                    (id, named)
+                } else {
+                    (id, label)
+                }
+            })
+    }
+}
+
+/// `arena "Arena"`, or the id alone when the label is it.
+fn part_named(id: &ElementId, label: &str) -> String {
+    if label.is_empty() || label == id.as_str() {
+        id.as_str().to_owned()
+    } else {
+        format!("{} \"{label}\"", id.as_str())
     }
 }
 

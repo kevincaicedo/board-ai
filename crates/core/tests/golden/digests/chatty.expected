@@ -11,4 +11,4 @@ claim @ p. 4: "Rows are versioned by timestamps"
 claim @ pp. 6–7: "Garbage collection is cooperative"
 claim @ -: "A claim without a page."
 tray: Partial { reason: "Text read · 1 figure needs a model that reads files" }
-dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, lines: 4, truncated: false }
+dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, locators: 0, lines: 4, truncated: false }

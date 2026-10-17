@@ -31,7 +31,6 @@ use crate::limits::{
     BRIEF_CITATION_LINES_MAX, BRIEF_CITATION_PATH_MAX_BYTES, BRIEF_CITATIONS_MAX,
     SPOKEN_SOURCE_NAME_MAX_BYTES,
 };
-use crate::narration::tags::bounded;
 
 pub use parse::parse;
 pub use request::request_prompt;
@@ -46,11 +45,13 @@ pub enum BriefTopic {
 }
 
 impl BriefTopic {
-    /// A component topic, its name held to the bound of a spoken name.
+    /// A component topic, its name held to the bound of a spoken name. The name is a brief's
+    /// (a part it listed) and BoardAI's notes say it, so it is plain text (D-266).
     #[must_use]
     pub fn component(name: &str) -> Self {
         Self::Component {
-            name: bounded(name, SPOKEN_SOURCE_NAME_MAX_BYTES),
+            name: crate::untrusted::PlainText::parse(name, SPOKEN_SOURCE_NAME_MAX_BYTES)
+                .into_string(),
         }
     }
 
@@ -302,15 +303,19 @@ impl Brief {
         if !self.components.is_empty() {
             out.push_str("\n## Components\n");
             for part in &self.components {
-                let _ = writeln!(
+                let _ = write!(
                     out,
-                    "- {} · {} · {} · {} — {}",
+                    "- {} · {} · {} · {}",
                     part.id.as_str(),
                     part.name,
                     part.kind,
-                    part.path,
-                    part.role
+                    part.path
                 );
+                // A dash with nothing after it is trimmed away, and the path would take it.
+                if !part.role.is_empty() {
+                    let _ = write!(out, " — {}", part.role);
+                }
+                out.push('\n');
             }
         }
         if !self.relations.is_empty() {

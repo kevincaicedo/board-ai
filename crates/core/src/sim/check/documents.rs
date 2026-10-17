@@ -1,15 +1,16 @@
 //! Law 6 for page chips (I17, D-257): a Doc card's chip names only what the session read of
 //! that document: a page whose text a document read returned, or a page, a figure or a table its
-//! digest holds. A citation the talker invented never gets a chip.
+//! digest holds. A citation the talker invented never gets a chip, nor does a page past the
+//! document's end, whatever a digest's locator claimed (D-273).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::effect::Effect;
 use crate::input::Input;
 use crate::protocol::{Surface, UiEvent};
-use crate::sources::digest::{Digest, parse};
+use crate::sources::digest::{Digest, Extent, parse};
 use crate::sources::pages::find_cites;
-use crate::sources::{SourceEffect, SourceId, SourceInput, name_key};
+use crate::sources::{PagesAnswer, SourceEffect, SourceId, SourceInput, name_key};
 use crate::time::SessionTime;
 
 #[derive(Clone, Debug, Default)]
@@ -20,6 +21,9 @@ pub struct ReadDocuments {
     pages: BTreeSet<(SourceId, u32)>,
     /// Document reads asked of the runtime, by request.
     requests: BTreeMap<u32, SourceId>,
+    /// Each document's length in pages, as the runtime counted it (its digest's `Read:` line,
+    /// or a page read's answer).
+    page_counts: BTreeMap<SourceId, u32>,
 }
 
 impl ReadDocuments {
@@ -49,12 +53,21 @@ impl ReadDocuments {
             } => {
                 let digest = parse(digest);
                 self.names.insert(name_key(&digest.title), *source);
+                if let Some(Extent::Pages(count)) = digest.read.extent {
+                    self.page_counts.insert(*source, count);
+                }
                 self.digests.insert(*source, digest);
             }
-            SourceInput::DocumentPages { request, pages, .. } => {
+            SourceInput::DocumentPages {
+                request,
+                answer: PagesAnswer::Read { pages, page_count },
+            } => {
                 if let Some(source) = self.requests.get(request) {
                     for page in pages {
                         self.pages.insert((*source, page.page));
+                    }
+                    if let Some(count) = page_count {
+                        self.page_counts.insert(*source, *count);
                     }
                 }
             }
@@ -65,7 +78,11 @@ impl ReadDocuments {
             | SourceInput::Dragging { .. }
             | SourceInput::Failed { .. }
             | SourceInput::RepoReads { .. }
-            | SourceInput::DocumentRead { digest: None, .. } => {}
+            | SourceInput::DocumentRead { digest: None, .. }
+            | SourceInput::DocumentPages {
+                answer: PagesAnswer::Unread { .. },
+                ..
+            } => {}
         }
     }
 
@@ -123,6 +140,14 @@ impl ReadDocuments {
             if !(figure && table && pages) {
                 violations.push(violation("it was never read"));
             }
+            let count = self.page_counts.get(&source);
+            if let (Some(count), Some((_, last))) = (count, cite.pages)
+                && last > *count
+            {
+                violations.push(violation(&format!(
+                    "the document has {count} pages: it is past the end"
+                )));
+            }
         }
     }
 }
@@ -135,8 +160,8 @@ mod tests {
     use crate::input::Input;
     use crate::protocol::{Surface, UiEvent};
     use crate::sources::{
-        DocumentFormat, DocumentPage, SourceEffect, SourceId, SourceInfo, SourceInput, SourceKind,
-        SourceState,
+        DocumentFormat, DocumentPage, PagesAnswer, SourceEffect, SourceId, SourceInfo, SourceInput,
+        SourceKind, SourceState,
     };
     use crate::time::SessionTime;
 
@@ -205,15 +230,62 @@ mod tests {
         read.on_input(&Input::Source {
             source: SourceInput::DocumentPages {
                 request: 9,
-                pages: vec![DocumentPage {
-                    page: 3,
-                    text: "Text.".into(),
-                }],
-                page_count: Some(7),
+                answer: PagesAnswer::Read {
+                    pages: vec![DocumentPage {
+                        page: 3,
+                        text: "Text.".into(),
+                    }],
+                    page_count: Some(7),
+                },
             },
         });
         violations.clear();
         read.on_ui(SessionTime::ZERO, &card("pp. 2–3"), &mut violations);
         assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    /// The planted violation for a page past the end (D-273): a chip for page 40 of a 7-page
+    /// document is red even when its digest (as the core parsed it before) held page 40, or a
+    /// page read returned it.
+    #[test]
+    fn a_chip_past_the_documents_end_is_a_violation() {
+        let mut read = ReadDocuments::default();
+        read.on_input(&Input::Source {
+            source: SourceInput::DocumentRead {
+                source: SourceId(4),
+                state: SourceState::Ready {
+                    detail: String::new(),
+                },
+                digest: Some(
+                    "# Digest: Layered\nRead: 7 pages; text only\n## Claims\n- C. (p. 2)\n".into(),
+                ),
+            },
+        });
+        read.on_effect(&Effect::Source {
+            source: SourceEffect::ReadDocument {
+                request: 3,
+                source: SourceId(4),
+                first_page: 40,
+                last_page: 40,
+            },
+        });
+        read.on_input(&Input::Source {
+            source: SourceInput::DocumentPages {
+                request: 3,
+                answer: PagesAnswer::Read {
+                    pages: vec![DocumentPage {
+                        page: 40,
+                        text: "Text.".into(),
+                    }],
+                    page_count: Some(7),
+                },
+            },
+        });
+        let mut violations = Vec::new();
+        read.on_ui(SessionTime::ZERO, &card("p. 2"), &mut violations);
+        assert!(violations.is_empty(), "{violations:?}");
+        read.on_ui(SessionTime::ZERO, &card("p. 40"), &mut violations);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("past the end"), "{violations:?}");
     }
 }

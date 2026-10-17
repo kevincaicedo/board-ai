@@ -232,3 +232,112 @@ fn random_input_never_panics() {
         assert_bounded(&parse(&String::from_utf8_lossy(&bytes)), "reversed");
     }
 }
+
+/// Review 3, finding 23 (red at 2b76809): a component written without a role (the request asks
+/// for one; a harness may omit it) was written back as "… — " with nothing after the dash; the
+/// line's end is trimmed, and the path took the dash. The canonical form writes the dash only
+/// before a role.
+#[test]
+fn a_component_without_a_role_round_trips() {
+    for text in [
+        "# Brief: x\n## Overview\nO.\n## Components\n- arena · Arena · module · src/arena.rs\n",
+        "# Brief: x\n## Overview\nO.\n## Components\n- arena · Arena\n",
+    ] {
+        let once = parse(text);
+        assert_eq!(once.components[0].role, "", "{text}");
+        let again = parse(&once.to_markdown());
+        assert_eq!(
+            Brief {
+                dropped: once.dropped,
+                ..again
+            },
+            once,
+            "{}",
+            once.to_markdown()
+        );
+    }
+}
+
+/// Review 3, finding 20 (red at 2b76809): a `<diagram>` whose closing tag was lost swallowed
+/// every later section, its details and citations included (unread citations, then no chips). A
+/// `##` heading ends an open block, as the digest parser does.
+#[test]
+fn an_unclosed_diagram_ends_at_the_next_section() {
+    let text = "# Brief: x\n## Overview\nO.\n## Components\n- arena · Arena · module · src/arena.rs \
+                — r\n## Diagram\n<diagram title=\"d\">\n<node id=\"arena\" label=\"Arena\"/>\n\
+                ## Details\n### arena\nThe arena hands out slabs.\n## Citations\n- src/arena.rs:1-9\n";
+    let parsed = parse(text);
+    assert_eq!(
+        parsed.citations.len(),
+        1,
+        "citations: {:?}",
+        parsed.citations
+    );
+    assert_eq!(parsed.details.len(), 1, "details: {:?}", parsed.details);
+    let diagram = parsed
+        .diagram
+        .as_ref()
+        .expect("the diagram kept what it had");
+    assert!(
+        diagram.text.contains("<node id=\"arena\"") && diagram.text.ends_with("</diagram>"),
+        "{}",
+        diagram.text
+    );
+    assert!(parsed.dropped.truncated, "its lost end is counted");
+}
+
+/// Random mixes of the shape's lines, role-less components and unclosed blocks among them: the
+/// canonical form parses back to the same brief (review 3, findings 20 and 23).
+#[test]
+fn the_canonical_form_round_trips_on_random_input() {
+    let pieces = [
+        "# Brief: x\n",
+        "## Overview\n",
+        "Words.\n",
+        "## Components\n",
+        "- a · A · t · p — r\n",
+        "- b · B — r\n",
+        "- c | C | k | q — role\n",
+        "- d · D · k · src/d.rs\n",
+        "- e · E\n",
+        "## Relations\n",
+        "- a → b: c\n",
+        "- a -> c\n",
+        "## Flows\n",
+        "### f\n",
+        "1. s (p.rs:3)\n",
+        "2) t\n",
+        "## Diagram\n",
+        "<diagram title=\"d\">\n",
+        "<node id=\"a\"/>\n",
+        "</diagram>\n",
+        "## Details\n",
+        "### a\n",
+        "## Citations\n",
+        "- p.rs:1-9\n",
+        "- ../q.rs:4\n",
+        "\n",
+    ];
+    let mut state: u64 = 0x5eed_b41e_f00d;
+    for _ in 0..4_000 {
+        let mut text = String::new();
+        for _ in 0..24 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let index = usize::try_from(state >> 33).unwrap_or(0) % pieces.len();
+            text.push_str(pieces[index]);
+        }
+        let once = parse(&text);
+        let again = parse(&once.to_markdown());
+        assert_eq!(
+            Brief {
+                dropped: once.dropped,
+                ..again
+            },
+            once,
+            "input:\n{text}\ncanonical:\n{}",
+            once.to_markdown()
+        );
+    }
+}

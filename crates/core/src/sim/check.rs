@@ -5,10 +5,12 @@ mod documents;
 mod drawing;
 mod history;
 mod nudges;
+mod off_record;
 mod sources;
 mod speculation;
 mod staged;
 mod tasks;
+mod untrusted;
 
 pub use history::history_shape;
 
@@ -77,6 +79,10 @@ pub struct Checker {
     nudges: nudges::Nudges,
     /// A request started on an early final shows nothing until it is confirmed (D-262).
     speculation: speculation::Speculation,
+    /// Sources' words, so no system message carries them (D-107, D-265).
+    untrusted: untrusted::SourceText,
+    /// Nothing of the session is kept off the record, sources included (I10).
+    off_record_sources: off_record::OffRecord,
 }
 
 impl Checker {
@@ -173,6 +179,7 @@ impl Checker {
             | Input::Source { .. } => {}
         }
         self.read.on_input(input);
+        self.untrusted.on_input(input);
     }
 
     pub fn on_effect(
@@ -185,6 +192,8 @@ impl Checker {
         self.read.on_effect(effect);
         self.speculation
             .on_effect(now, effect, &mut self.violations);
+        self.off_record_sources
+            .on_effect(now, effect, &mut self.violations);
         match effect {
             // I5: one talker stream at a time; CancelTalk precedes a new Talk.
             Effect::Talk { request } => {
@@ -192,6 +201,7 @@ impl Checker {
                     self.violate(now, "I5: Talk while another stream is in flight".into());
                 }
                 self.nudges.on_talk(now, request, &mut self.violations);
+                self.untrusted.on_talk(now, request, &mut self.violations);
                 self.yours.on_talk(now, &mut self.violations);
                 self.talk_in_flight = true;
             }

@@ -113,6 +113,9 @@ impl Core {
         }
         // So are views read for its tags: one must not open over the words that stopped it.
         self.drop_written_reads();
+        // And a source's diagram waiting for its tool round, or for its earlier words to draw:
+        // it never lands under the next question (D-270).
+        self.release_reply_diagrams(effects);
         self.freeze(now, effects);
         if let Some(stop) = &mut self.stop {
             stop.abandon_question |= abandon_question;

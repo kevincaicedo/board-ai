@@ -15,7 +15,7 @@ use crate::limits::{
     DIGEST_SUMMARY_MAX_BYTES, DIGEST_TABLE_ROW_MAX_BYTES, DIGEST_TABLE_ROWS_MAX, DIGEST_TABLES_MAX,
     DOCUMENT_DIGEST_MAX_BYTES, DOCUMENT_LOCATION_MAX,
 };
-use crate::narration::tags::bounded;
+use crate::untrusted::PlainText;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Section {
@@ -165,7 +165,7 @@ impl Parser {
         if let Some(title) = line.strip_prefix("# ") {
             if self.digest.title.is_empty() {
                 let title = strip_label(title.trim(), "digest:");
-                self.digest.title = bounded(title, DIGEST_CAPTION_MAX_BYTES);
+                self.digest.title = plain(title, DIGEST_CAPTION_MAX_BYTES);
             } else {
                 self.digest.dropped.lines += 1;
             }
@@ -197,7 +197,7 @@ impl Parser {
             return;
         }
         let (title, at) = trailing_locator(heading);
-        let title = bounded(title, DIGEST_CAPTION_MAX_BYTES);
+        let title = plain(title, DIGEST_CAPTION_MAX_BYTES);
         if title.is_empty() {
             self.digest.dropped.sections += 1;
             return;
@@ -334,7 +334,49 @@ impl Parser {
 
     fn finish(mut self) -> Digest {
         self.unclosed_block();
+        drop_locators_past_the_end(&mut self.digest);
         self.digest
+    }
+}
+
+/// A title or a caption: the document's words, which BoardAI's own notes and the Doc card may
+/// name, parsed into plain text where they enter (D-266).
+fn plain(text: &str, max_bytes: usize) -> String {
+    PlainText::parse(text, max_bytes).into_string()
+}
+
+/// I17, law 6: a locator is a model's claim about where something is. One past the document's
+/// own length (its `Read:` line, written by the runtime) would make a page "held" that doesn't
+/// exist, so it is dropped and counted; the part keeps its words.
+fn drop_locators_past_the_end(digest: &mut Digest) {
+    let Some(extent) = digest.read.extent else {
+        return;
+    };
+    let past = |at: &mut Option<Locator>, dropped: &mut u32| {
+        let beyond = match (*at, extent) {
+            (Some(Locator::Pages { last, .. }), Extent::Pages(count))
+            | (Some(Locator::Lines { last, .. }), Extent::Lines(count)) => last > count,
+            (Some(Locator::Pages { .. }), Extent::Lines(_))
+            | (Some(Locator::Lines { .. }), Extent::Pages(_))
+            | (None, _) => false,
+        };
+        if beyond {
+            *at = None;
+            *dropped += 1;
+        }
+    };
+    let dropped = &mut digest.dropped.locators;
+    for section in &mut digest.sections {
+        past(&mut section.at, dropped);
+    }
+    for figure in &mut digest.figures {
+        past(&mut figure.at, dropped);
+    }
+    for table in &mut digest.tables {
+        past(&mut table.at, dropped);
+    }
+    for claim in &mut digest.claims {
+        past(&mut claim.at, dropped);
     }
 }
 
@@ -397,7 +439,7 @@ fn numbered_heading(heading: &str, names: &[&str]) -> Option<(u32, Option<Locato
         Some(at) => (rest, Some(at)),
         None => trailing_locator(rest),
     };
-    Some((number, at, bounded(caption, DIGEST_CAPTION_MAX_BYTES)))
+    Some((number, at, plain(caption, DIGEST_CAPTION_MAX_BYTES)))
 }
 
 /// A locator in parentheses at the start of `text`, and what follows it.

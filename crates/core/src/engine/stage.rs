@@ -156,7 +156,7 @@ impl Core {
                     self.tray_by_voice(cue, effects);
                     true
                 }
-                JoinedCue::KeepSource => self.keep_control(control.words, effects),
+                JoinedCue::KeepSource => self.keep_control(now, control.words, effects),
             };
         }
         if let Some(words) = end {

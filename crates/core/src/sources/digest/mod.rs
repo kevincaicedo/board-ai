@@ -189,6 +189,8 @@ pub struct DigestDropped {
     pub claims: u32,
     /// `<diagram>` blocks past their bound.
     pub diagrams: u32,
+    /// Locators past the document's own length (its `Read:` line): the part stays, unplaced.
+    pub locators: u32,
     /// Lines that fit no section's shape.
     pub lines: u32,
     /// Bytes past the digest's or a part's bound.
@@ -204,6 +206,7 @@ impl DigestDropped {
             + self.rows
             + self.claims
             + self.diagrams
+            + self.locators
             + self.lines
             + u32::from(self.truncated)
     }
@@ -536,8 +539,9 @@ pub(crate) fn bounded_claim(text: &str) -> String {
     bounded(text.trim(), DIGEST_CLAIM_MAX_BYTES)
 }
 
+/// Who read the figures: named in BoardAI's notes and on the Doc card, so plain text (D-266).
 pub(crate) fn bounded_reader(text: &str) -> String {
-    bounded(text.trim(), DIGEST_READER_MAX_BYTES)
+    crate::untrusted::PlainText::parse(text, DIGEST_READER_MAX_BYTES).into_string()
 }
 
 /// The digest's whole bound, for callers that cut before parsing.

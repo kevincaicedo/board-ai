@@ -4,7 +4,7 @@ use crate::effect::Effect;
 use crate::engine::Core;
 use crate::engine::gate::GateClosed;
 use crate::engine::nudge::is_view;
-use crate::engine::reply::ToolSlot;
+use crate::engine::reply::{Delivery, ToolSlot};
 use crate::engine::text::{
     TOOL_ROUNDS_LINE, harness_report, invalid_call, render_output, started_text,
 };
@@ -31,6 +31,13 @@ impl Core {
         if let Some(stream) = reply.streams.last_mut() {
             stream.calls.push(invocation.clone());
         }
+        // The slot first: what the core answers at once may carry a brief or a digest with it.
+        let slot = reply.tools.len();
+        reply.tools.push(ToolSlot {
+            id: invocation.id.clone(),
+            result: None,
+            delivers: Vec::new(),
+        });
         let result = match (&invocation.call, too_many) {
             (_, true) => Some(error_result(
                 &invocation.id,
@@ -39,11 +46,59 @@ impl Core {
             (Err(error), false) => Some(error_result(&invocation.id, invalid_call(error))),
             (Ok(call), false) => self.dispatch_tool(now, &invocation.id, call, effects),
         };
-        if let Some(reply) = self.reply.as_mut() {
-            reply.tools.push(ToolSlot {
-                id: invocation.id,
-                result,
-            });
+        if let Some(slot) = self
+            .reply
+            .as_mut()
+            .and_then(|reply| reply.tools.get_mut(slot))
+            .filter(|slot| slot.id == invocation.id && slot.result.is_none())
+        {
+            slot.result = result;
+        }
+    }
+
+    /// Fills a held call's result without asking for the next round: for a call answered
+    /// while its own stream is still written, whose round is decided when the stream ends.
+    /// False when the reply that made it is gone.
+    pub(in crate::engine) fn set_held_result(&mut self, id: &ToolCallId, content: String) -> bool {
+        let Some(slot) = self.reply.as_mut().and_then(|reply| {
+            reply
+                .tools
+                .iter_mut()
+                .find(|slot| slot.id == *id && slot.result.is_none())
+        }) else {
+            return false;
+        };
+        slot.result = Some(UserPart::ToolResult {
+            id: id.clone(),
+            content,
+            is_error: false,
+        });
+        true
+    }
+
+    /// What the held call `id`, just answered, carries with its result (D-271).
+    fn carry_with_held(&mut self, id: &ToolCallId, delivers: Vec<Delivery>) {
+        if let Some(slot) = self.reply.as_mut().and_then(|reply| {
+            reply
+                .tools
+                .iter_mut()
+                .rev()
+                .find(|slot| slot.id == *id && slot.result.is_some())
+        }) {
+            slot.delivers = delivers;
+        }
+    }
+
+    /// The call `id` answered now carries `delivers` with its result (D-271).
+    pub(in crate::engine) fn carry_with_call(&mut self, id: &ToolCallId, delivers: Vec<Delivery>) {
+        if let Some(slot) = self.reply.as_mut().and_then(|reply| {
+            reply
+                .tools
+                .iter_mut()
+                .rev()
+                .find(|slot| slot.id == *id && slot.result.is_none())
+        }) {
+            slot.delivers = delivers;
         }
     }
 
@@ -85,11 +140,12 @@ impl Core {
                 return None;
             }
             ToolCall::Research { question, depth } => {
-                // A question about a shared code source is a brief request (D-223); one about
-                // a shared document is answered from its digest (D-256).
+                // A question that points at a shared document, and doesn't name the code, is
+                // answered from its digest (D-256, D-267); one about a shared code source is a
+                // brief request (D-223).
                 if let Some(answer) = self
-                    .research_on_source(id, question, effects)
-                    .or_else(|| self.research_on_document(id, question, effects))
+                    .research_on_document(id, question, effects)
+                    .or_else(|| self.research_on_source(id, question, effects))
                 {
                     return answer;
                 }
@@ -268,7 +324,7 @@ impl Core {
         }
         if let Some(report) = harness_report(task, &kind, &event) {
             self.context.tasks.remove(&task);
-            self.context.report(report);
+            self.context.report(report, Vec::new());
         }
     }
 
@@ -283,27 +339,20 @@ impl Core {
     }
 
     /// Answers a call whose result the core held open (a research call waiting for a cached
-    /// brief, D-223). False when the reply that made it is gone.
+    /// brief, D-223), with what the result carries (D-271). False when the reply that made it
+    /// is gone.
     pub(in crate::engine) fn answer_held_call(
         &mut self,
         now: SessionTime,
         id: &ToolCallId,
         content: String,
+        delivers: Vec<Delivery>,
         effects: &mut Vec<Effect>,
     ) -> bool {
-        let Some(slot) = self.reply.as_mut().and_then(|reply| {
-            reply
-                .tools
-                .iter_mut()
-                .find(|slot| slot.id == *id && slot.result.is_none())
-        }) else {
+        if !self.set_held_result(id, content) {
             return false;
-        };
-        slot.result = Some(UserPart::ToolResult {
-            id: id.clone(),
-            content,
-            is_error: false,
-        });
+        }
+        self.carry_with_held(id, delivers);
         self.maybe_tool_round(now, effects);
         true
     }

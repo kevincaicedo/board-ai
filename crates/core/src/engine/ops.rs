@@ -147,6 +147,9 @@ impl Core {
         }
         // Each pass runs or drops an op, or stops; the queue's length bounds the loop.
         for _ in 0..=self.queue.ops.len() {
+            // A source's diagram whose staging waited for the reply's earlier words goes on the
+            // board once they have all run, before anything after it (D-270).
+            self.stage_deferred(effects);
             let Some(mut queued) = self.queue.ops.pop_front() else {
                 return;
             };

@@ -8,8 +8,8 @@ use crate::harness::HarnessEvent;
 use crate::ids::TaskId;
 use crate::input::Input;
 use crate::sources::{
-    Citation, CitedLines, DocumentPage, KeptSource, ProjectId, SourceEffect, SourceId, SourceInfo,
-    SourceInput, SourceKind, name_key,
+    Citation, CitedLines, DocumentPage, KeptSource, PagesAnswer, PagesUnread, ProjectId,
+    SourceEffect, SourceId, SourceInfo, SourceInput, SourceKind, name_key,
 };
 
 /// How long the scripted runtime takes to answer a resolve, a cache lookup or a read.
@@ -34,6 +34,8 @@ pub struct FakeSources {
     /// Each document's extracted text, a page per entry (page 1 first); an empty page is a
     /// scanned one.
     pub pages: BTreeMap<SourceId, Vec<String>>,
+    /// Page reads answer this instead of the pages: none read, and why.
+    pub pages_unread: Option<PagesUnread>,
     pub run_ms: u64,
     /// Every effect, in order.
     pub seen: Vec<SourceEffect>,
@@ -55,6 +57,7 @@ impl Default for FakeSources {
             readable: BTreeMap::new(),
             touched: Vec::new(),
             pages: BTreeMap::new(),
+            pages_unread: None,
             run_ms: 3_000,
             seen: Vec::new(),
             readable_sources: Vec::new(),
@@ -145,7 +148,9 @@ impl FakeSources {
         }
     }
 
-    /// The folders whose title is the spoken name, registered.
+    /// The folders whose title is the spoken name, registered. A path this run already
+    /// registered keeps its id, as the runtime's desk does: a candidate can be a source that is
+    /// shared now.
     fn resolve(&mut self, request: u32, name: &str) -> SourceInput {
         let key = name_key(name);
         let found: Vec<SourceInfo> = self
@@ -154,7 +159,17 @@ impl FakeSources {
             .filter(|folder| name_key(&folder.title) == key)
             .cloned()
             .collect();
-        let candidates = found.iter().map(|folder| self.register(folder)).collect();
+        let candidates = found
+            .iter()
+            .map(|folder| {
+                let known = self
+                    .known
+                    .values()
+                    .find(|known| known.shown_path == folder.shown_path)
+                    .cloned();
+                known.unwrap_or_else(|| self.register(folder))
+            })
+            .collect();
         SourceInput::Resolved {
             request,
             candidates,
@@ -180,12 +195,17 @@ impl FakeSources {
                 })
             })
             .collect();
-        Input::Source {
-            source: SourceInput::DocumentPages {
-                request,
+        let answer = match &self.pages_unread {
+            Some(reason) => PagesAnswer::Unread {
+                reason: reason.clone(),
+            },
+            None => PagesAnswer::Read {
                 pages,
                 page_count: u32::try_from(text.len()).ok(),
             },
+        };
+        Input::Source {
+            source: SourceInput::DocumentPages { request, answer },
         }
     }
 
