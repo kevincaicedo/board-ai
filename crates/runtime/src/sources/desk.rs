@@ -232,9 +232,8 @@ impl SourceDesk {
         };
         Some(Workspace {
             folder,
-            answer: Answer::Brief {
-                reach: entry.reach.clone()?,
-            },
+            reach: entry.reach.clone()?,
+            answer: Answer::Brief,
         })
     }
 
@@ -384,10 +383,8 @@ mod tests {
         assert_eq!(desk.cited_beyond(alone.id), None, "nothing beyond itself");
         assert_eq!(
             desk.workspace(elsewhere.id)
-                .map(|workspace| workspace.answer),
-            Some(Answer::Brief {
-                reach: PathBuf::from("/other/db")
-            }),
+                .map(|workspace| (workspace.reach, workspace.answer)),
+            Some((PathBuf::from("/other/db"), Answer::Brief)),
             "the harness still reads the whole repository"
         );
         assert!(desk.workspace(loose_file.id).is_none());

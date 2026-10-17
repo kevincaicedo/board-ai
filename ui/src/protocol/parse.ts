@@ -54,7 +54,7 @@ import type { UiBatch } from "./generated/UiBatch.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { UiLogLine } from "./generated/UiLogLine.ts";
 import type { View } from "./generated/View.ts";
-import { dropOverlay, sourcesTray } from "./sources.ts";
+import { diagramProvenance, dropOverlay, sourcesTray } from "./sources.ts";
 import { detailAnchor, stagedParts } from "./staged.ts";
 import { labelHint, userShape } from "./yours.ts";
 
@@ -585,9 +585,16 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const title = text(f.title);
     const part = u8(f.part);
     const parts = u8(f.parts);
-    return layer === null || title === null || part === null || parts === null || part > parts
+    // Logs written before a brief's diagrams were staged have no provenance (D-242).
+    const provenance = optional(f.provenance, diagramProvenance);
+    return layer === null ||
+      title === null ||
+      part === null ||
+      parts === null ||
+      part > parts ||
+      provenance === undefined
       ? null
-      : { type: "Diagram", layer, title, part, parts };
+      : { type: "Diagram", layer, title, part, parts, provenance };
   },
   Sources: (f, skips) => {
     const tray = sourcesTray(f.tray, skips);

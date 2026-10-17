@@ -87,3 +87,8 @@ pub const SOURCE_RESOLVES_WAITING_MAX: usize = 4;
 /// A document's digest as a reader reports it; past it the digest is cut at a character and
 /// counted.
 pub const DOCUMENT_DIGEST_MAX_BYTES: usize = 64 * 1024;
+
+/// Research briefs' diagrams read and waiting to be staged (D-242): until the brief's request
+/// goes out, or for a prefetch until the talker uses the brief. Past it the oldest is forgotten
+/// and counted; its brief still reaches the talker, which draws with its own tags.
+pub const BRIEF_DIAGRAMS_WAITING_MAX: usize = 4;

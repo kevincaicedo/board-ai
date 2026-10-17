@@ -659,6 +659,17 @@
   color: var(--ink);
 }
 
+.brief-chip {
+  height: var(--brief-chip-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--brief-chip-padding);
+  border-radius: calc(var(--brief-chip-height) / 2);
+  background: var(--grey-100);
+  font-size: var(--type-brief-chip);
+  color: var(--ink-2);
+}
+
 .depth-chip {
   height: var(--depth-chip-height);
   display: flex;

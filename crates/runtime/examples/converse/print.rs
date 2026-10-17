@@ -539,13 +539,14 @@ fn board_line(at: SessionTime, event: &UiEvent) {
         title,
         part,
         parts,
+        provenance,
     } = event
     {
-        line(
-            at,
-            "diagram",
-            &format!("L{} \"{title}\" part {part} of {parts}", layer.0),
-        );
+        let from = provenance
+            .as_ref()
+            .map_or_else(String::new, |from| format!(" from {from:?}"));
+        let text = format!("L{} \"{title}\" part {part} of {parts}{from}", layer.0);
+        line(at, "diagram", &text);
     } else if let UiEvent::PageTurn { page, title } = event {
         let title = title.as_deref().unwrap_or("(untitled)");
         line(at, "page", &format!("turned to page {page} {title}"));

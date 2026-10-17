@@ -8,13 +8,15 @@
 //!   name. Its kept sources load when it becomes current, and the next session starts with it.
 //! - **Briefs** (`briefs`): research about a shared code source becomes a brief request; a
 //!   cached brief answers at once, its citations are read natively before any chip, and it
-//!   reaches the talker fenced as untrusted harness output (D-107).
+//!   reaches the talker fenced as untrusted harness output (D-107). Its diagram is staged on the
+//!   board as it reaches the talker (`diagrams`, D-242).
 //! - **The tray** follows every change: the core sends it whole.
 
 mod briefs;
+mod diagrams;
 mod voice;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::conversation::ConversationState;
 use crate::effect::Effect;
@@ -44,6 +46,8 @@ pub(super) struct SourceDesk {
     /// Several folders matched a spoken name: the next words pick one.
     choice: Option<Choice>,
     pub briefs: BTreeMap<TaskId, BriefTask>,
+    /// Briefs' diagrams read and waiting to be staged (D-242).
+    diagrams: VecDeque<diagrams::WaitingDiagram>,
     next_request: u32,
 }
 
@@ -115,6 +119,10 @@ impl Core {
                 state,
                 digest,
             } => self.on_document_read(source, state, digest.as_deref()),
+            SourceInput::RepoReads { reads } => {
+                self.config.repo_reads = reads;
+                return;
+            }
         }
         self.show_tray(effects);
     }
@@ -321,6 +329,7 @@ impl Core {
         effects: &mut Vec<Effect>,
     ) {
         let gone = self.sources.shared.set_project(project.clone(), proposed);
+        self.forget_diagrams_of(&gone);
         if !gone.is_empty() {
             effects.push(Effect::Source {
                 source: SourceEffect::Discard { sources: gone },
@@ -465,6 +474,7 @@ impl Core {
         let Some(entry) = self.sources.shared.remove(id) else {
             return;
         };
+        self.forget_diagrams_of(&[id]);
         let running: Vec<TaskId> = self
             .sources
             .briefs

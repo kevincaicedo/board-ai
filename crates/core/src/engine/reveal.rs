@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
 
 use crate::board::staged::metrics::part_area;
-use crate::board::staged::{Reveal, StageRefused};
+use crate::board::staged::{Reveal, StageRefused, Staged};
 use crate::board::{Placed, Rejected, layout};
 use crate::effect::{Dropped, Effect, LogRecord};
 use crate::engine::Core;
@@ -28,7 +28,7 @@ use crate::limits::{
 };
 use crate::narration::diagram::DiagramSpec;
 use crate::narration::ops::NarrationOp;
-use crate::protocol::{Category, UiEvent};
+use crate::protocol::{Category, DiagramProvenance, UiEvent};
 use crate::time::SessionTime;
 
 /// Staged parts named in a notice to the talker; the rest are counted.
@@ -37,6 +37,14 @@ const NOTICE_PARTS_MAX: usize = 24;
 /// Diagrams staged recently, remembered for revealing them whole; older ones are forgotten (a
 /// reply stages a few at most).
 const STAGINGS_KEPT_MAX: usize = 2 * crate::limits::DIAGRAMS_PER_LAYER_MAX;
+
+/// A diagram staged on the active layer.
+pub(super) struct StagedHere {
+    pub staged: Staged,
+    pub layer: LayerId,
+    /// The page turned to make room for it (D-177).
+    pub page_turned: bool,
+}
 
 /// What the engine remembers about staging between a diagram's op and its reveals.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -49,6 +57,9 @@ pub(super) struct Staging {
     revealed: BTreeMap<LayerId, usize>,
     /// A detail layer the user opened by voice that nothing has been drawn on yet (D-188).
     pub(super) voice_detail: Option<LayerId>,
+    /// Research briefs' diagrams staged for the reply being written (D-242): what it leaves
+    /// planned is revealed as it ends.
+    briefs: Vec<(LayerId, ElementId)>,
 }
 
 impl Staging {
@@ -80,6 +91,16 @@ impl Staging {
         *self.revealed.entry(layer).or_default() += parts;
     }
 
+    pub(super) fn brief_staged(&mut self, layer: LayerId, id: ElementId) {
+        if self.briefs.len() < STAGINGS_KEPT_MAX {
+            self.briefs.push((layer, id));
+        }
+    }
+
+    pub(super) fn take_briefs(&mut self) -> Vec<(LayerId, ElementId)> {
+        std::mem::take(&mut self.briefs)
+    }
+
     fn take_revealed(&mut self) -> BTreeMap<LayerId, usize> {
         self.auto.clear();
         self.voice_detail = None;
@@ -95,29 +116,15 @@ impl Core {
         spec: &DiagramSpec,
         effects: &mut Vec<Effect>,
     ) -> bool {
-        let layer = self.thread.active_layer();
-        let main = layer == LayerId::MAIN;
-        let inherited = self.inherited_categories();
-        let staged = match self.board.stage(layer, op, spec, main, &inherited) {
-            Err(StageRefused::NeedsPage) => {
-                // The page has drawing and no room for a map this size (D-177).
-                let _ = self.turn_page(Some(spec.title.clone()), effects);
-                self.board.stage(layer, op, spec, false, &inherited)
-            }
-            other => other,
-        };
-        let staged = match staged {
-            Ok(staged) => staged,
+        let here = match self.stage_here(op, spec, None, effects) {
+            Ok(here) => here,
             Err(refused) => {
                 self.refused_diagram(spec, &refused);
                 return false;
             }
         };
+        let StagedHere { staged, layer, .. } = here;
         if staged.dropped > 0 {
-            effects.push(Effect::Log(LogRecord::Dropped {
-                what: Dropped::DiagramPart,
-                count: staged.dropped,
-            }));
             self.context.notice(format!(
                 "{} parts of your diagram \"{}\" were dropped: an id written twice or already on \
                  the board, a container nested too deep, a fifth category, a connector naming \
@@ -127,17 +134,57 @@ impl Core {
                 crate::limits::DIAGRAM_PARTS_MAX
             ));
         }
-        effects.push(Effect::Ui(UiEvent::Diagram {
-            layer,
-            title: staged.title.clone(),
-            part: 0,
-            parts: staged.sections,
-        }));
         self.staging.staged(layer, op, staged.id.clone());
         if self.staging.take_auto_reveal(op) {
             self.queue_auto_reveal(layer, op, &staged.id);
         }
         true
+    }
+
+    /// Lays `spec` out on the active layer under `op`, nothing drawn yet, and names it in the
+    /// header (with where it came from, when it wasn't the talker's: D-242). On a page with
+    /// drawing and no room for it, the page turns first (D-177). Parts it dropped are counted.
+    pub(super) fn stage_here(
+        &mut self,
+        op: OpId,
+        spec: &DiagramSpec,
+        provenance: Option<DiagramProvenance>,
+        effects: &mut Vec<Effect>,
+    ) -> Result<StagedHere, StageRefused> {
+        let layer = self.thread.active_layer();
+        let main = layer == LayerId::MAIN;
+        let inherited = self.inherited_categories();
+        let mut page_turned = false;
+        let staged = match self.board.stage(layer, op, spec, main, &inherited) {
+            Err(StageRefused::NeedsPage) => {
+                // The page has drawing and no room for a map this size (D-177).
+                page_turned = self.turn_page(Some(spec.title.clone()), effects).is_ok();
+                self.board.stage(layer, op, spec, false, &inherited)
+            }
+            other => other,
+        }?;
+        if staged.dropped > 0 {
+            effects.push(Effect::Log(LogRecord::Dropped {
+                what: Dropped::DiagramPart,
+                count: staged.dropped,
+            }));
+        }
+        if let Some(provenance) = &provenance {
+            self.board
+                .credit_staged(layer, &staged.id, provenance.clone());
+        }
+        effects.push(Effect::Ui(UiEvent::Diagram {
+            layer,
+            title: staged.title.clone(),
+            part: 0,
+            parts: staged.sections,
+            provenance,
+        }));
+        Ok(StagedHere {
+            staged,
+            layer,
+            page_turned,
+        })
     }
 
     /// On a detail layer, the categories of the diagrams it drills into: they keep their colours.
@@ -159,15 +206,10 @@ impl Core {
     }
 
     fn refused_diagram(&mut self, spec: &DiagramSpec, refused: &StageRefused) {
-        let why = match refused {
-            StageRefused::LayerMissing => "the layer it was for has closed",
-            StageRefused::Empty => "none of its parts could be kept",
-            StageRefused::Full => "this layer holds as many diagrams as it can; turn the page",
-            StageRefused::NeedsPage => "there was no room for it",
-        };
         self.context.notice(format!(
-            "Your diagram \"{}\" was not staged: {why}.",
-            spec.title
+            "Your diagram \"{}\" was not staged: {}.",
+            spec.title,
+            not_staged_because(refused)
         ));
     }
 
@@ -313,6 +355,7 @@ impl Core {
                 title: diagram.title.clone(),
                 part: diagram.part_shown,
                 parts: diagram.sections,
+                provenance: diagram.provenance.clone(),
             }));
         }
         self.staging
@@ -431,5 +474,15 @@ impl Core {
                 effects.push(Effect::Ui(event));
             }
         }
+    }
+}
+
+/// Why a diagram wasn't staged, as the talker is told.
+pub(super) fn not_staged_because(refused: &StageRefused) -> &'static str {
+    match refused {
+        StageRefused::LayerMissing => "the layer it was for has closed",
+        StageRefused::Empty => "none of its parts could be kept",
+        StageRefused::Full => "this layer holds as many diagrams as it can; turn the page",
+        StageRefused::NeedsPage => "there was no room for it",
     }
 }

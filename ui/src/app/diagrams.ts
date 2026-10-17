@@ -5,6 +5,7 @@
 
 import { signal } from "@preact/signals";
 import type { DetailAnchor } from "../protocol/generated/DetailAnchor.ts";
+import type { DiagramProvenance } from "../protocol/generated/DiagramProvenance.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 
 /** Levels a drill-down can reach: the main board plus the core's detour depth (3). */
@@ -18,6 +19,8 @@ export interface DiagramHeader {
   readonly title: string;
   readonly part: number;
   readonly parts: number;
+  /** Where it came from when a research brief drew it (D-242). */
+  readonly provenance: DiagramProvenance | null;
   readonly at: number;
 }
 
@@ -36,6 +39,8 @@ export type HeaderView =
       readonly title: string;
       /** "part 3 of 4", or null before any part is drawn. */
       readonly part: string | null;
+      /** The chip above a brief's diagram ("from Claude Code's brief · 23 files read"). */
+      readonly credit: string | null;
     }
   | {
       readonly kind: "detail";
@@ -43,10 +48,31 @@ export type HeaderView =
       readonly crumbs: readonly string[];
       /** "depth 2 of 4". */
       readonly depth: string;
+      /** The chip for the diagram on the layer in front, when a brief drew it. */
+      readonly credit: string | null;
     };
 
 /** The root of a drill-down's path when the main board has no staged diagram. */
 export const MAIN_BOARD_CRUMB = "Main board";
+
+/**
+ * The chip's words: who read the code, and how much (D-242). A brief from the cache was read in
+ * an earlier session; a brief that read no file says only whose it is.
+ */
+export function creditLine(provenance: DiagramProvenance | null): string | null {
+  if (provenance === null) {
+    return null;
+  }
+  const whose = `from ${provenance.reader}'s brief`;
+  const read = provenance.files_read;
+  if (read === null) {
+    return `${whose} · read earlier`;
+  }
+  if (read === 0) {
+    return whose;
+  }
+  return `${whose} · ${read === 1 ? "1 file" : `${read} files`} read`;
+}
 
 /** The header for these diagrams and open details, or null when there is nothing to say. */
 export function headerView(
@@ -57,10 +83,13 @@ export function headerView(
   const main = headers.find((header) => header.layer === 0) ?? null;
   if (open.length > 0) {
     const crumbs = [main?.title ?? MAIN_BOARD_CRUMB, ...open.map((detail) => detail.title)];
+    const front = open.at(-1)?.layer;
+    const inFront = headers.find((header) => header.layer === front) ?? null;
     return {
       kind: "detail",
       crumbs,
       depth: `depth ${Math.min(open.length + 1, DETAIL_LEVELS_MAX)} of ${DETAIL_LEVELS_MAX}`,
+      credit: creditLine(inFront?.provenance ?? null),
     };
   }
   if (main === null) {
@@ -70,6 +99,7 @@ export function headerView(
     kind: "diagram",
     title: main.title,
     part: main.part === 0 ? null : `part ${main.part} of ${main.parts}`,
+    credit: creditLine(main.provenance),
   };
 }
 
@@ -90,6 +120,7 @@ export class DiagramStore {
           title: event.title,
           part: event.part,
           parts: event.parts,
+          provenance: event.provenance,
           at,
         };
         this.headers.value = [

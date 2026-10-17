@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId, SurfaceId};
+pub use crate::sources::DiagramProvenance;
 use crate::sources::tray::{DropOverlay, SourceAction, SourcesTray};
 use crate::time::SessionTime;
 use crate::views::View;
@@ -205,11 +206,15 @@ pub enum UiEvent {
     /// 0 when it is laid out and nothing of it is drawn yet. Sent when it is staged and when the
     /// narration moves to another part. A detail layer's diagram names its own parts; its title
     /// in the breadcrumbs is the layer's (`LayerPush.title`).
+    ///
+    /// `provenance`: a research brief's diagram names its reader (D-242), for the chip above it;
+    /// `None` for the talker's own, and in logs written before it.
     Diagram {
         layer: LayerId,
         title: String,
         part: u8,
         parts: u8,
+        provenance: Option<DiagramProvenance>,
     },
     /// The Sources tray (artboard 14), whole, each time it changes: this session's sources, the
     /// project's, their states, and the files the harness is reading (D-184).

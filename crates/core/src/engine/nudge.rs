@@ -37,7 +37,8 @@ const REPO_READS: &[&str] = &["read_file", "list_dir", "search_code"];
 /// Whether the session's talker requests offer the repo reads over an open repo (D-232). The
 /// runtime knows (the folders it opened, the tools it sends); only then is a read the speech
 /// announced asked for as a call, since otherwise there is nothing it could have called.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RepoReads {
     /// Every request offers `read_file`, `list_dir` and `search_code`, and a folder is open.
     Offered,

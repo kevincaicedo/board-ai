@@ -5,6 +5,7 @@
 
 import { useMemo, useRef, useState } from "preact/hooks";
 import { styleWriter, useFrame, useRuntime } from "../app/hooks.ts";
+import type { Runtime } from "../app/runtime.ts";
 import { viewVisible } from "../app/views.ts";
 import type { ChooseWhat } from "../protocol/generated/ChooseWhat.ts";
 import type { SourceAction } from "../protocol/generated/SourceAction.ts";
@@ -18,12 +19,32 @@ import {
   pinLabel,
   rowsOf,
   stateLine,
+  type TrayCorner,
   type TrayTab,
   tabLabels,
   toneOf,
-  trayPresence,
-  trayWidth,
+  trayCorner,
 } from "./model.ts";
+
+/** Where the tray is this frame: the stage header keeps clear of it (LLD §4). */
+export function trayCornerAt(runtime: Runtime, at: number): TrayCorner {
+  const store = runtime.scene.sources;
+  return trayCorner(
+    {
+      open: store.tray.value?.open ?? false,
+      openAt: store.openAt.value,
+      closedAt: store.closedAt.value,
+      at,
+      stageWidth: runtime.stage.width,
+      columnOpen: runtime.scene.store.column.value.some((item) => item.leftAt === null),
+      viewOpen: runtime.scene.views.entries.value.some((entry) =>
+        viewVisible(entry, at, runtime.viewDurations),
+      ),
+      replay: runtime.replay !== null,
+    },
+    runtime.tokens,
+  );
+}
 
 function useSend(): (action: SourceAction) => void {
   const runtime = useRuntime();
@@ -159,22 +180,10 @@ function TrayPanel({ tray }: { tray: SourcesTray }) {
   const panelRef = useRef<HTMLElement>(null);
   const write = useMemo(styleWriter, []);
   useFrame((at) => {
-    const tokens = runtime.tokens;
-    const presence = trayPresence(
-      store.openAt.value,
-      store.closedAt.value,
-      at,
-      tokens.durationSceneMs,
-      tokens.durationStandardMs,
-    );
-    const viewOpen = runtime.scene.views.entries.value.some((entry) =>
-      viewVisible(entry, at, runtime.viewDurations),
-    );
-    const columnOpen = runtime.scene.store.column.value.some((item) => item.leftAt === null);
-    const width = trayWidth(runtime.stage.width, columnOpen, viewOpen, tokens);
+    const { presence, width } = trayCornerAt(runtime, at);
     const panel = panelRef.current;
     write(panel, "--tray-presence", presence.toFixed(3));
-    write(panel, "--tray-live-width", `${width ?? tokens.trayWidth}px`);
+    write(panel, "--tray-live-width", `${width ?? runtime.tokens.trayWidth}px`);
     write(panel, "visibility", width === null || presence <= 0 ? "hidden" : "visible");
   });
   return (

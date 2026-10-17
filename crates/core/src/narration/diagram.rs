@@ -15,7 +15,8 @@
 //! ```
 
 use crate::ids::ElementId;
-use crate::narration::ops::IndexLabels;
+use crate::narration::ops::{IndexLabels, NarrationOp};
+use crate::narration::{NarrationOutput, NarrationStream};
 use crate::protocol::{LineStyle, NodeShape};
 
 /// A diagram spec, its parts in the order they were written.
@@ -30,6 +31,56 @@ pub struct DiagramSpec {
     /// Tags inside the block that were dropped (malformed, unknown inside a diagram, or past a
     /// limit). The stream counts each where it drops it; this is the spec's own tally.
     pub dropped: u32,
+}
+
+/// A `<diagram>` block written outside the talker's stream (a research brief's, D-242), read by
+/// the narration's own parser (D-234): the same tags, the same bounds, the same drops.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrittenDiagram {
+    /// The first block's spec; `None` when nothing in the text could be staged.
+    pub spec: Option<DiagramSpec>,
+    /// Tags dropped: malformed, misplaced inside the block, past a bound, and any tag outside
+    /// the first block (only a block is a diagram here).
+    pub dropped: u32,
+}
+
+impl WrittenDiagram {
+    /// Reads `text` (bounded by its writer, `BRIEF_DIAGRAM_MAX_BYTES` for a brief) as narration
+    /// and keeps the first block. Text outside a block is no speech here and is ignored.
+    #[must_use]
+    pub fn read(text: &str) -> Self {
+        let mut stream = NarrationStream::new(0);
+        let mut out = Vec::new();
+        stream.push(text, &mut out);
+        stream.finish(&mut out);
+        let mut read = Self {
+            spec: None,
+            dropped: 0,
+        };
+        for output in out {
+            match output {
+                NarrationOutput::Clause(_) => {}
+                NarrationOutput::Dropped(_) => read.dropped += 1,
+                NarrationOutput::Op(op) => {
+                    let block = if let NarrationOp::Diagram(spec) = op.op {
+                        Some(*spec)
+                    } else if let NarrationOp::Detail {
+                        spec: Some(spec), ..
+                    } = op.op
+                    {
+                        Some(*spec)
+                    } else {
+                        None
+                    };
+                    match block {
+                        Some(spec) if read.spec.is_none() => read.spec = Some(spec),
+                        Some(_) | None => read.dropped += 1,
+                    }
+                }
+            }
+        }
+        read
+    }
 }
 
 /// One part and the container it was written `in`, as the talker named it. The board resolves

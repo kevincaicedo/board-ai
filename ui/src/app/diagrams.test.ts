@@ -7,9 +7,16 @@ import { emptyCard } from "../canvas/detourCard.ts";
 import { leadDecision, Presence } from "../canvas/presence.ts";
 import { boardPush } from "../canvas/push.ts";
 import type { DetailAnchor } from "../protocol/generated/DetailAnchor.ts";
+import type { DiagramProvenance } from "../protocol/generated/DiagramProvenance.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import { readTokens, tokenSourceFromCss } from "../styles/tokens.ts";
-import { DETAIL_LEVELS_MAX, DiagramStore, headerView, MAIN_BOARD_CRUMB } from "./diagrams.ts";
+import {
+  creditLine,
+  DETAIL_LEVELS_MAX,
+  DiagramStore,
+  headerView,
+  MAIN_BOARD_CRUMB,
+} from "./diagrams.ts";
 import { SessionStore } from "./session.ts";
 
 const tokens = readTokens(
@@ -29,13 +36,23 @@ const push = (layer: number, title: string, on = 0): UiEvent => ({
   question: null,
   anchor: { ...anchor, layer: on },
 });
-const header = (layer: number, part: number): UiEvent => ({
+const header = (
+  layer: number,
+  part: number,
+  provenance: DiagramProvenance | null = null,
+): UiEvent => ({
   type: "Diagram",
   layer,
   title: "inf-alloc · memory allocation",
   part,
   parts: 4,
+  provenance,
 });
+const fromBrief: DiagramProvenance = {
+  reader: "Claude Code",
+  source: "inf-alloc",
+  files_read: 23,
+};
 
 test("the header names the diagram and its part, then the path while drilling down", () => {
   const store = new DiagramStore();
@@ -45,12 +62,14 @@ test("the header names the diagram and its part, then the path while drilling do
     kind: "diagram",
     title: "inf-alloc · memory allocation",
     part: null,
+    credit: null,
   });
   store.apply(header(0, 3), 100);
   assert.deepEqual(headerView(store.headers.value, store.details.value), {
     kind: "diagram",
     title: "inf-alloc · memory allocation",
     part: "part 3 of 4",
+    credit: null,
   });
   store.apply(push(1, "Arena"), 200);
   store.apply(header(1, 1), 250);
@@ -58,6 +77,7 @@ test("the header names the diagram and its part, then the path while drilling do
     kind: "detail",
     crumbs: ["inf-alloc · memory allocation", "Arena"],
     depth: `depth 2 of ${DETAIL_LEVELS_MAX}`,
+    credit: null,
   });
   store.apply(push(2, "Free list", 1), 300);
   assert.deepEqual(headerView(store.headers.value, store.details.value)?.kind, "detail");
@@ -67,6 +87,7 @@ test("the header names the diagram and its part, then the path while drilling do
     kind: "diagram",
     title: "inf-alloc · memory allocation",
     part: "part 3 of 4",
+    credit: null,
   });
   // A page turn leaves a fresh page with no diagram; the session's end clears everything.
   store.apply({ type: "PageTurn", page: 2, title: null }, 600);
@@ -76,6 +97,7 @@ test("the header names the diagram and its part, then the path while drilling do
     kind: "detail",
     crumbs: [MAIN_BOARD_CRUMB, "Region"],
     depth: `depth 2 of ${DETAIL_LEVELS_MAX}`,
+    credit: null,
   });
   store.apply({ type: "SessionEnd" }, 800);
   assert.equal(headerView(store.headers.value, store.details.value), null);
@@ -85,6 +107,34 @@ test("the header names the diagram and its part, then the path while drilling do
     store.apply({ type: "LayerPop", layer }, layer * 100 + 50);
   }
   assert.ok(store.details.value.length <= DETAIL_LEVELS_MAX + 1);
+});
+
+test("a brief's diagram names who read the code, on the board and on its detail layer", () => {
+  assert.equal(creditLine(null), null);
+  assert.equal(creditLine(fromBrief), "from Claude Code's brief · 23 files read");
+  assert.equal(
+    creditLine({ ...fromBrief, files_read: 1 }),
+    "from Claude Code's brief · 1 file read",
+  );
+  assert.equal(creditLine({ ...fromBrief, files_read: 0 }), "from Claude Code's brief");
+  assert.equal(
+    creditLine({ ...fromBrief, files_read: null }),
+    "from Claude Code's brief · read earlier",
+  );
+  const store = new DiagramStore();
+  store.apply(header(0, 0, fromBrief), 0);
+  assert.equal(
+    headerView(store.headers.value, store.details.value)?.credit,
+    "from Claude Code's brief · 23 files read",
+  );
+  // The detail layer in front shows its own diagram's chip; the board's stays in the crumbs.
+  store.apply(push(1, "Arena"), 100);
+  assert.equal(headerView(store.headers.value, store.details.value)?.credit, null);
+  store.apply(header(1, 0, { ...fromBrief, files_read: 4 }), 150);
+  assert.equal(
+    headerView(store.headers.value, store.details.value)?.credit,
+    "from Claude Code's brief · 4 files read",
+  );
 });
 
 test("a detour's push carries no detail, so the header stays the diagram's", () => {

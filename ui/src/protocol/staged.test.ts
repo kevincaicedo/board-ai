@@ -119,7 +119,20 @@ test("a detail layer's anchor, a close-up and a diagram header parse; bad ones d
   assert.deepEqual(parseUiEvent(camera), camera);
   assert.equal(parseUiEvent({ ...camera, enlarge: "yes" }), null);
   const header = { type: "Diagram", layer: 0, title: "inf-alloc", part: 3, parts: 4 };
-  assert.deepEqual(parseUiEvent(header), header);
+  // A log from before a brief's diagrams carried their provenance reads it as null (D-242).
+  assert.deepEqual(parseUiEvent(header), { ...header, provenance: null });
   assert.equal(parseUiEvent({ ...header, part: 5 }), null);
   assert.equal(parseUiEvent({ ...header, title: 7 }), null);
+  const briefs = {
+    ...header,
+    provenance: { reader: "Claude Code", source: "inf-alloc", files_read: 23 },
+  };
+  assert.deepEqual(parseUiEvent(briefs), briefs);
+  const cached = { ...header, provenance: { ...briefs.provenance, files_read: null } };
+  assert.deepEqual(parseUiEvent(cached), cached);
+  assert.equal(
+    parseUiEvent({ ...header, provenance: { ...briefs.provenance, files_read: -1 } }),
+    null,
+  );
+  assert.equal(parseUiEvent({ ...header, provenance: { reader: "Claude Code" } }), null);
 });

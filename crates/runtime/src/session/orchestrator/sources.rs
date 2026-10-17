@@ -127,10 +127,19 @@ impl Orchestrator {
         }
     }
 
-    /// The repo tools read the code folders and every readable source.
+    /// The repo tools read the code folders and every readable source. When that turns the
+    /// repo reads on or off (the first code source shared with no code folder open, or the
+    /// last one let go), the core is told, for D-232's retry (D-244).
     fn refresh_roots(&mut self) {
         match self.desk.roots() {
-            Ok(roots) => self.work.set_tools(RepoTools::new(roots)),
+            Ok(roots) => {
+                let before = self.work.repo_reads();
+                self.work.set_tools(RepoTools::new(roots));
+                let reads = self.work.repo_reads();
+                if reads != before {
+                    self.answer(SourceInput::RepoReads { reads });
+                }
+            }
             Err(error) => {
                 tracing::warn!(detail = %error.message, "the sources could not be opened")
             }

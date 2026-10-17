@@ -213,3 +213,77 @@ export function trayPresence(
   }
   return enter * (1 - easeOut(ramp(at, closedAt, closedAt + exitMs)));
 }
+
+/** What holds the stage's top-left corner this frame: the tray, its button, or neither. */
+export interface TrayCorner {
+  /** The tray button shows (live, with the tray closed). */
+  readonly buttonShown: boolean;
+  /** The tray's width on this stage, or `null` while it is hidden (`trayWidth`). */
+  readonly width: number | null;
+  /** 0 → 1 as the tray opens, back as it closes (`trayPresence`). */
+  readonly presence: number;
+}
+
+/** What the tray's corner depends on, from the stage and the sources store. */
+export interface TrayCornerInput {
+  readonly open: boolean;
+  readonly openAt: number | null;
+  readonly closedAt: number | null;
+  readonly at: number;
+  readonly stageWidth: number;
+  readonly columnOpen: boolean;
+  readonly viewOpen: boolean;
+  /** A replay has no tray button. */
+  readonly replay: boolean;
+}
+
+export interface TrayCornerTokens extends TrayTokens {
+  readonly durationSceneMs: number;
+  readonly durationStandardMs: number;
+}
+
+/** The tray's place this frame, as the tray itself draws it. */
+export function trayCorner(input: TrayCornerInput, tokens: TrayCornerTokens): TrayCorner {
+  return {
+    buttonShown: !input.replay && !input.open,
+    width: trayWidth(input.stageWidth, input.columnOpen, input.viewOpen, tokens),
+    presence: trayPresence(
+      input.openAt,
+      input.closedAt,
+      input.at,
+      tokens.durationSceneMs,
+      tokens.durationStandardMs,
+    ),
+  };
+}
+
+/** Sizes the stage header's place needs (from tokens.css). */
+export interface HeaderTokens {
+  readonly trayLeft: number;
+  readonly sizeControl: number;
+  readonly stageHeaderLeft: number;
+  readonly stageHeaderTrayGap: number;
+  /** How far into the tray's entrance the header is already beside it (0–1). */
+  readonly stageHeaderTrayLead: number;
+}
+
+/**
+ * Where the stage header starts (15's diagram title, 15b's breadcrumbs): at its own place, top
+ * left, unless the Sources tray or its button holds that corner (14); then right of them by the
+ * gap. The tray never moves for the header. While the tray eases in or out the header goes
+ * ahead of it: beside the tray by `stageHeaderTrayLead` of its entrance, and back only in the
+ * last part of its exit, so the two never overlap once the tray is more than faintly there.
+ */
+export function headerLeft(corner: TrayCorner, tokens: HeaderTokens): number {
+  const own = tokens.stageHeaderLeft;
+  const button = corner.buttonShown
+    ? Math.max(own, tokens.trayLeft + tokens.sizeControl + tokens.stageHeaderTrayGap)
+    : own;
+  if (corner.width === null || corner.presence <= 0) {
+    return button;
+  }
+  const beside = Math.max(button, tokens.trayLeft + corner.width + tokens.stageHeaderTrayGap);
+  const lead = tokens.stageHeaderTrayLead > 0 ? tokens.stageHeaderTrayLead : 1;
+  const ahead = Math.min(1, corner.presence / lead);
+  return button + (beside - button) * ahead;
+}

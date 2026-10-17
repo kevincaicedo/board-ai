@@ -12,12 +12,15 @@ import {
   dropTitle,
   firstTab,
   footerLine,
+  headerLeft,
   pinLabel,
   rowsOf,
   SourcesStore,
   stateLine,
+  type TrayCorner,
   tabLabels,
   toneOf,
+  trayCorner,
   trayPresence,
   trayWidth,
 } from "./model.ts";
@@ -244,5 +247,90 @@ test("the tray and the overlay parse at the boundary, a bad row skipped", () => 
       drop: { title: "a", refused: null, half: "Up", project: "p" },
     }),
     null,
+  );
+});
+
+/**
+ * Whether a stage header starting at `left` overlaps what holds the top-left corner. Both sit
+ * in the same band at the top, so only their horizontal extents matter; the tray's box is where
+ * it is drawn this frame, shifted in from the left as it eases in (`--tray-shift-in`).
+ */
+function overlaps(corner: TrayCorner, left: number, shiftIn: number): boolean {
+  const button = corner.buttonShown && left < tokens.trayLeft + tokens.sizeControl;
+  const shown = corner.width !== null && corner.presence > 0;
+  const trayRight =
+    corner.width === null ? 0 : tokens.trayLeft + corner.width - (1 - corner.presence) * shiftIn;
+  return button || (shown && left < trayRight);
+}
+
+test("the stage header never overlaps the tray or its button (LLD §4)", () => {
+  // The tray's own entrance shift, from its block of tokens.css (not a TypeScript token).
+  const css = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");
+  const shiftIn = Number(/--tray-shift-in:\s*(\d+)px/.exec(css)?.[1]);
+  assert.ok(shiftIn > 0);
+  const at = (presence: number, width: number | null, buttonShown: boolean): TrayCorner => ({
+    buttonShown,
+    width,
+    presence,
+  });
+  // The planted violation: the header at its canvas place, under an open tray or beside the
+  // button, overlaps; the check sees it.
+  assert.ok(overlaps(at(1, tokens.trayWidth, false), tokens.stageHeaderLeft, shiftIn));
+  assert.ok(overlaps(at(0, tokens.trayWidth, true), tokens.stageHeaderLeft, shiftIn));
+  // Nothing in the corner (a replay, the tray closed): the header keeps its place.
+  assert.equal(
+    headerLeft({ buttonShown: false, width: tokens.trayWidth, presence: 0 }, tokens),
+    tokens.stageHeaderLeft,
+  );
+  for (let stageWidth = 960; stageWidth <= 2000; stageWidth += 20) {
+    for (const columnOpen of [false, true]) {
+      for (const viewOpen of [false, true]) {
+        for (const replay of [false, true]) {
+          for (const open of [false, true]) {
+            let previous = Number.NEGATIVE_INFINITY;
+            for (let step = 0; step <= 20; step += 1) {
+              const ms = step * 50;
+              const corner = trayCorner(
+                {
+                  open,
+                  openAt: open ? 0 : -10_000,
+                  closedAt: open ? null : 0,
+                  at: ms,
+                  stageWidth,
+                  columnOpen,
+                  viewOpen,
+                  replay,
+                },
+                tokens,
+              );
+              const left = headerLeft(corner, tokens);
+              const label = `${stageWidth} column ${columnOpen} view ${viewOpen} replay ${replay} open ${open} at ${ms}`;
+              // Settled, or once the tray is more than faintly there: never over it.
+              if (corner.presence >= tokens.stageHeaderTrayLead || corner.presence === 0) {
+                assert.ok(!overlaps(corner, left, shiftIn), label);
+              }
+              assert.ok(left >= tokens.stageHeaderLeft, label);
+              // It follows the tray without jumping back: rightward as it opens, leftward as it
+              // closes.
+              if (open) {
+                assert.ok(left >= previous, label);
+              } else if (previous !== Number.NEGATIVE_INFINITY) {
+                assert.ok(left <= previous, label);
+              }
+              previous = left;
+            }
+          }
+        }
+      }
+    }
+  }
+  // Beside the open tray by the gap; beside the button by the same gap.
+  assert.equal(
+    headerLeft({ buttonShown: false, width: tokens.trayWidth, presence: 1 }, tokens),
+    tokens.trayLeft + tokens.trayWidth + tokens.stageHeaderTrayGap,
+  );
+  assert.equal(
+    headerLeft({ buttonShown: true, width: tokens.trayWidth, presence: 0 }, tokens),
+    tokens.trayLeft + tokens.sizeControl + tokens.stageHeaderTrayGap,
   );
 });

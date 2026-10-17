@@ -14,6 +14,7 @@ import {
   text,
   u32,
 } from "./fields.ts";
+import type { DiagramProvenance } from "./generated/DiagramProvenance.ts";
 import type { DocumentFormat } from "./generated/DocumentFormat.ts";
 import type { DropHalf } from "./generated/DropHalf.ts";
 import type { DropOverlay } from "./generated/DropOverlay.ts";
@@ -124,4 +125,15 @@ export function dropOverlay(value: unknown): DropOverlay | null {
   return title === null || refused === undefined || half === null || project === null
     ? null
     : { title, refused, half, project };
+}
+
+/** Where a staged diagram came from (D-242): a research brief's reader, source and reads. */
+export function diagramProvenance(value: unknown): DiagramProvenance | null {
+  const f = fields(value);
+  const reader = text(f?.reader);
+  const source = text(f?.source);
+  const read = nullable(f?.files_read, u32);
+  return reader === null || source === null || read === undefined
+    ? null
+    : { reader, source, files_read: read };
 }

@@ -27,8 +27,8 @@ use std::time::Duration;
 use boardai_core::{CoreConfig, MicMode};
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, HarnessPool,
-    HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
+    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, DefaultFolder,
+    HarnessPool, HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
 };
 use boardai_runtime::limits::STORE_SHUTDOWN_TIMEOUT_MS;
 use boardai_runtime::llm::LlmProvider;
@@ -471,9 +471,10 @@ fn repo_tools(code_roots: &[PathBuf]) -> Opened {
 }
 
 /// A harness pool, with its name, when a harness is installed. Its default folder is the first
-/// code root; with none, only a shared source's research runs (in that source, D-184).
+/// code root, read only inside its repository (D-243); with none, only a shared source's
+/// research runs (in that source, D-184).
 fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<(HarnessPool, String)> {
-    let repo = repo.cloned();
+    let repo = repo.map(|folder| DefaultFolder::open(folder.clone(), &home_folder()));
     let found = discover_from_environment();
     let (claude, pi) = match settings.harness.kind {
         HarnessChoice::Auto => (found.claude_code, found.pi),
@@ -492,6 +493,7 @@ fn harness(settings: &Settings, repo: Option<&PathBuf>) -> Option<(HarnessPool, 
                     .research_model
                     .clone()
                     .unwrap_or_else(|| DEFAULT_RESEARCH_MODEL.to_owned()),
+                model: settings.harness.model.clone(),
             })),
             "Claude Code",
         ),

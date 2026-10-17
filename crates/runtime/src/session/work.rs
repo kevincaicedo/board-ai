@@ -122,6 +122,12 @@ impl Work {
         self.tools = tools;
     }
 
+    /// What the talker's requests offer over the current roots (D-232).
+    #[must_use]
+    pub(crate) fn repo_reads(&self) -> boardai_core::RepoReads {
+        self.tools.repo_reads()
+    }
+
     #[must_use]
     pub(crate) fn has_harness(&self) -> bool {
         self.harness.is_some()

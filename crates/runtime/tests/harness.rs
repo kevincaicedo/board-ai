@@ -14,7 +14,8 @@ use boardai_core::harness::{HarnessEvent, HarnessFailure, HarnessKind, HarnessTa
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::harness::{
     Answer, ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL,
-    HarnessPool, HarnessStream, HarnessTimeouts, PiConfig, PiHarness, Workspace, discover,
+    DefaultFolder, HarnessPool, HarnessStream, HarnessTimeouts, PiConfig, PiHarness, Workspace,
+    discover,
 };
 use futures_util::StreamExt;
 use support::{TempFolder, fixture, fixture_path};
@@ -54,19 +55,28 @@ impl Fake {
         ]
     }
 
+    /// The repo, not inside a repository: it is its own reach.
+    fn default_folder(&self) -> DefaultFolder {
+        DefaultFolder {
+            folder: self.repo.clone(),
+            reach: std::fs::canonicalize(&self.repo).expect("canonical"),
+        }
+    }
+
     fn claude(&self, fixture_name: &str, mode: &str) -> ClaudeCodeHarness {
         ClaudeCodeHarness::new(ClaudeCodeConfig {
             program: self.program.clone(),
-            repo: Some(self.repo.clone()),
+            repo: Some(self.default_folder()),
             environment: self.environment(fixture_name, mode),
             research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+            model: None,
         })
     }
 
     fn pi(&self, fixture_name: &str, mode: &str) -> PiHarness {
         PiHarness::new(PiConfig {
             program: self.program.clone(),
-            repo: Some(self.repo.clone()),
+            repo: Some(self.default_folder()),
             environment: self.environment(fixture_name, mode),
         })
     }
@@ -133,13 +143,17 @@ async fn claude_research_maps_stream_json_to_events() {
         "-p\n--input-format\nstream-json\n--output-format\nstream-json\n--verbose\n",
         "--include-partial-messages\n--session-id\n",
         "--permission-prompts\nnone\n",
-        "--permission-mode\nplan\n--allowedTools\nRead,Grep,Glob\n",
+        "\n--permission-mode\ndontAsk\n--tools\nRead,Grep,Glob\n--strict-mcp-config\n",
+        "\n--setting-sources\nuser\n--settings\n",
     ] {
         assert!(
             arguments.contains(expected),
             "{expected:?} in {arguments:?}"
         );
     }
+    // Spoken research is held to the opened folder like a brief (D-243), on the default model.
+    assert!(!arguments.contains("--allowedTools"), "{arguments}");
+    assert!(!arguments.contains("--model"), "{arguments}");
     let stdin: serde_json::Value =
         serde_json::from_str(&fake.recorded("stdin")).expect("json line");
     assert_eq!(stdin["type"], "user");
@@ -163,9 +177,8 @@ async fn a_brief_runs_in_the_sources_folder_and_answers_the_shape() {
     let reach = std::fs::canonicalize(&mono).expect("canonical");
     let workspace = Workspace {
         folder: source.clone(),
-        answer: Answer::Brief {
-            reach: reach.clone(),
-        },
+        reach: reach.clone(),
+        answer: Answer::Brief,
     };
     let pool = HarnessPool::new(
         Arc::new(fake.claude("claude/brief.jsonl", "replay")),
@@ -224,6 +237,7 @@ async fn a_harness_without_a_folder_refuses_a_task_with_none() {
         repo: None,
         environment: fake.environment("claude/research.jsonl", "replay"),
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+        model: None,
     });
     let events = collect(harness.run(research("q"), CancelToken::new())).await;
     assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);
@@ -304,9 +318,13 @@ async fn a_crash_keeps_stderr_written_after_exit() {
 async fn a_missing_program_is_not_installed() {
     let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
         program: "/nonexistent/claude".into(),
-        repo: Some(std::env::temp_dir()),
+        repo: Some(DefaultFolder {
+            folder: std::env::temp_dir(),
+            reach: std::env::temp_dir(),
+        }),
         environment: Vec::new(),
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+        model: None,
     });
     let events = collect(harness.run(research("q"), CancelToken::new())).await;
     assert_eq!(failure(&events).0, HarnessFailure::NotInstalled);

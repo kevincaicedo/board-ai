@@ -258,6 +258,16 @@ impl Core {
         }
     }
 
+    /// Whether a call's result is still held open: its reply goes on and waits for it.
+    pub(in crate::engine) fn holds_call(&self, id: &ToolCallId) -> bool {
+        self.reply.as_ref().is_some_and(|reply| {
+            reply
+                .tools
+                .iter()
+                .any(|slot| slot.id == *id && slot.result.is_none())
+        })
+    }
+
     /// Answers a call whose result the core held open (a research call waiting for a cached
     /// brief, D-223). False when the reply that made it is gone.
     pub(in crate::engine) fn answer_held_call(

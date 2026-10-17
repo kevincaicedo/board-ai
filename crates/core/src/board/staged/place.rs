@@ -10,7 +10,7 @@ use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId};
 use crate::limits::{DIAGRAMS_PER_LAYER_MAX, STAGED_PAGE_HEIGHT_UNITS, STAGED_PAGE_WIDTH_UNITS};
 use crate::narration::diagram::DiagramSpec;
-use crate::protocol::Category;
+use crate::protocol::{Category, DiagramProvenance};
 
 /// Space kept between a diagram and what was already on the layer.
 const DIAGRAM_MARGIN: i32 = 80;
@@ -83,6 +83,26 @@ impl Board {
             sections,
             dropped,
         })
+    }
+
+    /// Records where staged diagram `id` came from (D-242): its header carries it from then on.
+    pub fn credit_staged(
+        &mut self,
+        layer_id: LayerId,
+        id: &ElementId,
+        provenance: DiagramProvenance,
+    ) {
+        let Ok(layer) = self.layer_mut(layer_id) else {
+            return;
+        };
+        if let Some(diagram) = layer
+            .staged
+            .diagrams
+            .iter_mut()
+            .find(|diagram| diagram.id == *id)
+        {
+            diagram.provenance = Some(provenance);
+        }
     }
 }
 

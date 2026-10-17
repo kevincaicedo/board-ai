@@ -432,6 +432,15 @@
   --stage-header-top: 22px;
   --stage-header-gap: 8px;
   --type-stage-header: 13px;
+  /* Not on the canvas yet (14 and 15 each have the top left to themselves): with the Sources
+     tray or its button in that corner the header starts right of them by this gap, and is beside
+     the tray by this share of the tray's entrance (LLD §4). */
+  --stage-header-tray-gap: 24px;
+  --stage-header-tray-lead: 0.25;
+  /* The chip naming a brief's diagram's reader (15, D-242): the depth chip's shape. */
+  --brief-chip-height: 22px;
+  --brief-chip-padding: 8px;
+  --type-brief-chip: 11px;
   --back-out-height: 24px;
   --back-out-padding: 10px;
   --type-back-out: 12px;

@@ -110,6 +110,7 @@ fn configure(setup: &Setup, readers: Vec<Arc<dyn SourceReader>>) -> impl FnOnce(
             repo: None,
             environment,
             research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+            model: None,
         });
         parts.harness = Some(HarnessPool::new(
             Arc::new(claude),
@@ -242,6 +243,77 @@ async fn a_shared_document_goes_to_its_reader_and_the_tray_follows() {
             .any(|text| text.contains("<task-output>\n# Greeter\nOne section.")),
         "the digest went to the talker fenced"
     );
+    let _ = close(harness).await;
+    let _ = std::fs::remove_dir_all(&setup.root);
+}
+
+/// D-232's retry needs the repo reads offered: a session with no code folder offers none, and
+/// sharing a code folder makes it readable, so the orchestrator tells the core (D-244). A
+/// document adds no roots and changes nothing; letting the folder go turns them off again.
+#[tokio::test]
+async fn sharing_a_code_folder_with_none_open_offers_the_repo_reads() {
+    use boardai_core::RepoReads;
+    use boardai_core::input::Input;
+    use boardai_core::sources::SourceInput;
+
+    let setup = setup("repo-reads");
+    let talker = Arc::new(ScriptedTalker::default());
+    let home = setup.home.clone();
+    let harness = start_configured(Arc::clone(&talker), false, None, move |parts| {
+        parts.sources = SourceParts::in_memory(home);
+    });
+    let recorder = Arc::clone(&harness.recorder);
+    let told = move || -> Vec<RepoReads> {
+        recorder
+            .inputs()
+            .iter()
+            .filter_map(|input| {
+                if let Input::Source {
+                    source: SourceInput::RepoReads { reads },
+                } = input
+                {
+                    Some(*reads)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    let readme = validate(&setup.greeter.join("README.md"), &setup.home).expect("a document");
+    assert!(harness.session.share(readme, false).is_ok());
+    let folder = validate(&setup.greeter, &setup.home).expect("a valid folder");
+    assert!(harness.session.share(folder, false).is_ok());
+    let offered = {
+        let told = told.clone();
+        run_until(5_000, move || !told().is_empty()).await
+    };
+    assert!(offered, "the core was told");
+    assert_eq!(told(), [RepoReads::Offered], "once, for the folder alone");
+    let folder_id = harness
+        .recorder
+        .events()
+        .iter()
+        .rev()
+        .find_map(|event| {
+            let UiEvent::Sources { tray } = event else {
+                return None;
+            };
+            tray.session
+                .iter()
+                .find(|row| row.title == "greeter")
+                .map(|row| row.id)
+        })
+        .expect("the folder's row");
+    let remove = boardai_core::protocol::UiCommand::Sources {
+        action: boardai_core::sources::tray::SourceAction::Remove { source: folder_id },
+    };
+    assert!(harness.session.command(remove).is_ok());
+    let off = {
+        let told = told.clone();
+        run_until(5_000, move || told().len() == 2).await
+    };
+    assert!(off, "{:?}", told());
+    assert_eq!(told(), [RepoReads::Offered, RepoReads::NotOffered]);
     let _ = close(harness).await;
     let _ = std::fs::remove_dir_all(&setup.root);
 }

@@ -1,8 +1,10 @@
 // Sources as protocol events (14 · Sources, 14b): you ask about inf-alloc, the tray opens while
-// Claude Code reads it, its files drift by at the edge, and the overview brief makes it ready;
-// then hekaton-sigmod13.pdf is dragged over the window, left half then right, and dropped on the
-// right: it is kept in the infinitydb project and waits for the document reader. The rows are
-// artboard 14's. Regenerate with `node src/replay/write-demo.ts`.
+// Claude Code reads it, its files drift by at the edge, and the overview brief makes it ready
+// and stages its diagram (the header names it, with the brief's chip, D-242); then
+// hekaton-sigmod13.pdf is dragged over the window, left half then right, and dropped on the
+// right: it is kept in the infinitydb project and waits for the document reader, and the tray,
+// open again, pushes the header to its right (LLD §4). The rows are artboard 14's. Regenerate
+// with `node src/replay/write-demo.ts`.
 
 import type { OrbState } from "../protocol/generated/OrbState.ts";
 import type { SourceRow } from "../protocol/generated/SourceRow.ts";
@@ -15,6 +17,8 @@ import { say, type Utterance } from "./speech.ts";
 export const SOURCES_ARTBOARD_MS = 4_200;
 /** The drop overlay over the right half (14b). */
 export const SOURCES_DROP_MS = 11_400;
+/** The brief's diagram staged, its header showing with the tray closed. */
+export const SOURCES_STAGED_MS = 9_000;
 
 interface Timed {
   readonly at: number;
@@ -147,6 +151,17 @@ function timeline(): Timed[] {
   const ready = infAlloc({ state: "Ready", detail: "Overview ready · 9 parts mapped" });
   timed.push(
     { at: 8_000, event: tray(false, [ready, PAPER], KEPT, []) },
+    {
+      at: 8_100,
+      event: {
+        type: "Diagram",
+        layer: 0,
+        title: "inf-alloc · memory allocation",
+        part: 0,
+        parts: 4,
+        provenance: { reader: "Claude Code", source: "inf-alloc", files_read: 23 },
+      },
+    },
     orb(8_200, "Idle"),
     {
       at: 10_000,

@@ -17,7 +17,7 @@ use super::claude::BRIEF_RESEARCH_PROMPT;
 use super::confine::reach_line;
 use super::process::{self, Output, Preflight, ProcessSpec, Protocol, failed, failed_stream};
 use super::text::{bounded_summary, citations, progress_note, relative_to};
-use super::{Answer, CodingHarness, HarnessStream, Workspace};
+use super::{Answer, CodingHarness, DefaultFolder, HarnessStream, Workspace};
 use crate::cancel::CancelToken;
 use crate::limits::HARNESS_FILES_TOUCHED_MAX;
 
@@ -35,8 +35,8 @@ const PROMPT_ID: &str = "boardai-prompt";
 #[derive(Clone, Debug)]
 pub struct PiConfig {
     pub program: PathBuf,
-    /// As for Claude Code: the default folder, `None` when no code folder is set.
-    pub repo: Option<PathBuf>,
+    /// As for Claude Code: the default folder and its reach, `None` when no code folder is set.
+    pub repo: Option<DefaultFolder>,
     pub environment: Vec<(OsString, OsString)>,
 }
 
@@ -54,14 +54,10 @@ impl PiHarness {
 
 impl CodingHarness for PiHarness {
     fn run(&self, task: HarnessTask, cancel: CancelToken) -> HarnessStream {
-        let Some(folder) = self.config.repo.clone() else {
+        let Some(repo) = &self.config.repo else {
             return failed_stream(HarnessFailure::NotInstalled, "no code folder is open");
         };
-        let workspace = Workspace {
-            folder,
-            answer: Answer::Spoken,
-        };
-        self.run_in(task, workspace, cancel)
+        self.run_in(task, repo.spoken(), cancel)
     }
 
     fn run_in(
@@ -97,9 +93,9 @@ impl CodingHarness for PiHarness {
 }
 
 /// pi has no working-directory flag; the process runs in the repo. Extensions are off because
-/// an extension dialog would wait for an answer we never give. pi has no permission rules, so a
-/// brief's reach (D-226) is its read-only tools, its working folder and the prompt
-/// (`confine`); it keeps its own model.
+/// an extension dialog would wait for an answer we never give. pi has no permission rules, so
+/// the reach of research and reviews (D-226, D-243) is its read-only tools, its working folder
+/// and the prompt (`confine`); it keeps its own model.
 #[must_use]
 pub fn arguments(kind: &HarnessKind, workspace: &Workspace) -> Vec<OsString> {
     let mut command_line: Vec<String> =
@@ -108,12 +104,10 @@ pub fn arguments(kind: &HarnessKind, workspace: &Workspace) -> Vec<OsString> {
             .to_vec();
     match kind {
         HarnessKind::Research | HarnessKind::Review => {
-            let prompt = match &workspace.answer {
-                Answer::Spoken => READ_ONLY_BRIEF.to_owned(),
-                Answer::Brief { reach } => format!(
-                    "{BRIEF_RESEARCH_PROMPT} {}",
-                    reach_line(&workspace.folder, reach)
-                ),
+            let reach = reach_line(&workspace.folder, &workspace.reach);
+            let prompt = match workspace.answer {
+                Answer::Spoken => format!("{READ_ONLY_BRIEF} {reach}"),
+                Answer::Brief => format!("{BRIEF_RESEARCH_PROMPT} {reach}"),
             };
             command_line.extend([prompt, "--tools".to_owned(), "read,grep,find,ls".to_owned()]);
         }

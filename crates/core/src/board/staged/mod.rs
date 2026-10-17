@@ -24,7 +24,7 @@ mod text;
 
 use crate::geometry::Rect;
 use crate::ids::ElementId;
-use crate::protocol::{Category, DrawOp, StagedPart};
+use crate::protocol::{Category, DiagramProvenance, DrawOp, StagedPart};
 
 pub use place::{StageRefused, Staged};
 pub use reveal::Reveal;
@@ -56,6 +56,8 @@ pub struct StagedDiagram {
     pub sections: u8,
     /// The part the header last named, from 1; 0 before anything was revealed.
     pub part_shown: u8,
+    /// Where it came from when the talker didn't write it: a research brief's diagram (D-242).
+    pub provenance: Option<DiagramProvenance>,
 }
 
 /// One part of a staged diagram.

@@ -15,9 +15,10 @@ mod pool;
 mod process;
 mod text;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use boardai_core::harness::{HarnessEvent, HarnessTask};
+use boardai_core::sources::SourceKind;
 use futures_util::stream::BoxStream;
 
 use crate::cancel::CancelToken;
@@ -37,21 +38,55 @@ pub mod command_line {
 pub type HarnessStream = BoxStream<'static, HarnessEvent>;
 
 /// What a task's answer must be.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
     /// A short answer that can be spoken, citing `path:line`.
     Spoken,
-    /// A research brief in the shape the task gives (D-185), parsed by the core, read only
-    /// inside `reach` (canonical: the source's enclosing repository, D-226) and on the research
-    /// model.
-    Brief { reach: PathBuf },
+    /// A research brief in the shape the task gives (D-185), parsed by the core, on the
+    /// research model.
+    Brief,
 }
 
-/// Where a task runs and how it answers: a shared source's folder and a brief (D-184, D-185).
+/// Where a task runs and how it answers: the default folder (spoken research, reviews,
+/// changes) or a shared source's folder (a brief, D-184, D-185).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Workspace {
     pub folder: PathBuf,
+    /// Where a read-only task (research, a review, a brief) may read, canonical: the folder's
+    /// enclosing repository, or the folder itself (D-226, D-243). A change works on its own
+    /// branch, asked first (I9), and isn't held to it.
+    pub reach: PathBuf,
     pub answer: Answer,
+}
+
+/// The folder a task runs in when it names none (the first code folder), with its reach.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DefaultFolder {
+    pub folder: PathBuf,
+    pub reach: PathBuf,
+}
+
+impl DefaultFolder {
+    /// `folder` and its reach: its enclosing git repository unless that is too broad, else the
+    /// folder itself (`sources::reach`, D-243). It looks for `.git` on the disk, once, where the
+    /// harness is set up.
+    #[must_use]
+    pub fn open(folder: PathBuf, home: &Path) -> Self {
+        let canonical = std::fs::canonicalize(&folder).unwrap_or_else(|_| folder.clone());
+        let reach =
+            crate::sources::reach(&canonical, SourceKind::CodeFolder, home).unwrap_or(canonical);
+        Self { folder, reach }
+    }
+
+    /// A spoken task's workspace here.
+    #[must_use]
+    pub fn spoken(&self) -> Workspace {
+        Workspace {
+            folder: self.folder.clone(),
+            reach: self.reach.clone(),
+            answer: Answer::Spoken,
+        }
+    }
 }
 
 pub trait CodingHarness: Send + Sync {

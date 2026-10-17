@@ -327,6 +327,25 @@ pub enum SourceInput {
         state: SourceState,
         digest: Option<String>,
     },
+    /// What the talker's requests offer now (D-232, D-244): the repo tools read the code
+    /// folders and every readable code source, so sharing the first one mid-session (or
+    /// removing the last) changes it. Sent only when it changes.
+    RepoReads { reads: crate::engine::RepoReads },
+}
+
+/// Where a staged diagram came from when it wasn't the talker's own (D-242): a research brief's
+/// diagram, staged by the core when the brief reached the talker. On the wire in
+/// `UiEvent::Diagram`, for the chip above the diagram.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DiagramProvenance {
+    /// Who read the code and wrote the brief, as the tray names it ("Claude Code").
+    pub reader: String,
+    /// The shared source it read, by its title ("inf-alloc").
+    pub source: String,
+    /// Files it read for this brief; `None` for a brief from the cache, read in an earlier
+    /// session.
+    pub files_read: Option<u32>,
 }
 
 /// What a spoken name was called ("the inf-alloc **crate**"), which steers the resolver.

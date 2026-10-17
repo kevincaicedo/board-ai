@@ -114,6 +114,8 @@ impl Core {
         if self.reply.as_ref().is_some_and(|reply| reply.in_flight) {
             effects.push(Effect::CancelTalk);
         }
+        // Before the context: the board summary and a note name what a brief staged (D-242).
+        self.stage_brief_diagrams(new_turn, effects);
         self.append_context(now);
         let mut messages = self.conversation.messages().to_vec();
         if let Some(pending) = &self.user.pending {
@@ -258,11 +260,13 @@ impl Core {
             StopReason::EndTurn | StopReason::ToolUse => {
                 self.finish_stream(index);
                 if !self.maybe_nudge(now, index, effects) {
+                    self.reveal_brief_leftovers(index);
                     self.ask_change(effects);
                 }
             }
             StopReason::MaxTokens => {
                 self.finish_stream(index);
+                self.reveal_brief_leftovers(index);
                 self.ask_change(effects);
                 self.context.notice(
                     "Your last reply hit its length limit and stopped at the end of its last \

@@ -52,7 +52,7 @@ impl Core {
     }
 
     /// Opens a detail layer anchored to `of` on the active layer.
-    fn push_detail(
+    pub(super) fn push_detail(
         &mut self,
         of: &ElementId,
         title: Option<&str>,
@@ -189,11 +189,19 @@ impl Core {
             return false;
         };
         self.staging.voice_detail = Some(opened);
+        let fill = match self.brief_coming_for(id.as_str(), &label) {
+            // A shared source's brief on this part is on its way: its diagram is staged here
+            // when it arrives (D-242), so the talker doesn't draw a guess under it.
+            Some(harness) => format!(
+                "{harness} is reading it, and its brief's diagram will be staged on this layer                  when it arrives. Say so in a few words; don't draw its internals yourself."
+            ),
+            None => "Draw its internals there at once: one <diagram> block with its parts and                      their fields, then <reveal> them as you explain."
+                .to_owned(),
+        };
         self.context.notice(format!(
             "The user said \"{text}\", so a detail layer anchored to {} \"{label}\" is open and \
-             fills the board. Draw its internals there at once: one <diagram> block with its \
-             parts and their fields, then <reveal> them as you explain. Write <resume/> only \
-             when you are done with it; the user can also say \"back out\".",
+             fills the board. {fill} Write <resume/> only when you are done with it; the user can \
+             also say \"back out\".",
             id.as_str()
         ));
         true

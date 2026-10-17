@@ -80,6 +80,7 @@ pub(super) fn build(
         legend: legend(id, structure, laid, origin),
         sections: u8::try_from(tops).unwrap_or(u8::MAX),
         part_shown: 0,
+        provenance: None,
     }
 }
 

@@ -22,8 +22,8 @@ use boardai_core::tools::ToolCall;
 use boardai_runtime::cancel::CancelToken;
 use boardai_runtime::clock::MonotonicClock;
 use boardai_runtime::harness::{
-    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, PiConfig,
-    PiHarness, discover_from_environment,
+    ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, DefaultFolder,
+    PiConfig, PiHarness, discover_from_environment,
 };
 use boardai_runtime::llm::anthropic::{AnthropicOptions, AnthropicProvider};
 use boardai_runtime::llm::openai::{
@@ -262,11 +262,16 @@ async fn claude_code_answers_a_read_only_question() {
         environment.push(("CAPTURE".into(), capture.into()));
         program = wrapper;
     }
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .expect("HOME");
     let harness = ClaudeCodeHarness::new(ClaudeCodeConfig {
         program,
-        repo: Some(repo.path.clone()),
+        // Spoken research is held to the folder's repository like a brief (D-243).
+        repo: Some(DefaultFolder::open(repo.path.clone(), &home)),
         environment,
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+        model: None,
     });
     let events = run_task("claude code", &harness).await;
     assert!(
@@ -285,13 +290,41 @@ async fn claude_code_answers_a_read_only_question() {
 #[tokio::test]
 #[ignore = "live: run with `just live`"]
 async fn claude_code_writes_a_brief_on_a_module_of_this_repo() {
-    use boardai_core::sources::brief::{parse, request_prompt};
-    use boardai_core::sources::{BriefTopic, SourceKind};
-    use boardai_runtime::harness::{Answer, Workspace};
-
     if !enabled("BOARDAI_LIVE_CLAUDE") {
         return;
     }
+    let live = live_brief().await;
+    let brief = boardai_core::sources::brief::parse(&live.summary);
+    assert!(brief.is_usable(), "{}", live.summary);
+}
+
+/// A live brief's diagram on the board (D-242): the brief Claude Code wrote, through the core
+/// as a session would carry it (shared, prefetched, used by a scripted talker's research call,
+/// staged, two parts revealed by the talker, the rest as its reply ends). Prints the parts
+/// staged and revealed and the times.
+#[tokio::test]
+#[ignore = "live: run with `just live`"]
+async fn claude_code_briefs_diagram_is_staged_and_revealed() {
+    if !enabled("BOARDAI_LIVE_CLAUDE") {
+        return;
+    }
+    let live = live_brief().await;
+    let staged = stage_live_brief(&live.title, &live.summary);
+    println!("{staged}");
+}
+
+/// A live brief and how it ran.
+struct LiveBrief {
+    title: String,
+    summary: String,
+}
+
+/// Runs a brief as the app does, prints its shape, and saves it under `target/live-briefs`.
+async fn live_brief() -> LiveBrief {
+    use boardai_core::sources::brief::request_prompt;
+    use boardai_core::sources::{BriefTopic, SourceKind};
+    use boardai_runtime::harness::{Answer, Workspace};
+
     let claude = discover_from_environment()
         .claude_code
         .expect("claude on PATH");
@@ -317,6 +350,7 @@ async fn claude_code_writes_a_brief_on_a_module_of_this_repo() {
         repo: None,
         environment,
         research_model: DEFAULT_RESEARCH_MODEL.to_owned(),
+        model: None,
     });
     let task = HarnessTask {
         kind: HarnessKind::Research,
@@ -324,9 +358,8 @@ async fn claude_code_writes_a_brief_on_a_module_of_this_repo() {
     };
     let workspace = Workspace {
         folder: folder.clone(),
-        answer: Answer::Brief {
-            reach: reach.clone(),
-        },
+        reach: reach.clone(),
+        answer: Answer::Brief,
     };
     let started = Instant::now();
     let events: Vec<HarnessEvent> = tokio::time::timeout(
@@ -345,10 +378,126 @@ async fn claude_code_writes_a_brief_on_a_module_of_this_repo() {
     let Some(HarnessEvent::Finished { summary, .. }) = events.last() else {
         panic!("no brief: {events:?}");
     };
-    let brief = parse(summary);
     println!("reach: {}", reach.display());
     print_brief(&title, &topic, (&folder, &reach), elapsed, touched, summary);
-    assert!(brief.is_usable(), "{summary}");
+    LiveBrief {
+        title,
+        summary: summary.clone(),
+    }
+}
+
+/// The brief through the core's simulator: what was staged, what the talker revealed, what
+/// was revealed as its reply ended, and when.
+fn stage_live_brief(title: &str, summary: &str) -> String {
+    use boardai_core::ids::LayerId;
+    use boardai_core::sim::talker::ScriptedReply;
+
+    let brief = boardai_core::sources::brief::parse(summary);
+    let ids: Vec<String> = brief
+        .diagram
+        .as_ref()
+        .map(|diagram| {
+            diagram
+                .ids
+                .iter()
+                .take(2)
+                .map(|id| id.as_str().to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut sim = shared_with(title, summary);
+    sim.talker
+        .push(ScriptedReply::says("Let me check the brief.").calls(
+            "research",
+            r#"{"question":"How does it work?","depth":"quick"}"#,
+        ));
+    let mut narration = String::from("Here is the map. ");
+    for id in &ids {
+        narration.push_str(&format!(
+            "<reveal id=\"{id}\" deep=\"true\"/>This is {id}. "
+        ));
+    }
+    narration.push_str("And that is the rest of it.");
+    sim.talker.push(ScriptedReply::says(&narration));
+    sim.user_says(7_000, &format!("How does {title} work?"));
+    sim.run_until(120_000);
+    let mut lines = staging_lines(&sim);
+    let staged = sim.core().board().staged(LayerId::MAIN);
+    let entries: usize = staged.iter().map(|diagram| diagram.entries.len()).sum();
+    let shown = sim.core().board().layer(LayerId::MAIN).map_or(0, |layer| {
+        layer
+            .elements()
+            .iter()
+            .filter(|element| element.state.is_shown())
+            .count()
+    });
+    lines.push(format!(
+        "staged {} diagram(s), {entries} parts and connectors; {shown} elements shown; talker \
+         revealed {ids:?}; violations {:?}",
+        staged.len(),
+        sim.violations()
+    ));
+    lines.join("\n")
+}
+
+/// A simulated session with Claude Code, `title` shared, and its overview brief `summary`
+/// prefetched.
+fn shared_with(title: &str, summary: &str) -> boardai_core::sim::Sim {
+    use boardai_core::input::Input;
+    use boardai_core::sim::Sim;
+    use boardai_core::sim::sources::code_folder;
+    use boardai_core::sources::SourceInput;
+
+    let mut sim = Sim::new(boardai_core::CoreConfig::default());
+    sim.sources.default_brief = summary.to_owned();
+    sim.at(
+        0,
+        Input::Source {
+            source: SourceInput::Opened {
+                harness: Some("Claude Code".into()),
+                project: None,
+            },
+        },
+    );
+    sim.share(100, &code_folder(1, title, &format!("~/{title}")), false);
+    sim.run_until(6_000);
+    sim
+}
+
+/// The staged diagram's headers and each reveal, with their times.
+fn staging_lines(sim: &boardai_core::sim::Sim) -> Vec<String> {
+    use boardai_core::protocol::{DrawOp, UiEvent};
+
+    let mut lines = Vec::new();
+    for (at, event) in sim.ui() {
+        if let UiEvent::Diagram {
+            layer,
+            title,
+            part,
+            parts,
+            provenance,
+        } = event
+        {
+            lines.push(format!(
+                "{} ms L{}: diagram \"{title}\" part {part} of {parts} {provenance:?}",
+                at.as_ms(),
+                layer.0
+            ));
+        } else if let UiEvent::OpStart {
+            op: DrawOp::Reveal { parts, .. },
+            budget_ms,
+            ..
+        } = event
+        {
+            let ids: Vec<&str> = parts.iter().map(|part| part.id().as_str()).collect();
+            lines.push(format!(
+                "{} ms: reveal of {} parts over {budget_ms} ms: {ids:?}",
+                at.as_ms(),
+                parts.len()
+            ));
+        }
+    }
+    lines
 }
 
 /// What a live brief came back as: its shape, its citations read natively, and the file it was
@@ -424,9 +573,12 @@ async fn pi_answers_a_read_only_question() {
         return;
     };
     let repo = scratch_repo();
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .expect("HOME");
     let harness = PiHarness::new(PiConfig {
         program: pi,
-        repo: Some(repo.path.clone()),
+        repo: Some(DefaultFolder::open(repo.path.clone(), &home)),
         environment: Vec::new(),
     });
     let events = run_task("pi", &harness).await;
