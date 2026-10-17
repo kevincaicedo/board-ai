@@ -1,0 +1,19 @@
+usable: true
+title: "Unbundled Transactions: A Study of a Layered Key-Value Store"
+read: DigestRead { extent: Some(Pages(7)), scanned: false, figures_by: Some("Gemini 3.8 Flash") }
+section "Abstract" @ p. 1: "The store splits transactions, logging and storage into separately scaled roles."
+section "1 Introduction" @ pp. 1–2: "Why an unbundled design scales each role on its own."
+section "2 Architecture" @ pp. 2–3: "Clients talk to proxies; a sequencer hands out versions; resolvers check conflicts; log servers make commits durable; storage servers serve reads."
+section "3 Commit pipeline" @ pp. 3–4: "A commit gets a version, is checked for conflicts, logged, then acknowledged."
+section "4 Recovery" @ pp. 5–6: "On a failure the transaction system is replaced as a whole, then the log is recovered."
+figure 1 @ p. 2: "The architecture of the layered store." shows "Clients send reads to storage servers and commits to proxies. Proxies ask the sequencer for versions and resolvers for conflicts, then push to the log servers.", diagram 701 bytes
+figure 2 @ p. 4: "The commit pipeline, step by step." shows "Five steps from a client's commit to its acknowledgement.", diagram 366 bytes
+figure 3 @ p. 6: "Recovery as a state machine." shows "The cluster controller moves through reading the old configuration, locking the logs, recruiting a new transaction system and accepting commits again."
+table 1 @ p. 3: "Roles and what each one scales with.", 5 rows
+table 2 @ p. 7: "Latency by operation.", 4 rows
+claim @ p. 2: "Read versions come from the sequencer through the proxies."
+claim @ p. 4: "A commit is durable once every log server it was pushed to has it."
+claim @ p. 5: "Recovery replaces the whole transaction system rather than repairing it."
+claim @ p. 7: "Deterministic simulation found most bugs before release."
+tray: Ready { detail: "7 pages · text, 2 tables and 3 of 3 figures read · figures by Gemini 3.8 Flash" }
+dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, lines: 0, truncated: false }

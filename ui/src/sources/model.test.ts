@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import type { SourceKind } from "../protocol/generated/SourceKind.ts";
 import type { SourceRow } from "../protocol/generated/SourceRow.ts";
 import type { SourcesTray } from "../protocol/generated/SourcesTray.ts";
 import { parseUiEvent } from "../protocol/parse.ts";
@@ -28,6 +29,9 @@ import {
 const tokens = readTokens(
   tokenSourceFromCss(readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8")),
 );
+
+const code: SourceKind = { kind: "CodeFolder" };
+const pdf: SourceKind = { kind: "Document", format: "Pdf" };
 
 function row(id: number, title: string, state: SourceRow["state"]): SourceRow {
   return { id, kind: { kind: "CodeFolder" }, title, path: `~/…/infinitydb/crates/${title}`, state };
@@ -73,18 +77,18 @@ function tray(open: boolean): SourcesTray {
 }
 
 test("each row says its state as the canvas does", () => {
-  assert.equal(stateLine(reading), "Claude Code is reading · 23 of ~40 files");
+  assert.equal(stateLine(reading, code), "Claude Code is reading · 23 of ~40 files");
   assert.equal(
-    stateLine({ state: "Reading", reader: "pi", files_read: 0, files_estimate: null }),
+    stateLine({ state: "Reading", reader: "pi", files_read: 0, files_estimate: null }, code),
     "pi is reading",
   );
   assert.equal(
-    stateLine({ state: "Reading", reader: "pi", files_read: 1, files_estimate: null }),
+    stateLine({ state: "Reading", reader: "pi", files_read: 1, files_estimate: null }, code),
     "pi is reading · 1 file",
   );
   const project = tray(true).project?.sources ?? [];
   assert.deepEqual(
-    project.map((each) => [stateLine(each.state), toneOf(each.state)]),
+    project.map((each) => [stateLine(each.state, each.kind), toneOf(each.state)]),
     [
       ["Overview ready · 17 parts mapped", "ready"],
       ["Overview ready · 2 citations couldn't be checked", "partial"],
@@ -92,6 +96,47 @@ test("each row says its state as the canvas does", () => {
     ],
   );
   assert.equal(toneOf(reading), "reading");
+});
+
+test("a document's row counts pages, and says what was read or why not (artboard 14)", () => {
+  const markdown: SourceKind = { kind: "Document", format: "Markdown" };
+  assert.equal(
+    stateLine({ state: "Reading", reader: "BoardAI", files_read: 0, files_estimate: 14 }, pdf),
+    "BoardAI is reading",
+  );
+  assert.equal(
+    stateLine({ state: "Reading", reader: "BoardAI", files_read: 3, files_estimate: 14 }, pdf),
+    "BoardAI is reading · 3 of 14 pages",
+  );
+  assert.equal(
+    stateLine(
+      { state: "Reading", reader: "Claude Code", files_read: 1, files_estimate: null },
+      pdf,
+    ),
+    "Claude Code is reading · 1 page",
+  );
+  assert.equal(
+    stateLine(
+      { state: "Reading", reader: "BoardAI", files_read: 6, files_estimate: null },
+      markdown,
+    ),
+    "BoardAI is reading · 6 pages",
+  );
+  const ready: SourceRow["state"] = {
+    state: "Ready",
+    detail: "14 pages · text, 4 tables and 9 of 9 figures read · figures by Gemini 3.8 Flash",
+  };
+  assert.equal(
+    stateLine(ready, pdf),
+    "14 pages · text, 4 tables and 9 of 9 figures read · figures by Gemini 3.8 Flash",
+  );
+  assert.equal(toneOf(ready), "ready");
+  const partial: SourceRow["state"] = {
+    state: "Partial",
+    reason: "Text read · 3 figures need a model that reads files",
+  };
+  assert.equal(stateLine(partial, pdf), "Text read · 3 figures need a model that reads files");
+  assert.equal(toneOf(partial), "partial");
 });
 
 test("the tabs count what each scope holds, and a proposed project says so", () => {

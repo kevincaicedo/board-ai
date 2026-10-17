@@ -15,6 +15,10 @@ use crate::sources::tray::{DropOverlay, SourceAction, SourcesTray};
 use crate::time::SessionTime;
 use crate::views::View;
 
+// The cards beside the canvas: their own file, so the protocol stays one screenful per part.
+mod surfaces;
+pub use surfaces::{CellMark, ColumnRange, DocFigure, Surface, SurfaceUpdate};
+
 /// Every UI event produced while handling one step, in order, stamped with the step's time.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -546,67 +550,6 @@ pub enum Mark {
     Bracket,
     /// A hachure over the target in a tone (`Annotate.fill`), under the ink.
     Highlight,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "kind")]
-#[ts(export)]
-pub enum Surface {
-    /// A snippet from a file read in this session; `first_line` is 1-based.
-    Code {
-        id: SurfaceId,
-        path: String,
-        first_line: u32,
-        lines: Vec<String>,
-        highlight: Option<u32>,
-    },
-    /// Options are the columns and criteria are the rows, as on the canvas; `title` heads the
-    /// card ("Raft vs Paxos vs ZAB"), and the UI joins the options with "vs" without one.
-    Compare {
-        id: SurfaceId,
-        options: Vec<String>,
-        criteria: Vec<String>,
-        title: Option<String>,
-    },
-    Recap {
-        id: SurfaceId,
-        bullets: Vec<String>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "kind")]
-#[ts(export)]
-pub enum SurfaceUpdate {
-    /// Move the code card's highlight to this 1-based line.
-    Highlight { line: u32 },
-    /// Fill one compare cell: `row` indexes the criteria and `col` the options, from 0.
-    Cell { row: u8, col: u8, mark: CellMark },
-    /// An orange pen mark on part of a code line (frame 5's underline under `s.cache.Get(`):
-    /// `line` is 1-based, `columns` are the characters it covers.
-    Mark {
-        line: u32,
-        columns: ColumnRange,
-        mark: Mark,
-    },
-}
-
-/// Characters of a line, counted in Unicode scalar values from 0, half-open `[begin, end)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct ColumnRange {
-    pub begin: u32,
-    pub end: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(tag = "kind")]
-#[ts(export)]
-pub enum CellMark {
-    Yes,
-    No,
-    Depends,
-    Text { text: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

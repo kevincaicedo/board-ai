@@ -385,6 +385,7 @@ impl Core {
     /// assistant's turn, a pending harness report, and the orb.
     fn after_step(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         self.advance_ops(now, effects);
+        self.advance_document_cues(effects);
         let mut captions = Vec::new();
         self.voice.captions(&mut captions);
         effects.extend(captions.into_iter().map(Effect::Ui));

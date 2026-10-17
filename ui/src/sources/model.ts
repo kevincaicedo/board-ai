@@ -81,18 +81,24 @@ export function rowsOf(tray: SourcesTray, tab: TrayTab): readonly SourceRow[] {
   return tab === "session" ? tray.session : (tray.project?.sources ?? []);
 }
 
-/** A row's state line: "Claude Code is reading · 23 of ~40 files". */
-export function stateLine(state: SourceState): string {
+/**
+ * A row's state line: "Claude Code is reading · 23 of ~40 files" for code (the walk's count is an
+ * estimate), "BoardAI is reading · 3 of 14 pages" for a document (its page count is exact).
+ */
+export function stateLine(state: SourceState, kind: SourceKind): string {
   switch (state.state) {
     case "Reading": {
-      const files = state.files_read === 1 ? "1 file" : `${state.files_read} files`;
+      if (state.files_read === 0) {
+        return `${state.reader} is reading`;
+      }
+      const document = kind.kind === "Document";
+      const unit = document ? "page" : "file";
+      const count = state.files_read === 1 ? `1 ${unit}` : `${state.files_read} ${unit}s`;
       const of =
         state.files_estimate === null
-          ? files
-          : `${state.files_read} of ~${state.files_estimate} files`;
-      return state.files_read === 0
-        ? `${state.reader} is reading`
-        : `${state.reader} is reading · ${of}`;
+          ? count
+          : `${state.files_read} of ${document ? "" : "~"}${state.files_estimate} ${unit}s`;
+      return `${state.reader} is reading · ${of}`;
     }
     case "Ready":
       return state.detail;

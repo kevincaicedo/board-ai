@@ -511,6 +511,11 @@ fn a_brief_waits_while_you_draw_and_is_dropped_once_the_session_ended() {
     assert_clean(&ended);
 }
 
+/// A digest that lists three figures no model read (D-186: never lost silently).
+const HEKATON: &str = "# Digest: Hekaton\nRead: 14 pages; text only\n## Sections\n### Storage (p. 3)\n\
+                       Rows live in memory.\n## Figures\n### Figure 1 (p. 2): Components.\n\
+                       ### Figure 2 (p. 4): Rows.\n### Figure 3 (p. 6): Indexes.\n";
+
 #[test]
 fn a_document_waits_for_its_reader_and_its_digest_reaches_the_talker_fenced() {
     let mut sim = session();
@@ -557,7 +562,7 @@ fn a_document_waits_for_its_reader_and_its_digest_reaches_the_talker_fenced() {
             SourceState::Partial {
                 reason: "3 figures unread".into(),
             },
-            Some("# Hekaton\n## Sections\n- Storage (p. 3)\n"),
+            Some(HEKATON),
         ),
     );
     sim.talker
@@ -568,11 +573,18 @@ fn a_document_waits_for_its_reader_and_its_digest_reaches_the_talker_fenced() {
         tray.session[0].state,
         SourceState::Reading { files_read: 3, .. }
     )));
-    assert!(matches!(
-        &last_tray(&sim).session[0].state,
-        SourceState::Partial { reason } if reason == "3 figures unread"
-    ));
+    assert!(
+        matches!(
+            &last_tray(&sim).session[0].state,
+            SourceState::Partial { reason }
+                if reason == "Text read · 3 figures need a model that reads files"
+        ),
+        "the digest says what was read: no figure lost silently (D-186)"
+    );
     let digest = user_texts(&sim, 0).join("\n");
-    assert!(digest.contains("<task-output>\n# Hekaton"), "{digest}");
+    assert!(
+        digest.contains("<task-output>\n# Digest: Hekaton"),
+        "{digest}"
+    );
     assert_clean(&sim);
 }

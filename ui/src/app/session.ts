@@ -21,7 +21,10 @@ import { type ColumnTokens, type Placed, SURFACES_VISIBLE_MAX, surfaceHeight } f
 export const CHIPS_MAX = 8;
 /** Stack slots for chips waiting to fly. */
 export const CHIP_SLOTS = 4;
-/** Highlight moves kept per code card; older ones no longer affect the band's easing. */
+/**
+ * Highlight moves kept per code or doc card; older ones no longer affect the band's easing (a
+ * code card's) or the sentence's (a doc card's).
+ */
 export const HIGHLIGHTS_MAX = 64;
 /** Pen marks kept per code card; the oldest is dropped first (a card shows a few lines at most). */
 export const CODE_MARKS_MAX = 16;
@@ -63,6 +66,7 @@ export interface ThreadView {
   }[];
 }
 
+/** A highlight move: a code card's 1-based line, or a doc card's sentence from 0. */
 export interface Highlight {
   readonly line: number;
   readonly at: number;
@@ -477,7 +481,7 @@ export class SessionStore {
       cover: null,
       height: surfaceHeight(surface, this.#tokens),
       highlights:
-        surface.kind === "Code" && surface.highlight !== null
+        (surface.kind === "Code" || surface.kind === "Doc") && surface.highlight !== null
           ? [{ line: surface.highlight, at }]
           : [],
       cells: new Map(),
@@ -605,7 +609,10 @@ export function chipCommand(chip: Pick<Chip, "kind" | "source">): UiCommand | nu
   return { type: "OpenSource", path: chip.source.path, line: chip.source.line };
 }
 
-/** A surface card with one update applied: a highlight move, a compare cell or a pen mark. */
+/**
+ * A surface card with one update applied: a highlight move, a compare cell, a pen mark, or a doc
+ * card's sentence (only a doc card has sentences; the update is ignored on any other card).
+ */
 function updated(
   item: Extract<ColumnItem, { kind: "surface" }>,
   update: Extract<UiEvent, { type: "SurfaceUpdate" }>["update"],
@@ -627,5 +634,15 @@ function updated(
       const mark = { line: update.line, columns: update.columns, mark: update.mark, at, serial };
       return { ...item, marks: [...item.marks.slice(-(CODE_MARKS_MAX - 1)), mark] };
     }
+    case "Sentence":
+      return item.surface.kind !== "Doc"
+        ? item
+        : {
+            ...item,
+            highlights: [
+              ...item.highlights.slice(-(HIGHLIGHTS_MAX - 1)),
+              { line: update.index, at },
+            ],
+          };
   }
 }

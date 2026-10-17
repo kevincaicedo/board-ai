@@ -747,6 +747,9 @@ fn surface_line(surface: &Surface) -> String {
             format!("#{} {title}: {options:?} by {criteria:?}", id.0)
         }
         Surface::Recap { id, bullets } => format!("#{} recap ({} bullets)", id.0, bullets.len()),
+        Surface::Doc {
+            id, title, chip, ..
+        } => format!("#{} doc {title} · {chip}", id.0),
     }
 }
 

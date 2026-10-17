@@ -3,4 +3,4 @@ import type { CellMark } from "./CellMark.ts";
 import type { ColumnRange } from "./ColumnRange.ts";
 import type { Mark } from "./Mark.ts";
 
-export type SurfaceUpdate = { "kind": "Highlight", line: number, } | { "kind": "Cell", row: number, col: number, mark: CellMark, } | { "kind": "Mark", line: number, columns: ColumnRange, mark: Mark, };
+export type SurfaceUpdate = { "kind": "Highlight", line: number, } | { "kind": "Cell", row: number, col: number, mark: CellMark, } | { "kind": "Mark", line: number, columns: ColumnRange, mark: Mark, } | { "kind": "Sentence", index: number, };

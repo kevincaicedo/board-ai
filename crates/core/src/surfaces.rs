@@ -11,7 +11,7 @@ use crate::limits::{
     CODE_CARD_LINES_MAX, READ_FILE_LINES_MAX, READ_FILES_MAX, SURFACES_BESIDE_CANVAS_MAX,
 };
 use crate::narration::ops::{AxisRef, CloseTarget, LineRange};
-use crate::protocol::{CellMark, ColumnRange, Mark, Surface, SurfaceUpdate, UiEvent};
+use crate::protocol::{CellMark, ColumnRange, DocFigure, Mark, Surface, SurfaceUpdate, UiEvent};
 
 /// Lines of files read this session, by path. The least recently read file is forgotten first.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -140,6 +140,23 @@ enum OpenKind {
         criteria: Vec<String>,
     },
     Recap,
+    /// A Doc card: its chip, its sentences and the one highlighted.
+    Doc {
+        chip: String,
+        sentences: Vec<String>,
+        highlight: Option<u32>,
+    },
+}
+
+/// A Doc card's content, built by the engine from what the session read (law 6, D-257).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocCard {
+    pub title: String,
+    pub chip: String,
+    pub figure: Option<DocFigure>,
+    pub sentences: Vec<String>,
+    pub highlight: Option<u32>,
+    pub note: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -245,7 +262,7 @@ impl Surfaces {
                 OpenKind::Code {
                     first_line, lines, ..
                 } => Some((open.id, *first_line, lines)),
-                OpenKind::Compare { .. } | OpenKind::Recap => None,
+                OpenKind::Compare { .. } | OpenKind::Recap | OpenKind::Doc { .. } => None,
             })
             .ok_or(SurfaceRefused::NoCodeCard)?;
         let text = line
@@ -293,7 +310,7 @@ impl Surfaces {
             .rev()
             .find_map(|open| match &open.kind {
                 OpenKind::Compare { options, criteria } => Some((open.id, options, criteria)),
-                OpenKind::Code { .. } | OpenKind::Recap => None,
+                OpenKind::Code { .. } | OpenKind::Recap | OpenKind::Doc { .. } => None,
             })
             .ok_or(SurfaceRefused::NoCompareCard)?;
         let straight = resolve(criterion, criteria).zip(resolve(option, options));
@@ -372,8 +389,86 @@ impl Surfaces {
                 let index = usize::try_from(line.checked_sub(*first_line)?).ok()?;
                 Some((path.as_str(), lines.get(index)?.as_str()))
             }
+            OpenKind::Code { .. }
+            | OpenKind::Compare { .. }
+            | OpenKind::Recap
+            | OpenKind::Doc { .. } => None,
+        })
+    }
+
+    /// Opens a Doc card; it replaces the Doc card already open (one passage at a time), and
+    /// takes a column slot like any card.
+    pub fn open_doc(&mut self, card: DocCard, events: &mut Vec<UiEvent>) {
+        self.open.retain(|open| {
+            let doc = matches!(open.kind, OpenKind::Doc { .. });
+            if doc {
+                events.push(UiEvent::SurfaceDismiss { id: open.id });
+            }
+            !doc
+        });
+        let id = self.allocate(events);
+        events.push(UiEvent::SurfaceShow {
+            surface: Surface::Doc {
+                id,
+                title: card.title,
+                chip: card.chip.clone(),
+                figure: card.figure,
+                sentences: card.sentences.clone(),
+                highlight: card.highlight,
+                note: card.note,
+            },
+        });
+        self.open.push_back(Open {
+            id,
+            kind: OpenKind::Doc {
+                chip: card.chip,
+                sentences: card.sentences,
+                highlight: card.highlight,
+            },
+        });
+    }
+
+    /// The open Doc card: its chip, its sentences and the highlighted one.
+    #[must_use]
+    pub fn doc_card(&self) -> Option<(&str, &[String], Option<u32>)> {
+        self.open.iter().rev().find_map(|open| match &open.kind {
+            OpenKind::Doc {
+                chip,
+                sentences,
+                highlight,
+            } => Some((chip.as_str(), sentences.as_slice(), *highlight)),
             OpenKind::Code { .. } | OpenKind::Compare { .. } | OpenKind::Recap => None,
         })
+    }
+
+    /// Moves the open Doc card's highlight to sentence `index`; false when there is no card,
+    /// no such sentence, or it is highlighted already.
+    pub fn highlight_sentence(&mut self, index: u32, events: &mut Vec<UiEvent>) -> bool {
+        let found = self
+            .open
+            .iter_mut()
+            .rev()
+            .find_map(|open| match &mut open.kind {
+                OpenKind::Doc {
+                    sentences,
+                    highlight,
+                    ..
+                } => Some((open.id, sentences.len(), highlight)),
+                OpenKind::Code { .. } | OpenKind::Compare { .. } | OpenKind::Recap => None,
+            });
+        let Some((id, count, highlight)) = found else {
+            return false;
+        };
+        let fits = usize::try_from(index).is_ok_and(|index| index < count);
+        if !fits || *highlight == Some(index) {
+            return false;
+        }
+        *highlight = Some(index);
+        events.push(UiEvent::SurfaceUpdate {
+            id,
+            update: SurfaceUpdate::Sentence { index },
+        });
+        true
     }
 
     /// A new surface id; the oldest surface is dismissed when two are already open.

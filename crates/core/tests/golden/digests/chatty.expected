@@ -1,0 +1,14 @@
+usable: true
+title: "Hekaton: SQL Server's Memory-Optimized OLTP Engine"
+read: DigestRead { extent: None, scanned: false, figures_by: None }
+section "1. Introduction" @ p. 1: "Hekaton keeps tables in memory and compiles stored procedures."
+section "2. Design considerations" @ pp. 2–3: "Lock-free structures everywhere."
+section "Untitled part" @ -: "No pages given, still kept."
+figure 1 @ p. 2: "Hekaton's components" shows "The storage engine, the compiler and the runtime."
+figure 2 @ p. 4: "Row format" shows "Each row carries begin and end timestamps."
+figure 3 @ p. 5: "An unread chart" shows ""
+claim @ p. 4: "Rows are versioned by timestamps"
+claim @ pp. 6–7: "Garbage collection is cooperative"
+claim @ -: "A claim without a page."
+tray: Partial { reason: "Text read · 1 figure needs a model that reads files" }
+dropped: DigestDropped { sections: 0, figures: 0, tables: 0, rows: 0, claims: 0, diagrams: 0, lines: 4, truncated: false }

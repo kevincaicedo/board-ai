@@ -64,6 +64,13 @@ pub(crate) enum SourceMessage {
         markdown: String,
         stamp: Stamp,
     },
+    /// A document reader's digest, to cache (D-259).
+    Digested { source: SourceId, markdown: String },
+    /// A cached digest checked against its file: `None` when it is stale.
+    DigestChecked {
+        source: SourceId,
+        markdown: Option<String>,
+    },
 }
 
 /// One kept source as the load found it.
@@ -99,44 +106,14 @@ impl Orchestrator {
         self.step(Input::Source { source: opened }).await;
     }
 
-    /// A readable document goes to the first reader that takes its format (none until T-031:
-    /// it then waits in the tray).
-    fn read_document(&mut self, source: SourceId) {
-        let (Some(SourceKind::Document { format }), Some(path)) = (
-            self.desk.kind(source),
-            self.desk.path(source).map(std::path::Path::to_path_buf),
-        ) else {
-            return;
-        };
-        let Some(reader) = self
-            .readers
-            .iter()
-            .find(|reader| reader.reads(format))
-            .cloned()
-        else {
-            return;
-        };
-        let cancel = crate::cancel::CancelToken::new();
-        let events = reader.read(path, cancel.clone());
-        let name = reader.name().to_owned();
-        if !self
-            .work
-            .run_reader(source, name, events, cancel, &self.inbox)
-        {
-            tracing::warn!("a document waits: as many readers run as may");
-        }
-    }
-
     /// The repo tools read the code folders and every readable source. When that turns the
     /// repo reads on or off (the first code source shared with no code folder open, or the
     /// last one let go), the core is told, for D-232's retry (D-244).
     fn refresh_roots(&mut self) {
         match self.desk.roots() {
             Ok(roots) => {
-                let before = self.work.repo_reads();
                 self.work.set_tools(RepoTools::new(roots));
-                let reads = self.work.repo_reads();
-                if reads != before {
+                if let Some(reads) = self.desk.changed_reads() {
                     self.answer(SourceInput::RepoReads { reads });
                 }
             }
@@ -211,6 +188,12 @@ impl Orchestrator {
                 source,
                 citations,
             } => self.check(task, source, citations),
+            SourceEffect::ReadDocument {
+                request,
+                source,
+                first_page,
+                last_page,
+            } => self.read_pages(request, source, first_page, last_page),
         }
     }
 
@@ -410,7 +393,7 @@ impl Orchestrator {
         });
     }
 
-    fn stamp_brief(&mut self, source: SourceId, topic: String, markdown: String) {
+    pub(super) fn stamp_brief(&mut self, source: SourceId, topic: String, markdown: String) {
         let Some(path) = self.desk.path(source).map(std::path::Path::to_path_buf) else {
             return;
         };
@@ -534,6 +517,10 @@ impl Orchestrator {
                 markdown,
                 stamp,
             } => self.on_stamped(source, topic, markdown, stamp),
+            SourceMessage::Digested { source, markdown } => self.on_digested(source, markdown),
+            SourceMessage::DigestChecked { source, markdown } => {
+                self.on_digest_checked(source, markdown).await;
+            }
         }
     }
 

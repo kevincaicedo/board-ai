@@ -55,6 +55,10 @@ impl Core {
         call: &ToolCall,
         effects: &mut Vec<Effect>,
     ) -> Option<UserPart> {
+        // `read_file` naming a shared document reads its pages or its digest (D-256).
+        if let Some(answer) = self.document_read_call(id, call, effects) {
+            return answer;
+        }
         let text = match call {
             ToolCall::ReadFile { .. }
             | ToolCall::SearchCode { .. }
@@ -81,8 +85,12 @@ impl Core {
                 return None;
             }
             ToolCall::Research { question, depth } => {
-                // A question about a shared code source is a brief request (D-223).
-                if let Some(answer) = self.research_on_source(id, question, effects) {
+                // A question about a shared code source is a brief request (D-223); one about
+                // a shared document is answered from its digest (D-256).
+                if let Some(answer) = self
+                    .research_on_source(id, question, effects)
+                    .or_else(|| self.research_on_document(id, question, effects))
+                {
                     return answer;
                 }
                 let brief = format!("{question}\n(depth: {depth:?})");

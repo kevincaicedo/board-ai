@@ -18,6 +18,7 @@ use futures_util::future::BoxFuture;
 use tokio::task::{Id, JoinSet};
 
 use super::inbox::{Envelope, Inbox};
+use super::orchestrator::SourceMessage;
 use super::ports::{StoreRead, StoreSink};
 use crate::cancel::CancelToken;
 use crate::harness::{HarnessPool, Workspace};
@@ -122,12 +123,6 @@ impl Work {
         self.tools = tools;
     }
 
-    /// What the talker's requests offer over the current roots (D-232).
-    #[must_use]
-    pub(crate) fn repo_reads(&self) -> boardai_core::RepoReads {
-        self.tools.repo_reads()
-    }
-
     #[must_use]
     pub(crate) fn has_harness(&self) -> bool {
         self.harness.is_some()
@@ -184,6 +179,18 @@ impl Work {
         let handle = self.tasks.spawn(async move {
             while let Some(event) = events.next().await {
                 let (state, digest) = reader_state(&name, event);
+                if let Some(markdown) = digest.clone() {
+                    // The orchestrator caches it first (D-259), so a kept document's digest is
+                    // in the vault before anything asks again.
+                    let digested = SourceMessage::Digested { source, markdown };
+                    if inbox
+                        .send_envelope(Envelope::Source(digested))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 let input = Input::Source {
                     source: SourceInput::DocumentRead {
                         source,
@@ -309,9 +316,9 @@ impl Work {
 /// A reader's report as the core's source state, and the digest it carries.
 fn reader_state(reader: &str, event: ReaderEvent) -> (SourceState, Option<String>) {
     match event {
-        ReaderEvent::Reading { read, of } => (
+        ReaderEvent::Reading { read, of, by } => (
             SourceState::Reading {
-                reader: reader.to_owned(),
+                reader: by.unwrap_or_else(|| reader.to_owned()),
                 files_read: read,
                 files_estimate: of,
             },

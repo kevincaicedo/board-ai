@@ -208,10 +208,13 @@ impl SourceReader for FakeReader {
             ReaderEvent::Reading {
                 read: 1,
                 of: Some(2),
+                by: None,
             },
             ReaderEvent::Partial {
                 reason: "1 figure unread".into(),
-                digest: "# Greeter\nOne section.".into(),
+                digest: "# Digest: Greeter\nRead: 2 lines; text only\n## Sections\n### Greeter \
+                         (l. 1)\nOne section.\n## Figures\n### Figure 1 (l. 2): A picture.\n"
+                    .into(),
             },
         ]))
     }
@@ -228,9 +231,10 @@ async fn a_shared_document_goes_to_its_reader_and_the_tray_follows() {
     assert!(harness.session.share(readme, false).is_ok());
     let recorder = Arc::clone(&harness.recorder);
     let partial = run_until(5_000, || {
-        states(&recorder.events()).iter().any(
-            |state| matches!(state, SourceState::Partial { reason } if reason == "1 figure unread"),
-        )
+        states(&recorder.events()).iter().any(|state| {
+            matches!(state, SourceState::Partial { reason }
+                if reason == "Text read · 1 image needs a model that reads files")
+        })
     })
     .await;
     assert!(partial, "{:?}", states(&recorder.events()));
@@ -240,7 +244,7 @@ async fn a_shared_document_goes_to_its_reader_and_the_tray_follows() {
     assert!(
         first_request_texts(&talker)
             .iter()
-            .any(|text| text.contains("<task-output>\n# Greeter\nOne section.")),
+            .any(|text| text.contains("<task-output>\n# Digest: Greeter")),
         "the digest went to the talker fenced"
     );
     let _ = close(harness).await;

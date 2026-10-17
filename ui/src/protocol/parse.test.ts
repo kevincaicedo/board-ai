@@ -238,6 +238,20 @@ const EVERY_EVENT: UiEvent[] = [
     surface: { kind: "Compare", id: 4, options: ["a"], criteria: ["c"], title: null },
   },
   { type: "SurfaceShow", surface: { kind: "Recap", id: 3, bullets: ["one"] } },
+  {
+    type: "SurfaceShow",
+    surface: {
+      kind: "Doc",
+      id: 5,
+      title: "FoundationDB · SIGMOD ’21",
+      chip: "p. 3 · Figure 1",
+      figure: { label: "Figure 1", caption: "The architecture.", read: true },
+      sentences: ["A client asks a proxy.", "The sequencer hands out versions."],
+      highlight: 0,
+      note: "Figure read by Gemini 3.8 Flash.",
+    },
+  },
+  { type: "SurfaceUpdate", id: 5, update: { kind: "Sentence", index: 1 } },
   { type: "SurfaceUpdate", id: 1, update: { kind: "Highlight", line: 43 } },
   {
     type: "SurfaceUpdate",

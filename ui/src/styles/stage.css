@@ -717,3 +717,106 @@
   position: absolute;
   inset: 0;
 }
+
+/* The Doc card (14b): title and chip, the figure box where the canvas shows the cropped figure
+   (the card shows its caption, never its image, D-260), the passage with the sentence being
+   explained highlighted, and who read it. `--doc-mark` (0–1) is written per sentence from the
+   frame loop, so the highlight eases between sentences. */
+.doc-card {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: var(--doc-padding);
+  display: flex;
+  flex-direction: column;
+  gap: var(--doc-gap);
+}
+
+.doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: var(--doc-head);
+  flex: none;
+  font-size: var(--type-card-title);
+}
+
+.doc-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-chip {
+  flex: none;
+  height: var(--doc-chip-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--doc-chip-padding);
+  border-radius: var(--doc-chip-radius);
+  background: var(--doc-chip-bg);
+  font-family: var(--font-code);
+  font-size: var(--type-doc-chip);
+  color: var(--signal);
+  white-space: nowrap;
+}
+
+.doc-figure {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--doc-figure-gap);
+  padding: var(--doc-figure-padding);
+  border-radius: var(--doc-figure-radius);
+  background: var(--bg-soft);
+  box-shadow: inset 0 0 0 1px var(--grey-100);
+}
+
+.doc-figure-label {
+  font-family: var(--font-code);
+  font-size: var(--type-doc-figure-label);
+  line-height: var(--doc-figure-label-line);
+  color: var(--ink-3);
+}
+
+.doc-figure-caption {
+  font-size: var(--type-doc-passage);
+  line-height: var(--doc-figure-line);
+  color: var(--ink);
+}
+
+.doc-figure-status {
+  font-size: var(--type-doc-note);
+  line-height: var(--doc-figure-label-line);
+  color: var(--ink-3);
+}
+
+.doc-figure-unread {
+  color: var(--annotate);
+}
+
+.doc-passage {
+  margin: 0;
+  font-size: var(--type-doc-passage);
+  line-height: var(--doc-line);
+  color: var(--ink-2);
+}
+
+.doc-sentence {
+  --doc-mark: 0;
+  border-radius: var(--doc-highlight-radius);
+  padding: 0 calc(var(--doc-highlight-padding) * var(--doc-mark));
+  background: rgba(var(--doc-highlight-rgb), var(--doc-mark));
+  color: color-mix(in srgb, var(--ink) calc(var(--doc-mark) * 100%), var(--ink-2));
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.doc-note {
+  flex: none;
+  font-size: var(--type-doc-note);
+  line-height: var(--doc-note-line);
+  color: var(--ink-3);
+}

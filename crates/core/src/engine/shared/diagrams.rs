@@ -16,6 +16,9 @@
 //!   in it runs, and every tag or part that doesn't parse or fit is dropped and counted.
 //! - **Provenance.** The staged diagram names who read the code, the source and the files read;
 //!   the header shows it as a chip ("from Claude Code's brief · 23 files read").
+//! - **A document's figures** (D-257) take the same path: when the talker reads a figure, its
+//!   digest's `<diagram>` is staged with the next request and the talker told its ids; its Doc
+//!   card says who read it, so the header shows no chip.
 
 use std::fmt::Write as _;
 
@@ -64,11 +67,14 @@ pub(in crate::engine) struct WaitingDiagram {
     spec: DiagramSpec,
     /// Tags the narration's parser dropped from it.
     dropped: u32,
-    provenance: DiagramProvenance,
+    /// Who read the code, for the header's chip; `None` for a document's figure, whose Doc card
+    /// says who read it (D-257).
+    provenance: Option<DiagramProvenance>,
     carried: Carried,
     /// The paths of the brief's citations the core read and checked: what its labels are held
-    /// to (D-252).
-    read: Vec<String>,
+    /// to (D-252). `None` for a document's figure, whose labels are the paper's words, not
+    /// paths in a repo.
+    read: Option<Vec<String>>,
 }
 
 impl Core {
@@ -121,16 +127,64 @@ impl Core {
             ),
             spec,
             dropped: read.dropped,
-            provenance: DiagramProvenance {
+            provenance: Some(DiagramProvenance {
                 reader: harness,
                 source: title,
                 files_read: (!cached).then_some(brief_task.files_read),
-            },
+            }),
             carried,
-            read: checked_paths(brief),
+            read: Some(checked_paths(brief)),
         };
         self.keep_waiting(waiting, effects);
         BriefDiagram::Staged(carried)
+    }
+
+    /// A shared document's figure the talker read (D-257): its digest's `<diagram>` waits to be
+    /// staged with the next request, like a brief's, on the layer in front. `None` when it is
+    /// staged on that layer already (its ids were named then).
+    pub(in crate::engine) fn wait_to_stage_figure(
+        &mut self,
+        source: SourceId,
+        (label, caption): (&str, &str),
+        document: &str,
+        text: &str,
+        effects: &mut Vec<Effect>,
+    ) -> BriefDiagram {
+        let read = WrittenDiagram::read(text);
+        if read.dropped > 0 {
+            effects.push(Effect::Log(LogRecord::Dropped {
+                what: Dropped::DiagramPart,
+                count: read.dropped,
+            }));
+        }
+        let Some(mut spec) = read.spec else {
+            return BriefDiagram::Unreadable;
+        };
+        let layer = self.thread.active_layer();
+        if self
+            .board
+            .staged(layer)
+            .iter()
+            .any(|staged| staged.id == spec.id)
+        {
+            return BriefDiagram::None;
+        }
+        if spec.title == spec.id.as_str() || spec.title.eq_ignore_ascii_case(label) {
+            // "Figure 1" alone says little in the header: its caption does.
+            spec.title = bounded(&format!("{label} · {caption}"), TITLE_MAX_BYTES);
+        }
+        let waiting = WaitingDiagram {
+            source,
+            topic: BriefTopic::component(label),
+            brief: format!("{label} of {document}"),
+            spec,
+            dropped: read.dropped,
+            provenance: None,
+            carried: Carried::NextRequest,
+            read: None,
+        };
+        self.keep_waiting(waiting, effects);
+        BriefDiagram::Staged(Carried::NextRequest)
     }
 
     /// One diagram per source and topic, the newest; past the bound the oldest is forgotten.
@@ -204,10 +258,15 @@ impl Core {
             BriefTopic::Overview => None,
             BriefTopic::Component { name } => self.detail_for(waiting.source, name, effects),
         };
-        let read = RepoNames::of_paths(waiting.read.iter().map(String::as_str));
-        let (spec, unread) = marked_unread(&waiting.spec, |label| read.verdict(label, false));
+        let (spec, unread) = match &waiting.read {
+            Some(paths) => {
+                let read = RepoNames::of_paths(paths.iter().map(String::as_str));
+                marked_unread(&waiting.spec, |label| read.verdict(label, false))
+            }
+            None => (waiting.spec.clone(), Vec::new()),
+        };
         let op = self.fresh_op();
-        let staged = self.stage_here(op, &spec, Some(waiting.provenance.clone()), effects);
+        let staged = self.stage_here(op, &spec, waiting.provenance.clone(), effects);
         match staged {
             Ok(here) => {
                 self.staging

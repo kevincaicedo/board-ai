@@ -107,7 +107,7 @@ function Row({ row, kept, project }: { row: SourceRow; kept: boolean; project: s
       </div>
       <div class="tray-state">
         <span class={`tray-dot tray-dot-${tone}`} aria-hidden="true" />
-        <span>{stateLine(row.state)}</span>
+        <span>{stateLine(row.state, row.kind)}</span>
       </div>
       {tone === "reading" ? <div class="tray-bar" aria-hidden="true" /> : null}
     </div>

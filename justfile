@@ -26,7 +26,7 @@ files:
 # pi with BOARDAI_LIVE_CLAUDE=1 / BOARDAI_LIVE_PI=1 (they use your account). Keys come from the
 # gitignored `.env` (scripts/with-dev-keys.sh).
 live *filter:
-    BOARDAI_LIVE=1 scripts/with-dev-keys.sh cargo test -p boardai-runtime --test live -- --ignored --nocapture --test-threads=1 {{filter}}
+    BOARDAI_LIVE=1 scripts/with-dev-keys.sh cargo test -p boardai-runtime --test live --test live_documents -- --ignored --nocapture --test-threads=1 {{filter}}
 
 # The ElevenLabs live check, never part of `check`: three short clauses over the realtime
 # WebSocket (the first on a cold connection) and one over HTTP, about 150 characters billed.

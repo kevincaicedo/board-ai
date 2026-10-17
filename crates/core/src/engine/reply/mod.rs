@@ -436,8 +436,13 @@ impl Core {
                         ClauseOrigin::Core => ClauseSource::Core,
                     };
                     let text = clause.speakable.text().to_owned();
+                    let talker = matches!(source, ClauseSource::Talker { .. });
                     let id = self.voice.add(clause.caption, clause.speakable, source);
                     effects.push(Effect::Synthesize { clause: id, text });
+                    if talker {
+                        // A page citation in it waits for the voice (D-257).
+                        self.follow_clause(id);
+                    }
                     if let Some(stream) = self.stream_mut(index) {
                         stream.clauses.push(id);
                     }

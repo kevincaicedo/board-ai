@@ -26,6 +26,9 @@ use std::time::Duration;
 
 use boardai_core::{CoreConfig, MicMode};
 use boardai_runtime::clock::{MonotonicClock, TokioClock};
+use boardai_runtime::documents::files::FileModel;
+use boardai_runtime::documents::pdfkit::PdfKit;
+use boardai_runtime::documents::{DocumentReader, ReaderConfig};
 use boardai_runtime::harness::{
     ClaudeCodeConfig, ClaudeCodeHarness, CodingHarness, DEFAULT_RESEARCH_MODEL, DefaultFolder,
     HarnessPool, HarnessTimeouts, PiConfig, PiHarness, discover_from_environment,
@@ -39,6 +42,7 @@ use boardai_runtime::session::{
     scribe_from_settings, talker_from_settings, talker_name,
 };
 use boardai_runtime::settings::{self, HarnessChoice, Settings};
+use boardai_runtime::sources::SourceReader;
 use boardai_runtime::store::{Store, StoreConfig, StoreTask, SystemWallClock};
 use boardai_runtime::tools::{RepoRoots, RepoTools, too_broad};
 use tauri::{AppHandle, Manager};
@@ -326,7 +330,9 @@ async fn parts(
 ) -> SessionParts {
     let talker = talker(settings).await;
     let opened = repo_tools(&settings.code_roots);
-    let (harness, harness_name) = harness(settings, opened.folders.first()).unzip();
+    let found = harness(settings, opened.folders.first());
+    let readers = document_readers(settings, found.clone()).await;
+    let (harness, harness_name) = found.unzip();
     SessionParts {
         core: CoreConfig {
             talker_name: talker_name(&settings.talker),
@@ -350,9 +356,38 @@ async fn parts(
             harness_name,
             shelf,
             clock: Arc::new(SystemWallClock),
-            readers: Vec::new(),
+            readers,
         },
     }
+}
+
+/// BoardAI's document reader (D-186): figures go to the talker's or the scribe's model when
+/// OpenRouter lists it as reading files, else to the harness; only what the settings configure
+/// is ever sent a document (law 10). The Keychain read may block.
+async fn document_readers(
+    settings: &Settings,
+    harness: Option<(HarnessPool, String)>,
+) -> Vec<Arc<dyn SourceReader>> {
+    let roles = [settings.talker.clone(), settings.scribe.clone()];
+    let file_models = tauri::async_runtime::spawn_blocking(move || {
+        let mut models: Vec<FileModel> = Vec::new();
+        for role in &roles {
+            if let Some(model) = FileModel::from_settings(role, &KeychainSecrets)
+                && !models.iter().any(|known| known.model == model.model)
+            {
+                models.push(model);
+            }
+        }
+        models
+    })
+    .await
+    .unwrap_or_default();
+    vec![Arc::new(DocumentReader::new(ReaderConfig {
+        file_models,
+        harness,
+        home: home_folder(),
+        pdfkit: PdfKit::default(),
+    }))]
 }
 
 fn home_folder() -> PathBuf {

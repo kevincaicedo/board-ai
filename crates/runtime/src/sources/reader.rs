@@ -1,11 +1,12 @@
-//! The document reader seam (D-186, T-031): what reads a shared Markdown, text or PDF document
-//! and reports its progress and digest. BoardAI registers documents now and shows them waiting
-//! for a reader; T-031 implements this trait and the session runs it for each document it
-//! takes, so the tray follows its reading and the talker gets the digest (fenced, D-107).
+//! The document reader seam (D-186, D-230): what reads a shared Markdown, text or PDF document,
+//! reports its progress and digest, and reads its pages when the talker asks. The session runs a
+//! reader for each document it takes, so the tray follows its reading and the talker gets the
+//! digest (fenced, D-107). BoardAI's own is `documents::DocumentReader`.
 
 use std::path::PathBuf;
 
 use boardai_core::sources::DocumentFormat;
+use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 
 use crate::cancel::CancelToken;
@@ -13,10 +14,12 @@ use crate::cancel::CancelToken;
 /// One report from a reader. A stream ends after `Ready`, `Partial` or `Failed`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReaderEvent {
-    /// Reading: `read` parts (pages, sections) so far, of `of` when known.
+    /// Reading: `read` parts (pages, files) so far, of `of` when known; `by` is who reads now
+    /// ("Gemini 3.8 Flash" while a model reads the figures), the reader itself when `None`.
     Reading {
         read: u32,
         of: Option<u32>,
+        by: Option<String>,
     },
     /// Read whole: what the tray says ("14 pages · text, 4 tables and 9 of 9 figures read"),
     /// and the digest in Markdown.
@@ -36,8 +39,16 @@ pub enum ReaderEvent {
 
 pub type ReaderStream = BoxStream<'static, ReaderEvent>;
 
+/// Pages a reader read for the talker: `(page, text)` for each with text, in order, and the
+/// document's length when known.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PagesRead {
+    pub pages: Vec<(u32, String)>,
+    pub page_count: Option<u32>,
+}
+
 pub trait SourceReader: Send + Sync {
-    /// The reader's name as the tray says it ("BoardAI", "Claude Code").
+    /// The reader's name as the tray says it ("BoardAI").
     fn name(&self) -> &str;
 
     /// Whether it reads this format.
@@ -46,4 +57,12 @@ pub trait SourceReader: Send + Sync {
     /// Reads the document at `path` (validated, canonical). Dropping the stream, or `cancel`,
     /// stops it.
     fn read(&self, path: PathBuf, cancel: CancelToken) -> ReaderStream;
+
+    /// Pages `[first, last]` (1-based) of the PDF at `path`, from its extracted text (D-256).
+    /// Bounded by the reader; the caller bounds it in time. A reader that keeps no text answers
+    /// with none.
+    fn pages(&self, path: PathBuf, first: u32, last: u32) -> BoxFuture<'static, PagesRead> {
+        let _ = (path, first, last);
+        Box::pin(std::future::ready(PagesRead::default()))
+    }
 }

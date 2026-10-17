@@ -1,5 +1,6 @@
 //! A scripted runtime for sources (D-184, D-185): the name resolver, the vault's kept sources,
-//! the brief cache, the harness writing briefs, and native reads of cited lines.
+//! the brief cache, the harness writing briefs, native reads of cited lines, and a document's
+//! extracted pages (D-256).
 
 use std::collections::BTreeMap;
 
@@ -7,8 +8,8 @@ use crate::harness::HarnessEvent;
 use crate::ids::TaskId;
 use crate::input::Input;
 use crate::sources::{
-    Citation, CitedLines, KeptSource, ProjectId, SourceEffect, SourceId, SourceInfo, SourceInput,
-    SourceKind, name_key,
+    Citation, CitedLines, DocumentPage, KeptSource, ProjectId, SourceEffect, SourceId, SourceInfo,
+    SourceInput, SourceKind, name_key,
 };
 
 /// How long the scripted runtime takes to answer a resolve, a cache lookup or a read.
@@ -30,6 +31,9 @@ pub struct FakeSources {
     pub readable: BTreeMap<String, u32>,
     /// Files the harness reads before it answers.
     pub touched: Vec<String>,
+    /// Each document's extracted text, a page per entry (page 1 first); an empty page is a
+    /// scanned one.
+    pub pages: BTreeMap<SourceId, Vec<String>>,
     pub run_ms: u64,
     /// Every effect, in order.
     pub seen: Vec<SourceEffect>,
@@ -50,6 +54,7 @@ impl Default for FakeSources {
             default_brief: String::new(),
             readable: BTreeMap::new(),
             touched: Vec::new(),
+            pages: BTreeMap::new(),
             run_ms: 3_000,
             seen: Vec::new(),
             readable_sources: Vec::new(),
@@ -78,20 +83,7 @@ impl FakeSources {
         let source = |source| Input::Source { source };
         match effect {
             SourceEffect::Resolve { request, name, .. } => {
-                let key = name_key(name);
-                let found: Vec<SourceInfo> = self
-                    .folders
-                    .iter()
-                    .filter(|folder| name_key(&folder.title) == key)
-                    .cloned()
-                    .collect();
-                let candidates = found.iter().map(|folder| self.register(folder)).collect();
-                let resolved = SourceInput::Resolved {
-                    request: *request,
-                    candidates,
-                    searched: 12,
-                };
-                vec![(SOURCES_LATENCY_MS, source(resolved))]
+                vec![(SOURCES_LATENCY_MS, source(self.resolve(*request, name)))]
             }
             SourceEffect::Share { source: id } => {
                 self.readable_sources.push(*id);
@@ -141,6 +133,59 @@ impl FakeSources {
             SourceEffect::CheckCitations {
                 task, citations, ..
             } => vec![(SOURCES_LATENCY_MS, self.check(*task, citations))],
+            SourceEffect::ReadDocument {
+                request,
+                source: id,
+                first_page,
+                last_page,
+            } => vec![(
+                SOURCES_LATENCY_MS,
+                self.read_pages(*request, *id, *first_page..=*last_page),
+            )],
+        }
+    }
+
+    /// The folders whose title is the spoken name, registered.
+    fn resolve(&mut self, request: u32, name: &str) -> SourceInput {
+        let key = name_key(name);
+        let found: Vec<SourceInfo> = self
+            .folders
+            .iter()
+            .filter(|folder| name_key(&folder.title) == key)
+            .cloned()
+            .collect();
+        let candidates = found.iter().map(|folder| self.register(folder)).collect();
+        SourceInput::Resolved {
+            request,
+            candidates,
+            searched: 12,
+        }
+    }
+
+    /// A document's extracted pages: those it has text for.
+    fn read_pages(
+        &self,
+        request: u32,
+        id: SourceId,
+        range: std::ops::RangeInclusive<u32>,
+    ) -> Input {
+        let text = self.pages.get(&id).cloned().unwrap_or_default();
+        let pages = range
+            .filter_map(|page| {
+                let index = usize::try_from(page.checked_sub(1)?).ok()?;
+                let text = text.get(index).filter(|text| !text.is_empty())?;
+                Some(DocumentPage {
+                    page,
+                    text: text.clone(),
+                })
+            })
+            .collect();
+        Input::Source {
+            source: SourceInput::DocumentPages {
+                request,
+                pages,
+                page_count: u32::try_from(text.len()).ok(),
+            },
         }
     }
 

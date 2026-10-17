@@ -35,6 +35,7 @@ import type { ChipKind } from "./generated/ChipKind.ts";
 import type { ColumnRange } from "./generated/ColumnRange.ts";
 import type { CoverShape } from "./generated/CoverShape.ts";
 import type { DigestCard } from "./generated/DigestCard.ts";
+import type { DocFigure } from "./generated/DocFigure.ts";
 import type { DrawOp } from "./generated/DrawOp.ts";
 import type { Fill } from "./generated/Fill.ts";
 import type { Lifeline } from "./generated/Lifeline.ts";
@@ -279,7 +280,33 @@ const SURFACES: Tagged<Surface, "kind"> = {
     const bullets = list(f.bullets, text);
     return id === null || bullets === null ? null : { kind: "Recap", id, bullets };
   },
+  Doc: (f) => {
+    const id = u32(f.id);
+    const title = text(f.title);
+    const chip = text(f.chip);
+    const figure = nullable(f.figure, docFigure);
+    const sentences = list(f.sentences, text);
+    const highlight = nullable(f.highlight, u32);
+    const note = text(f.note);
+    return id === null ||
+      title === null ||
+      chip === null ||
+      figure === undefined ||
+      sentences === null ||
+      highlight === undefined ||
+      note === null
+      ? null
+      : { kind: "Doc", id, title, chip, figure, sentences, highlight, note };
+  },
 };
+
+function docFigure(value: unknown): DocFigure | null {
+  const f = fields(value);
+  const label = text(f?.label);
+  const caption = text(f?.caption);
+  const read = flag(f?.read);
+  return label === null || caption === null || read === null ? null : { label, caption, read };
+}
 
 const SURFACE_UPDATES: Tagged<SurfaceUpdate, "kind"> = {
   Highlight: (f) => {
@@ -299,6 +326,10 @@ const SURFACE_UPDATES: Tagged<SurfaceUpdate, "kind"> = {
     return line === null || columns === null || mark === null
       ? null
       : { kind: "Mark", line, columns, mark };
+  },
+  Sentence: (f) => {
+    const index = u32(f.index);
+    return index === null ? null : { kind: "Sentence", index };
   },
 };
 

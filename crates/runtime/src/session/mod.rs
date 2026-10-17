@@ -109,7 +109,8 @@ pub struct SourceParts {
     pub shelf: Arc<dyn SourceShelf>,
     /// The day a brief is written on.
     pub clock: Arc<dyn WallClock>,
-    /// Document readers (T-031); none yet, so documents wait in the tray.
+    /// Document readers (D-186): the app gives BoardAI's own; with none, documents wait in the
+    /// tray.
     pub readers: Vec<Arc<dyn SourceReader>>,
 }
 

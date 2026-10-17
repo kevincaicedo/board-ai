@@ -13,10 +13,17 @@ use crate::tools::ToolOutput;
 #[derive(Clone, Debug, Default)]
 pub struct ReadLines {
     files: BTreeMap<String, BTreeSet<u32>>,
+    /// Pages and digests of the session's documents, for Doc cards' chips (I17).
+    documents: super::documents::ReadDocuments,
 }
 
 impl ReadLines {
+    pub fn on_effect(&mut self, effect: &crate::effect::Effect) {
+        self.documents.on_effect(effect);
+    }
+
     pub fn on_input(&mut self, input: &Input) {
+        self.documents.on_input(input);
         if let Input::ToolResult {
             output:
                 ToolOutput::File {
@@ -60,6 +67,7 @@ impl ReadLines {
     }
 
     pub fn on_ui(&self, now: SessionTime, event: &UiEvent, violations: &mut Vec<String>) {
+        self.documents.on_ui(now, event, violations);
         let UiEvent::Chip {
             kind: ChipKind::Source,
             source: Some(source),

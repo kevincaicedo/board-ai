@@ -21,6 +21,7 @@ const CHAPTER_NAMES: { readonly [K in ChapterKind]: string } = {
   Code: "Code trace",
   Compare: "Compare",
   Recap: "Recap",
+  Doc: "Document",
   Capture: "Capture",
   Resume: "Resume",
   Drawing: "You draw",

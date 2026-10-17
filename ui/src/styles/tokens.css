@@ -191,6 +191,33 @@
   --recap-head: 60px;
   --recap-row: 30px;
   --recap-foot: 28px;
+  /* The Doc card (14b): a passage or a figure of a shared document. The column stacks cards by
+     height, so its height is estimated from its text: the characters per line are measured
+     estimates at the column's width (Geist 14 px and 12 px), kept on the high side. */
+  --doc-padding: 22px;
+  --doc-gap: 14px;
+  --doc-head: 22px;
+  --doc-line: 22px;
+  --doc-chars-per-line: 80;
+  --doc-figure-padding: 14px;
+  --doc-figure-gap: 6px;
+  --doc-figure-label-line: 17px;
+  --doc-figure-line: 20px;
+  --doc-figure-chars-per-line: 72;
+  --doc-figure-radius: 14px;
+  --doc-note-line: 17px;
+  --doc-note-chars-per-line: 96;
+  --doc-chip-height: 22px;
+  --doc-chip-padding: 8px;
+  --doc-chip-radius: 11px;
+  --doc-chip-bg: #fceef4;
+  --doc-highlight-rgb: 253, 241, 228;
+  --doc-highlight-radius: 4px;
+  --doc-highlight-padding: 2px;
+  --type-doc-chip: 11px;
+  --type-doc-passage: 14px;
+  --type-doc-figure-label: 12px;
+  --type-doc-note: 12px;
   --detour-push-blur: 5px;
   --detour-push-shift: 46px;
   --detour-push-shrink: 0.035;

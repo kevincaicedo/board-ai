@@ -26,6 +26,7 @@ use boardai_core::{Core, CoreConfig};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+mod documents;
 mod resting;
 mod sources;
 

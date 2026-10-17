@@ -7,6 +7,7 @@
 import { useMemo, useRef } from "preact/hooks";
 import { round1, round2 } from "../canvas/math.ts";
 import { CodeCard, CompareCard, DetourCard, RecapCard } from "../surfaces/Cards.tsx";
+import { DocCard } from "../surfaces/DocCard.tsx";
 import { styleWriter, useFrame, useRuntime } from "./hooks.ts";
 import { ColumnTopsCache, surfaceMotion } from "./layout.ts";
 import type { ColumnItem } from "./session.ts";
@@ -23,6 +24,8 @@ function CardBody({ item }: { item: ColumnItem }) {
       return <CompareCard surface={surface} cells={item.cells} />;
     case "Recap":
       return <RecapCard surface={surface} />;
+    case "Doc":
+      return <DocCard surface={surface} highlights={item.highlights} />;
   }
 }
 

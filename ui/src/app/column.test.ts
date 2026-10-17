@@ -1,5 +1,5 @@
 // The surface column against the core's caps (review finding 7). The core counts only code,
-// compare and recap toward its two surfaces (`SURFACES_BESIDE_CANVAS_MAX`) and dismisses them
+// compare, recap and doc cards toward its two surfaces (`SURFACES_BESIDE_CANVAS_MAX`) and dismisses them
 // itself; a detour card is not a surface, so it stays while its layer is open.
 
 import assert from "node:assert/strict";
@@ -33,6 +33,17 @@ const compare: Surface = {
   options: ["A", "B"],
   criteria: ["c"],
   title: null,
+};
+
+const doc: Surface = {
+  kind: "Doc",
+  id: 2,
+  title: "FoundationDB · SIGMOD ’21",
+  chip: "p. 3 · Figure 1",
+  figure: { label: "Figure 1", caption: "The architecture.", read: true },
+  sentences: ["A client asks a proxy.", "The proxy asks the sequencer.", "Reads go to storage."],
+  highlight: 0,
+  note: "Figure read by Gemini 3.8 Flash.",
 };
 
 const detourCard = (store: SessionStore, layer: number): ColumnItem | undefined =>
@@ -117,6 +128,44 @@ test("a third surface steps the oldest surface out, never the detour card", () =
       ["surface-2", null],
     ],
   );
+});
+
+test("a doc card is a surface: beside a code and a compare card, it steps the oldest out", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "SurfaceShow", surface: code }, 1000);
+  store.apply({ type: "SurfaceShow", surface: compare }, 2000);
+  store.apply({ type: "SurfaceShow", surface: doc }, 3000);
+  assert.deepEqual(
+    store.column.value.map((item) => [item.key, item.leftAt]),
+    [
+      ["surface-0", 3000],
+      ["surface-1", null],
+      ["surface-2", null],
+    ],
+  );
+  // And a fourth steps the compare card out, leaving the doc card.
+  store.apply({ type: "SurfaceShow", surface: { ...code, id: 3 } }, 4000);
+  assert.deepEqual(
+    store.column.value.filter((item) => item.leftAt === null).map((item) => item.key),
+    ["surface-2", "surface-3"],
+  );
+});
+
+test("a doc card's highlight follows Sentence updates; a code card ignores them", () => {
+  const store = new SessionStore(tokens);
+  store.apply({ type: "SurfaceShow", surface: code }, 1000);
+  store.apply({ type: "SurfaceShow", surface: doc }, 2000);
+  store.apply({ type: "SurfaceUpdate", id: 2, update: { kind: "Sentence", index: 1 } }, 3000);
+  store.apply({ type: "SurfaceUpdate", id: 0, update: { kind: "Sentence", index: 1 } }, 3000);
+  const card = (id: number) =>
+    store.column.value.find((item) => item.kind === "surface" && item.surface.id === id);
+  const docCard = card(2);
+  assert.deepEqual(docCard?.kind === "surface" ? docCard.highlights : null, [
+    { line: 0, at: 2000 },
+    { line: 1, at: 3000 },
+  ]);
+  const codeCard = card(0);
+  assert.deepEqual(codeCard?.kind === "surface" ? codeCard.highlights : null, []);
 });
 
 test("detour cards stay bounded even if pops never come", () => {

@@ -14,6 +14,7 @@ pub mod audio;
 pub mod bridge;
 pub mod cancel;
 pub mod clock;
+pub mod documents;
 pub mod harness;
 pub mod limits;
 pub mod llm;

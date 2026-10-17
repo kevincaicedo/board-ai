@@ -30,6 +30,7 @@ export type ChapterKind =
   | "Code"
   | "Compare"
   | "Recap"
+  | "Doc"
   | "Capture"
   | "Resume"
   | "Drawing";

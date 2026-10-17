@@ -329,3 +329,7 @@ pub const DRAWING_DESCRIPTION_MAX_BYTES: usize = 2_048;
 // together.
 mod sources;
 pub use sources::*;
+
+// Documents: digests, pages read, page citations and the Doc card (D-186, D-254 to D-257).
+mod documents;
+pub use documents::*;

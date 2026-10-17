@@ -1,0 +1,40 @@
+{
+ "data": {
+  "id": "anthropic/claude-haiku-5.5",
+  "name": "Anthropic: Claude Haiku 5.5",
+  "created": 1791397883,
+  "description": "Claude Haiku 5.5 is Anthropic's small, fast model for high-volume, cost-sensitiv",
+  "architecture": {
+   "tokenizer": "Claude",
+   "instruct_type": null,
+   "modality": "text+image+file->text",
+   "input_modalities": [
+    "text",
+    "image",
+    "file"
+   ],
+   "output_modalities": [
+    "text"
+   ]
+  },
+  "endpoints": [
+   {
+    "context_length": 1000000,
+    "provider_name": "Google",
+    "tag": "google-vertex/global",
+    "supported_parameters": [
+     "reasoning",
+     "include_reasoning",
+     "max_tokens",
+     "response_format",
+     "tool_choice",
+     "tools",
+     "verbosity",
+     "structured_outputs",
+     "stop",
+     "reasoning_effort"
+    ]
+   }
+  ]
+ }
+}

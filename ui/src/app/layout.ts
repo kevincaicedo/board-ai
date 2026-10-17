@@ -5,32 +5,34 @@
 import { easeOut, lerp, ramp, spring } from "../canvas/math.ts";
 import type { Surface } from "../protocol/generated/Surface.ts";
 import type { Tokens } from "../styles/tokens.ts";
+import { type DocTokens, docCardHeight } from "../surfaces/doc.ts";
 
 /**
  * No more than two surfaces sit beside the canvas at once (PRODUCT §7.2): the core's
- * `SURFACES_BESIDE_CANVAS_MAX`, which counts code, compare and recap cards only. The core sends
+ * `SURFACES_BESIDE_CANVAS_MAX`, which counts code, compare, recap and doc cards only. The core sends
  * the dismiss itself; past this the UI steps the oldest surface out, so it never shows more.
  * A detour card is not a surface.
  */
 export const SURFACES_VISIBLE_MAX = 2;
 
-export type ColumnTokens = Pick<
-  Tokens,
-  | "surfaceTop"
-  | "surfaceCenter"
-  | "surfaceGap"
-  | "detourCardHeight"
-  | "codeHead"
-  | "codeLine"
-  | "codeFoot"
-  | "compareHead"
-  | "compareRow"
-  | "compareFoot"
-  | "recapHead"
-  | "recapRow"
-  | "recapFoot"
-  | "durationSceneMs"
->;
+export type ColumnTokens = DocTokens &
+  Pick<
+    Tokens,
+    | "surfaceTop"
+    | "surfaceCenter"
+    | "surfaceGap"
+    | "detourCardHeight"
+    | "codeHead"
+    | "codeLine"
+    | "codeFoot"
+    | "compareHead"
+    | "compareRow"
+    | "compareFoot"
+    | "recapHead"
+    | "recapRow"
+    | "recapFoot"
+    | "durationSceneMs"
+  >;
 
 /** A span in which a nested detour's card hides its outer detour's card; `to` is its close. */
 export interface Cover {
@@ -59,6 +61,8 @@ export function surfaceHeight(surface: Surface, tokens: ColumnTokens): number {
       );
     case "Recap":
       return tokens.recapHead + surface.bullets.length * tokens.recapRow + tokens.recapFoot;
+    case "Doc":
+      return docCardHeight(surface, tokens);
   }
 }
 

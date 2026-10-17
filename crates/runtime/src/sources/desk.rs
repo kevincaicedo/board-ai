@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use boardai_core::sources::{Project, ProjectId, SourceId, SourceInfo, SourceKind};
+use boardai_core::RepoReads;
+use boardai_core::sources::{DocumentFormat, Project, ProjectId, SourceId, SourceInfo, SourceKind};
 
 use super::stamp::Stamp;
 use super::validate::{ValidSource, written_path};
@@ -64,6 +65,10 @@ pub struct SourceDesk {
     cache: VecDeque<((PathBuf, String), CachedBrief)>,
     project: Option<Project>,
     written: Vec<Written>,
+    /// What the core was last told the talker's requests offer (D-232, D-244): the repo reads,
+    /// over the code folders and readable code sources. A shared document, readable by its
+    /// lines too (D-256), offers none.
+    reads: RepoReads,
 }
 
 impl SourceDesk {
@@ -85,7 +90,37 @@ impl SourceDesk {
             cache: VecDeque::new(),
             project: None,
             written: Vec::new(),
+            reads: RepoReads::NotOffered,
         }
+        .with_reads()
+    }
+
+    /// The reads the code folders alone offer: what a session starts with.
+    fn with_reads(mut self) -> Self {
+        self.reads = self.code_reads();
+        self
+    }
+
+    fn code_reads(&self) -> RepoReads {
+        let code = !self.code_roots.is_empty()
+            || self
+                .entries
+                .values()
+                .any(|entry| entry.readable && entry.kind.is_code());
+        if code {
+            RepoReads::Offered
+        } else {
+            RepoReads::NotOffered
+        }
+    }
+
+    /// The reads offered now, when they changed since the core was last told.
+    pub fn changed_reads(&mut self) -> Option<RepoReads> {
+        let reads = self.code_reads();
+        (reads != self.reads).then(|| {
+            self.reads = reads;
+            reads
+        })
     }
 
     #[must_use]
@@ -109,6 +144,7 @@ impl SourceDesk {
         self.cache.clear();
         self.project = None;
         self.written.clear();
+        self.reads = self.code_reads();
     }
 
     /// Registers a validated path, not yet readable. The same path keeps its id.
@@ -268,9 +304,23 @@ impl SourceDesk {
                 .code_roots
                 .iter()
                 .any(|root| entry.path.starts_with(root));
+            // A Markdown or text document is read by its lines like a code file (D-256); a PDF
+            // only through its reader's extracted text.
+            let by_lines = match entry.kind {
+                SourceKind::CodeFile
+                | SourceKind::Document {
+                    format: DocumentFormat::Markdown | DocumentFormat::Text,
+                } => true,
+                SourceKind::CodeFolder
+                | SourceKind::Document {
+                    format: DocumentFormat::Pdf,
+                } => false,
+            };
             match entry.kind {
                 SourceKind::CodeFolder if !inside => folders.push(entry.path.clone()),
-                SourceKind::CodeFile if !inside => files.push(entry.path.clone()),
+                SourceKind::CodeFile | SourceKind::Document { .. } if !inside && by_lines => {
+                    files.push(entry.path.clone());
+                }
                 SourceKind::CodeFolder | SourceKind::CodeFile | SourceKind::Document { .. } => {}
             }
         }

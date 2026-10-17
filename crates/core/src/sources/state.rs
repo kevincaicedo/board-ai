@@ -33,8 +33,12 @@ pub struct Entry {
     pub kept: bool,
     /// Its state once nothing is reading it.
     pub settled: SourceState,
-    /// Files the harness has read so far, while a brief about it is being written.
+    /// Files the harness has read so far, while a brief about it is being written (a
+    /// document's pages, while its reader reads it).
     pub reading: Option<u32>,
+    /// Who is reading a document ("BoardAI", "Gemini 3.8 Flash"), while its reader reports;
+    /// `None`: the harness, for code.
+    pub reader: Option<String>,
     /// The overview's components `(id, name)`, once an overview brief is known.
     pub components: Vec<(String, String)>,
     /// Topics whose brief the talker already has in this session's history, oldest first.
@@ -48,6 +52,7 @@ impl Entry {
             kept,
             settled,
             reading: None,
+            reader: None,
             components: Vec::new(),
             delivered: VecDeque::new(),
         }
@@ -74,7 +79,7 @@ impl Entry {
     fn row(&self, harness: &str) -> SourceRow {
         let state = match self.reading {
             Some(files_read) => SourceState::Reading {
-                reader: harness.to_owned(),
+                reader: self.reader.clone().unwrap_or_else(|| harness.to_owned()),
                 files_read,
                 files_estimate: self.info.files_estimate,
             },

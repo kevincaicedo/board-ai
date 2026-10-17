@@ -1,8 +1,10 @@
 //! The runtime's named limits (LLD §5). Each one says what happens when it is crossed.
 
+mod documents;
 mod llm;
 mod sources;
 
+pub use documents::*;
 pub use llm::*;
 pub use sources::*;
 

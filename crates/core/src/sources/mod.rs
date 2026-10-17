@@ -9,6 +9,8 @@
 
 pub mod brief;
 pub mod cues;
+pub mod digest;
+pub mod pages;
 pub mod state;
 pub mod tray;
 
@@ -331,6 +333,14 @@ pub enum SourceInput {
     /// folders and every readable code source, so sharing the first one mid-session (or
     /// removing the last) changes it. Sent only when it changes.
     RepoReads { reads: crate::engine::RepoReads },
+    /// The answer to `ReadDocument`: the pages' text as extracted on this Mac (D-256), in page
+    /// order; a page with no text (a scan) or past the end is left out. `page_count` is the
+    /// document's length when the reader knows it.
+    DocumentPages {
+        request: u32,
+        pages: Vec<DocumentPage>,
+        page_count: Option<u32>,
+    },
 }
 
 /// Where a staged diagram came from when it wasn't the talker's own (D-242): a research brief's
@@ -346,6 +356,15 @@ pub struct DiagramProvenance {
     /// Files it read for this brief; `None` for a brief from the cache, read in an earlier
     /// session.
     pub files_read: Option<u32>,
+}
+
+/// One page of a document's extracted text, as the runtime read it (bounded by
+/// `DOCUMENT_PAGE_TEXT_MAX_BYTES` where it enters the core).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentPage {
+    /// 1-based.
+    pub page: u32,
+    pub text: String,
 }
 
 /// What a spoken name was called ("the inf-alloc **crate**"), which steers the resolver.
@@ -408,6 +427,14 @@ pub enum SourceEffect {
         task: TaskId,
         source: SourceId,
         citations: Vec<Citation>,
+    },
+    /// Pages `first_page..=last_page` of a shared PDF, from its text extracted on this Mac
+    /// (D-256, at most `DOCUMENT_READ_PAGES_MAX`); answered by `DocumentPages`.
+    ReadDocument {
+        request: u32,
+        source: SourceId,
+        first_page: u32,
+        last_page: u32,
     },
 }
 
