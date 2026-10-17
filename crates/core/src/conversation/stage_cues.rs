@@ -7,7 +7,7 @@
 //! The words around a cue may be fillers and acknowledgments ("I think that is okay, I think we
 //! can stop here."), never content: "explain Paxos, we can stop here" is a question.
 
-use super::cues::{CONTROL_FILLERS, made_of, words};
+use super::cues::{CONTROL_FILLERS, is_backchannel, made_of, words};
 
 /// Ending the session by voice (D-144): the core answers, the session ends, and the next words
 /// open a new one. Only explicit forms: a bare "new session" can be a question about one, and
@@ -42,6 +42,35 @@ pub const END_SESSION_PHRASES: &[&str] = &[
     "that's it for today",
     "that's all for today",
     "let's call it a day",
+];
+
+/// How people sign off once "Session saved." has played ("thanks, bye"): said over its last word,
+/// they end the session as the line did; anything else is a real question and keeps it.
+pub const FAREWELL_PHRASES: &[&str] = &[
+    "thanks",
+    "thank you",
+    "thank you so much",
+    "thanks a lot",
+    "bye",
+    "bye bye",
+    "goodbye",
+    "good bye",
+    "see you",
+    "see you later",
+    "see ya",
+    "later",
+    "cheers",
+    "talk later",
+    "talk to you later",
+    "good night",
+    "have a good one",
+    "have a good day",
+    "take care",
+    "sounds good",
+    "will do",
+    "you too",
+    "awesome",
+    "nice",
 ];
 
 /// Going back to the main board (D-147): every open detour closes, whatever the talker does.
@@ -211,6 +240,13 @@ pub fn is_end_session(text: &str) -> bool {
     made_of_stage(text, END_SESSION_PHRASES)
 }
 
+/// A goodbye, an acknowledgment or "end the session" again, and nothing else: words over the
+/// tail of "Session saved." that ask nothing.
+#[must_use]
+pub fn is_farewell(text: &str) -> bool {
+    is_backchannel(text) || made_of_stage(text, FAREWELL_PHRASES) || is_end_session(text)
+}
+
 /// "Clear the board" or "new page", alone or joined to a request at its start or end.
 #[must_use]
 pub fn page_cue(text: &str) -> Option<PageCue> {
@@ -322,8 +358,8 @@ pub fn main_board_cue(text: &str) -> Option<MainBoardCue> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BACK_TO_MAIN_PHRASES, CONTINUE_PHRASES, END_SESSION_PHRASES, MainBoardCue, PAGE_PHRASES,
-        PageCue, is_end_session, main_board_cue, page_cue,
+        BACK_TO_MAIN_PHRASES, CONTINUE_PHRASES, END_SESSION_PHRASES, FAREWELL_PHRASES,
+        MainBoardCue, PAGE_PHRASES, PageCue, is_end_session, is_farewell, main_board_cue, page_cue,
     };
 
     #[test]
@@ -365,6 +401,33 @@ mod tests {
             "don't end the session",
         ] {
             assert!(!is_end_session(asked), "{asked:?}");
+        }
+    }
+
+    #[test]
+    fn a_goodbye_is_a_farewell_and_a_question_is_not() {
+        for phrase in FAREWELL_PHRASES {
+            assert!(is_farewell(phrase), "{phrase}");
+            let noisy = format!("Okay, great, {}!", phrase.to_uppercase());
+            assert!(is_farewell(&noisy), "{noisy}");
+        }
+        for said in [
+            "",
+            "Thanks, bye.",
+            "mm-hm",
+            "Perfect, thank you.",
+            "end the session",
+        ] {
+            assert!(is_farewell(said), "{said:?}");
+        }
+        for asked in [
+            "Thanks, but how does Raft elect a leader?",
+            "wait",
+            "one more thing",
+            "bye the way, what about Kafka",
+            "see you used Redis",
+        ] {
+            assert!(!is_farewell(asked), "{asked:?}");
         }
     }
 

@@ -8,7 +8,7 @@ use crate::board::summary::summary;
 use crate::board::{Board, EdgeRequest, NodeRequest, Placed, Rejected};
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId, OpId};
-use crate::limits::{USER_COORDINATE_MAX, USER_STROKE_POINTS_MAX};
+use crate::limits::{USER_COORDINATE_MAX, USER_SHAPE_SPAN_MAX, USER_STROKE_POINTS_MAX};
 use crate::narration::ops::{Direction, Placement};
 use crate::protocol::{DrawnShape, LineStyle, NodeShape, UserShape, UserShapeKind};
 use crate::time::SessionTime;
@@ -106,6 +106,32 @@ fn shapes_are_parsed_at_the_boundary() {
         })
         .is_ok()
     );
+    // Within range everywhere, but its area would take millions of grid cells.
+    let span = USER_SHAPE_SPAN_MAX;
+    let reach = i32::try_from(span).expect("small");
+    for huge in [
+        DrawnShape::Box {
+            rect: rect(-1_000_000, -1_000_000, 2_000_000, 2_000_000),
+        },
+        DrawnShape::Box {
+            rect: rect(0, 0, 70, span + 1),
+        },
+        DrawnShape::Pen {
+            points: vec![point(0, 0), point(reach + 1, 10)],
+        },
+        DrawnShape::Arrow {
+            start: point(0, 0),
+            end: point(0, reach + 1),
+        },
+    ] {
+        assert_eq!(Drawn::parse(huge), Err(Refused::TooLarge));
+    }
+    assert!(
+        Drawn::parse(DrawnShape::Box {
+            rect: rect(0, 0, span, span)
+        })
+        .is_ok()
+    );
 }
 
 #[test]
@@ -174,7 +200,9 @@ fn undo_takes_a_pen_shapes_last_stroke_then_the_shape() {
     assert!(matches!(&changed.kind, UserShapeKind::Ink { strokes, .. } if strokes.len() == 1));
     assert_eq!(
         board.undo_user_shape(MAIN, &shape.id),
-        Some(Undone::Removed)
+        Some(Undone::Removed {
+            disconnected: Vec::new()
+        })
     );
     assert!(
         board
@@ -188,8 +216,10 @@ fn undo_takes_a_pen_shapes_last_stroke_then_the_shape() {
     assert_eq!(board.undo_user_shape(MAIN, &id("api")), None);
 }
 
+/// Undoing a shape your arrow joins disconnects that end, where it was drawn; one an edge of
+/// BoardAI's joins stays.
 #[test]
-fn a_shape_an_arrow_joins_is_not_undone() {
+fn undoing_a_shape_frees_your_arrows_and_keeps_what_boardai_joined() {
     let mut board = Board::new();
     let client = add(&mut board, Drawn::Box(rect(0, 0, 100, 60)));
     let api = add(&mut board, Drawn::Box(rect(300, 0, 100, 60)));
@@ -207,12 +237,27 @@ fn a_shape_an_arrow_joins_is_not_undone() {
         (from.as_ref(), to.as_ref()),
         (Some(&client.id), Some(&api.id))
     );
-    assert_eq!(board.undo_user_shape(MAIN, &api.id), None);
-    assert_eq!(
-        board.undo_user_shape(MAIN, &arrow.id),
-        Some(Undone::Removed)
-    );
-    assert_eq!(board.undo_user_shape(MAIN, &api.id), Some(Undone::Removed));
+    let Some(Undone::Removed { disconnected }) = board.undo_user_shape(MAIN, &api.id) else {
+        panic!("the box goes");
+    };
+    let [freed] = disconnected.as_slice() else {
+        panic!("one arrow freed: {disconnected:?}");
+    };
+    let UserShapeKind::Arrow { from, to, end, .. } = &freed.kind else {
+        panic!("an arrow: {freed:?}");
+    };
+    assert_eq!((from.as_ref(), to.as_ref()), (Some(&client.id), None));
+    assert_eq!(*end, point(300, 30), "the end stays where it was drawn");
+    // An edge of BoardAI's to your shape keeps it.
+    node(&mut board, 1, "db", &Placement::Auto);
+    let edge = EdgeRequest {
+        from: &id("db"),
+        to: &client.id,
+        label: None,
+        style: LineStyle::Solid,
+    };
+    board.place_edge(MAIN, OpId(2), edge).expect("joined");
+    assert_eq!(board.undo_user_shape(MAIN, &client.id), None);
 }
 
 /// Layout treats your shapes as taken: the flow, a placement beside them and an edge to them all

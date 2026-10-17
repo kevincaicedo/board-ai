@@ -4,7 +4,8 @@ use super::{
     ElevenLabsVoice, FileState, HarnessFound, HarnessName, HarnessesFound, InputDevice, KeyName,
     KeyState, KeyStatus, MicChoice, MicPermission, ModelFileStatus, ModelInfo, ModelListing,
     ModelPrice, ModelProvider, ModelQuery, ModelReasoning, OllamaStatus, SetupBlocker, SetupEdit,
-    SetupStatus, TalkerProvider, TalkerSetup, ThinkingEffort, VoiceEngine, blockers,
+    SetupStatus, StartRule, TalkerKeyUse, TalkerProvider, TalkerSetup, ThinkingEffort, VoiceEngine,
+    blockers, start_rule, talker_key_use,
 };
 
 fn file(id: &str, state: FileState) -> ModelFileStatus {
@@ -66,6 +67,32 @@ fn ready() -> SetupStatus {
 #[test]
 fn a_saved_key_ready_hearing_and_the_mic_start_even_while_the_voice_downloads() {
     assert_eq!(blockers(&ready()), Vec::new());
+    assert_eq!(start_rule(&ready()), StartRule::Ready);
+}
+
+/// A key this run never read (`NotChecked`) is not known to be wrong, so the screen shows no
+/// blocker for it, but it is never usable: the start rule says to read it first.
+#[test]
+fn a_talker_key_nobody_checked_is_never_usable_to_start() {
+    for (key, expected) in [
+        (KeyState::NotNeeded, TalkerKeyUse::Usable),
+        (KeyState::Saved, TalkerKeyUse::Usable),
+        (KeyState::Missing, TalkerKeyUse::Blocked),
+        (KeyState::Unreadable, TalkerKeyUse::Blocked),
+        (KeyState::NotChecked, TalkerKeyUse::CheckFirst),
+    ] {
+        assert_eq!(talker_key_use(key), expected, "{key:?}");
+    }
+    let mut status = ready();
+    status.talker.key = KeyState::NotChecked;
+    assert_eq!(blockers(&status), Vec::new());
+    assert_eq!(start_rule(&status), StartRule::CheckTalkerKey);
+    // Something else blocking decides first: reading the key wouldn't start the session.
+    status.microphone = MicPermission::Denied;
+    assert_eq!(start_rule(&status), StartRule::Blocked);
+    status.microphone = MicPermission::Granted;
+    status.talker.key = KeyState::Missing;
+    assert_eq!(start_rule(&status), StartRule::Blocked);
 }
 
 #[test]

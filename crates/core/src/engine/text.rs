@@ -176,6 +176,35 @@ pub fn invalid_call(error: &InvalidToolInput) -> String {
     }
 }
 
+/// "End the session" while a harness task runs: ending now would stop it partway, so BoardAI
+/// says so and ends the session only when the words come again.
+#[must_use]
+pub fn still_running_line(kind: &HarnessKind) -> String {
+    let task = match kind {
+        HarnessKind::Research => "A research task is",
+        HarnessKind::Review => "A review is",
+        HarnessKind::Change { .. } => "A change is",
+    };
+    format!(
+        "{task} still running; ending now stops it partway. Say \u{201c}end the session\u{201d} \
+         again to stop it."
+    )
+}
+
+/// The session's last line after "end the session" said again over running tasks: what was
+/// stopped, then `end_line` ("Session saved."). The digest is made from what was said, so it
+/// records the stop.
+#[must_use]
+pub fn stopped_line(stopped: &[HarnessKind], end_line: &str) -> String {
+    let what = match stopped {
+        [HarnessKind::Research] => "The research",
+        [HarnessKind::Review] => "The review",
+        [HarnessKind::Change { .. }] => "The change",
+        [] | [_, _, ..] => "The running tasks",
+    };
+    format!("{what} stopped. {end_line}")
+}
+
 #[must_use]
 pub fn harness_kind_name(kind: &HarnessKind) -> &'static str {
     match kind {

@@ -432,6 +432,14 @@ pub fn completeness(text: &str) -> Completeness {
     }
 }
 
+/// The words end with a question mark, give or take closing quotes ("…how it evicts?").
+#[must_use]
+pub fn ends_on_question(text: &str) -> bool {
+    text.trim_end()
+        .trim_end_matches(TRANSCRIPT_CLOSERS)
+        .ends_with('?')
+}
+
 /// The utterance sounds unfinished: it ends on a continuation word or a trailing-off mark.
 #[must_use]
 pub fn ends_unfinished(text: &str) -> bool {

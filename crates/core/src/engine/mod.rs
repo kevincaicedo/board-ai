@@ -123,6 +123,9 @@ pub struct Core {
     /// What the user asked in the turn being answered, for a detour card's subtitle; `None` when
     /// the reply answers no question of theirs.
     turn_question: Option<String>,
+    /// BoardAI's last reply played to its end on a question (an offer: "Want me to keep going on
+    /// how it evicts?"), so "keep going" answers it and closes no detour (D-147).
+    reply_asked: bool,
     /// The idle suggestion is on screen.
     suggesting: bool,
     wakes: BTreeSet<SessionTime>,
@@ -176,6 +179,7 @@ impl Core {
             drawing_until: None,
             cameras: Cameras::default(),
             turn_question: None,
+            reply_asked: false,
             suggesting: false,
             wakes: BTreeSet::new(),
             push_to_talk_held: false,

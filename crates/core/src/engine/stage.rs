@@ -3,20 +3,29 @@
 //!
 //! - **"End the session"** is answered by the core in two words, without the talker. Once that
 //!   line has played, the core sends `SessionEnd`; the orchestrator, which owns the session's
-//!   life, ends it there (its digest is written) and the next words open a new one.
+//!   life, ends it there (its digest is written) and the next words open a new one. Words over
+//!   the line's last word end it too unless they are a real question ("thanks, bye" isn't). While
+//!   a harness task runs, ending would stop it partway, so BoardAI says so first and ends the
+//!   session (stopping the task) only when the words come again in the next utterance.
+//! - **Controls joined in one breath** ("don't remember this session, we can stop here") are
+//!   each carried out, ending the session last (`joined_cues`).
 //! - **"Back to the main board"**, or **"go on"** once a detour's answer has ended, closes every
 //!   open detour before the talker hears the words: the board comes back whether or not the
 //!   talker ever writes `<resume/>` (in the owner's session two detours never closed). The
 //!   talker still answers, with the bridge sentence a resume would get. "Go on" said over the
-//!   detour's answer asks for more of the detour, so it closes nothing.
+//!   detour's answer asks for more of the detour, so it closes nothing, and so does "keep going"
+//!   after an answer that ended on an offer ("Want me to keep going on how it evicts?").
 //! - **The recap** sums a topic up. When a new turn starts (the next question, or a harness
 //!   report), the topic has moved on and the recap leaves. Code and compare cards stay: the
 //!   next question is often about them, and they leave by `close` or when two newer cards come.
 
+use crate::conversation::joined_cues::{self, JoinedCue};
 use crate::conversation::stage_cues::{self, MainBoardCue};
 use crate::effect::Effect;
 use crate::engine::Core;
-use crate::engine::text::{SESSION_ENDED_LINE, SESSION_SAVED_LINE};
+use crate::engine::text::{
+    SESSION_ENDED_LINE, SESSION_SAVED_LINE, still_running_line, stopped_line,
+};
 use crate::ids::LayerId;
 use crate::narration::ops::CloseTarget;
 use crate::protocol::UiEvent;
@@ -26,8 +35,14 @@ use crate::time::SessionTime;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SessionEnding {
     Continuing,
+    /// "End the session" was said while a harness task runs, and BoardAI said ending would stop
+    /// it partway: the next utterance ends the session only if it says so again.
+    Confirming,
     /// "End the session" was answered: the session ends once that line has played.
     AfterReply,
+    /// The line played to its end while the user was talking over its tail: the session ends
+    /// when their words end, unless they are a real question.
+    AfterWords,
     /// `SessionEnd` went out: the orchestrator ends the session and drops this core, so nothing
     /// new starts here (a harness report waiting for the floor would be cut off at once).
     Ended,
@@ -35,19 +50,98 @@ pub(super) enum SessionEnding {
 
 impl Core {
     /// "End the session", "we can stop here": answered here with a short line (returns true).
-    /// The session ends once the line has played.
+    /// The session ends once the line has played. With a harness task running, the line says
+    /// ending would stop it, and the session ends only when the words come again: then every
+    /// running task is cancelled, and the line says so.
     pub(super) fn end_session_by_voice(&mut self, text: &str, effects: &mut Vec<Effect>) -> bool {
         if !stage_cues::is_end_session(text) {
             return false;
         }
-        let line = if self.memory.is_off_record() {
+        if self.ending != SessionEnding::Confirming
+            && let Some(kind) = self.context.running_task()
+        {
+            let line = still_running_line(kind);
+            self.context.notice(format!(
+                "The user said \"{text}\" while a harness task was running. BoardAI said \
+                 \"{line}\" The session ends, stopping the task, only if they say so again."
+            ));
+            self.say(&line, effects);
+            self.ending = SessionEnding::Confirming;
+            return true;
+        }
+        let end_line = if self.memory.is_off_record() {
             SESSION_ENDED_LINE
         } else {
             SESSION_SAVED_LINE
         };
-        self.say(line, effects);
+        let stopped = self.context.stop_all();
+        let line = if stopped.is_empty() {
+            end_line.to_owned()
+        } else {
+            let kinds: Vec<_> = stopped.iter().map(|(_, kind)| kind.clone()).collect();
+            stopped_line(&kinds, end_line)
+        };
+        for (task, _) in stopped {
+            effects.push(Effect::CancelHarness { task });
+        }
+        self.say(&line, effects);
         self.ending = SessionEnding::AfterReply;
         true
+    }
+
+    /// The words that came after BoardAI's line about ending, before anything else hears them.
+    /// After a warning about a running task, anything but "end the session" keeps the session.
+    /// After "Session saved." played to its end under these words, a goodbye ends it now
+    /// (returns true) and a real question keeps it.
+    pub(super) fn words_after_ending(&mut self, said: &str, effects: &mut Vec<Effect>) -> bool {
+        match self.ending {
+            SessionEnding::Confirming => {
+                if !asks_to_end(said) {
+                    self.ending = SessionEnding::Continuing;
+                }
+                false
+            }
+            SessionEnding::AfterWords => {
+                if stage_cues::is_farewell(said) {
+                    self.ending = SessionEnding::AfterReply;
+                    self.maybe_end_session(effects);
+                    return true;
+                }
+                self.ending = SessionEnding::Continuing;
+                false
+            }
+            SessionEnding::Continuing | SessionEnding::AfterReply | SessionEnding::Ended => false,
+        }
+    }
+
+    /// Controls said in one breath ("don't remember this session, we can stop here"): each is
+    /// carried out, ending the session last. True when the core answered; a spoken cancel alone
+    /// says nothing, so the words then go on to the talker, which confirms it.
+    pub(super) fn joined_controls(&mut self, said: &str, effects: &mut Vec<Effect>) -> bool {
+        let Some(controls) = joined_cues::joined(said) else {
+            return false;
+        };
+        let mut answered = false;
+        let mut end = None;
+        for control in controls {
+            answered |= match control.cue {
+                JoinedCue::Memory(_) => self.memory_control(control.words, effects),
+                JoinedCue::CloseView => self.close_view_by_voice(control.words, effects),
+                JoinedCue::OpenSettings => self.open_settings_by_voice(control.words, effects),
+                JoinedCue::Cancel(_) => {
+                    self.cancel_by_voice(control.words, effects);
+                    false
+                }
+                JoinedCue::EndSession => {
+                    end = Some(control.words);
+                    false
+                }
+            };
+        }
+        if let Some(words) = end {
+            answered |= self.end_session_by_voice(words, effects);
+        }
+        answered
     }
 
     /// The reply that answered "end the session" finished playing: the session ends now. A
@@ -63,6 +157,14 @@ impl Core {
     pub(super) fn keep_session(&mut self) {
         if self.ending == SessionEnding::AfterReply {
             self.ending = SessionEnding::Continuing;
+        }
+    }
+
+    /// The end-of-session line played to its end, with no stop, while the user was already
+    /// talking: their words decide (`words_after_ending`).
+    pub(super) fn end_after_words(&mut self) {
+        if self.ending == SessionEnding::AfterReply {
+            self.ending = SessionEnding::AfterWords;
         }
     }
 
@@ -84,9 +186,11 @@ impl Core {
         if self.thread.depth() == 0 {
             return false;
         }
+        // "Go on" over the detour's answer asks for more of it, and so does "keep going" after
+        // an answer that ended on an offer ("Want me to keep going on how it evicts?").
         match stage_cues::main_board_cue(text) {
             Some(MainBoardCue::Back) => {}
-            Some(MainBoardCue::Continue) if !interrupted => {}
+            Some(MainBoardCue::Continue) if !interrupted && !self.reply_asked => {}
             Some(MainBoardCue::Continue) | None => return false,
         }
         let titles: Vec<String> = self
@@ -126,4 +230,14 @@ impl Core {
             effects.extend(events.into_iter().map(Effect::Ui));
         }
     }
+}
+
+/// "End the session", alone or joined to other controls.
+pub(super) fn asks_to_end(said: &str) -> bool {
+    stage_cues::is_end_session(said)
+        || joined_cues::joined(said).is_some_and(|controls| {
+            controls
+                .iter()
+                .any(|control| control.cue == JoinedCue::EndSession)
+        })
 }

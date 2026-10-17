@@ -5,12 +5,15 @@
 
 mod common;
 
+use boardai_core::conversation::ConversationState;
 use boardai_core::effect::Effect;
 use boardai_core::history::Message;
+use boardai_core::input::Input;
+use boardai_core::limits::TOOL_CALLS_PER_RESPONSE_MAX;
 use boardai_core::memory::{MemoryKind, Subject};
-use boardai_core::protocol::{ChipKind, UiEvent};
-use boardai_core::sim::Sim;
+use boardai_core::protocol::{ChipKind, DrawAction, UiCommand, UiEvent};
 use boardai_core::sim::talker::ScriptedReply;
+use boardai_core::sim::{Entry, Sim};
 use boardai_core::views::ViewKind;
 use common::{assert_clean, config, count};
 
@@ -154,4 +157,203 @@ fn an_inferred_memory_written_as_a_tag_opens_no_gate() {
         matches!(effect, Effect::AcceptProposal { .. })
     });
     assert_eq!(kept, 0, "a yes to the drawing question keeps nothing");
+}
+
+/// Every system message the talker was sent, in order.
+fn all_notices(sim: &Sim) -> String {
+    sim.talker
+        .requests
+        .iter()
+        .flat_map(|request| &request.messages)
+        .filter_map(|message| match message {
+            Message::System { text } => Some(text.as_str()),
+            Message::User { .. } | Message::Assistant { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn shown(sim: &Sim) -> bool {
+    sim.ui()
+        .any(|(_, event)| matches!(event, UiEvent::ViewShow { .. }))
+}
+
+/// The pen pressed while a view written as a tag is still being read: the read belongs to the
+/// reply drawing stopped, so its answer shows nothing over the drawing.
+#[test]
+fn a_written_view_answered_after_drawing_starts_never_covers_the_drawing() {
+    let mut sim = Sim::new(config());
+    sim.talker.push(ScriptedReply::says(
+        "Here are your sessions. <show_library/> Pick one.",
+    ));
+    sim.user_says(0, "show me my sessions");
+    assert!(sim.run_until_true(30_000, |sim| {
+        sim.effects().any(|(_, effect)| {
+            matches!(effect, Effect::RunTool { id, .. } if id.as_str().starts_with("written-"))
+        })
+    }));
+    let at = sim.now().as_ms() + 1;
+    sim.at(
+        at,
+        Input::Command(UiCommand::Draw {
+            action: DrawAction::Start,
+        }),
+    );
+    sim.run_until(at + 3_000);
+    assert_clean(&sim);
+    assert!(sim.core().is_drawing());
+    assert!(!shown(&sim), "a view opened over the drawing");
+    assert_eq!(sim.core().view(), None);
+}
+
+/// The same when the reply has already played to its end and only its read is left: the pen
+/// still drops it.
+#[test]
+fn a_written_view_read_after_its_reply_ended_never_covers_a_drawing() {
+    let mut sim = Sim::new(config());
+    // The tag comes in a chunk of its own, long after the words before it have played.
+    sim.talker.chunk_bytes = 24;
+    sim.talker.chunk_interval_ms = 4_000;
+    sim.talker.push(ScriptedReply::says(
+        "Here are your sessions. <show_library/>",
+    ));
+    sim.user_says(0, "show me my sessions");
+    assert!(sim.run_until_true(30_000, |sim| {
+        sim.effects().any(|(_, effect)| {
+            matches!(effect, Effect::RunTool { id, .. } if id.as_str().starts_with("written-"))
+        })
+    }));
+    assert_eq!(
+        *sim.core().state(),
+        ConversationState::Idle,
+        "the reply has ended"
+    );
+    let at = sim.now().as_ms() + 1;
+    sim.at(
+        at,
+        Input::Command(UiCommand::Draw {
+            action: DrawAction::Start,
+        }),
+    );
+    sim.run_until(at + 3_000);
+    assert_clean(&sim);
+    assert!(sim.core().is_drawing());
+    assert!(!shown(&sim), "a view opened over the drawing");
+}
+
+/// The user barges in while the talker's stream ends; the remark ("Redis?") then interrupts.
+/// A view the stream called as a tool is dropped with the stop, and so is one written as a tag.
+fn barge_in_as_the_stream_ends(sim: &mut Sim, reply: ScriptedReply, on_call: bool) {
+    sim.talker.push(reply);
+    sim.talker.push(ScriptedReply::says("Redis is the cache."));
+    sim.user_says(0, "Walk me through the request path.");
+    assert!(sim.run_until_true(20_000, |sim| {
+        *sim.core().state() == ConversationState::Speaking
+    }));
+    let at = sim.now().as_ms() + 100;
+    sim.at(at, Input::VoiceStart);
+    assert!(sim.run_until_true(at + 20_000, |sim| {
+        sim.trace().iter().any(|(_, entry)| {
+            if on_call {
+                matches!(entry, Entry::Input(Input::TalkerToolCall { .. }))
+            } else {
+                matches!(entry, Entry::Input(Input::TalkerDone { .. }))
+            }
+        })
+    }));
+    assert!(
+        matches!(sim.core().state(), ConversationState::Ducked(_)),
+        "{}",
+        sim.core().state().name()
+    );
+    let done = sim.now().as_ms();
+    sim.at(
+        done + 2,
+        Input::VoiceEnd {
+            voiced_ms: 500,
+            silence_ms: 0,
+        },
+    );
+    sim.at(
+        done + 4,
+        Input::Transcript {
+            text: "Redis?".to_owned(),
+            is_final: true,
+        },
+    );
+    sim.run_until(done + 20_000);
+}
+
+const LONG: &str = "Here are your past sessions, the request path first, then the cache, then \
+                    the queue, and the last one about Raft.";
+
+#[test]
+fn a_view_written_as_a_tag_never_opens_after_the_user_interrupted() {
+    let mut sim = Sim::new(config());
+    let reply = ScriptedReply::says(&format!("{LONG} <show_library/>"));
+    barge_in_as_the_stream_ends(&mut sim, reply, false);
+    assert_clean(&sim);
+    assert!(
+        !shown(&sim),
+        "the written view opened over the user's interruption"
+    );
+}
+
+#[test]
+fn a_view_called_as_a_tool_never_opens_after_the_user_interrupted() {
+    let mut sim = Sim::new(config());
+    let reply = ScriptedReply::says(LONG).calls("show_library", "{}");
+    barge_in_as_the_stream_ends(&mut sim, reply, true);
+    assert_clean(&sim);
+    assert!(!shown(&sim));
+}
+
+/// `<open_session id="raft"/>` written as a tag, and no session matches: the talker hears that
+/// nothing was shown, and why, once the read has answered.
+#[test]
+fn a_written_view_that_fails_is_reported_as_not_shown() {
+    let mut sim = Sim::new(config());
+    sim.talker.push(ScriptedReply::says(
+        "Here is the Raft session. <open_session id=\"raft\"/>",
+    ));
+    sim.talker.push(ScriptedReply::says("Okay."));
+    sim.user_says(0, "Open my Raft session.");
+    sim.run_until(10_000);
+    sim.user_says(10_000, "What do you see?");
+    sim.run_until(20_000);
+    assert_clean(&sim);
+    assert!(!shown(&sim));
+    let told = all_notices(&sim);
+    assert!(
+        !told.contains("on screen"),
+        "told a view it never got is on screen: {told}"
+    );
+    assert!(
+        told.contains("<open_session id=\"raft\"/>") && told.contains("Nothing found."),
+        "{told}"
+    );
+}
+
+/// Past `TOOL_CALLS_PER_RESPONSE_MAX` tags in one stream, the rest are not read: the talker is
+/// told how many (LLD §5).
+#[test]
+fn tool_tags_past_the_bound_are_counted_and_told() {
+    let mut sim = Sim::new(config());
+    let over = 3;
+    let tags = "<add_task title=\"check the TTLs\"/>".repeat(TOOL_CALLS_PER_RESPONSE_MAX + over);
+    sim.talker
+        .push(ScriptedReply::says(&format!("Adding them. {tags}")));
+    sim.talker.push(ScriptedReply::says("Okay."));
+    sim.user_says(0, "Add a task to check the TTLs, a lot of times.");
+    sim.run_until(10_000);
+    sim.user_says(10_000, "Thanks.");
+    sim.run_until(20_000);
+    assert_clean(&sim);
+    let stored = count(&sim, |effect| matches!(effect, Effect::Remember(_)));
+    assert_eq!(stored, TOOL_CALLS_PER_RESPONSE_MAX);
+    let told = all_notices(&sim);
+    assert!(
+        told.contains(&format!("{over} more tool tags")),
+        "the dropped tags were not told: {told}"
+    );
 }

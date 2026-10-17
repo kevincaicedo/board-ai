@@ -5,9 +5,16 @@
 //! While you draw, a finished utterance is one of: a control ("done", "never mind", "undo
 //! that"), a question (which finishes the drawing and is asked), a label for your latest shape
 //! ("…and this one is the cache" → "cache", or just "cache"), or talk about the drawing, which
-//! the talker gets when you finish.
+//! the talker gets when you finish. A stall ("wait a second") is nothing, and words that are a
+//! control anywhere else ("stop that research", "go back", "close that") are talk, never a
+//! label: a remark that became a label stayed on the shape, and the real label became its note.
 
-use super::{is_backchannel, made_of, phrase_at, words};
+use super::{
+    ends_on_question, harness_cancel, is_backchannel, is_close_view, is_open_settings, made_of,
+    memory_cue, phrase_at, words,
+};
+use crate::conversation::joined_cues::joined;
+use crate::conversation::stage_cues::{PageCue, is_end_session, main_board_cue, page_cue};
 use crate::limits::{USER_BARE_LABEL_WORDS_MAX, USER_LABEL_WORDS_MAX};
 
 /// Asking to draw, as a whole utterance ("Let me draw what I mean.").
@@ -74,13 +81,79 @@ pub const DONE_PHRASES: &[&str] = &[
     "over to you",
 ];
 
-/// Leaving drawing without asking anything, as a whole utterance; your shapes stay.
+/// Words before a trailing done phrase that make it the opposite, or a progress report ("I'm
+/// not done", "almost finished", "not done yet done").
+pub const NOT_DONE_WORDS: &[&str] = &[
+    "not", "almost", "nearly", "yet", "never", "barely", "hardly", "half", "quite", "isn't",
+    "aren't", "wasn't", "ain't",
+];
+
+/// Words that join a trailing done phrase to what came before, as a comma does ("…the cache and
+/// done"). Without one or a mark, a done phrase is part of the words ("the job is done").
+pub const DONE_JOINERS: &[&str] = &["and", "okay", "ok", "so", "alright", "right", "then", "now"];
+
+/// Marks that close the words before a trailing done phrase ("Postgres. That's it.").
+const DONE_SEPARATORS: &[char] = &[',', '.', ';', ':', '!', '?', '—', '–', '-', '…'];
+
+/// Asking for a moment, as a whole utterance: nothing to label, keep or act on.
+pub const STALL_PHRASES: &[&str] = &[
+    "wait a second",
+    "wait a sec",
+    "wait a minute",
+    "wait a moment",
+    "one second",
+    "one sec",
+    "one moment",
+    "one minute",
+    "just a second",
+    "just a sec",
+    "just a moment",
+    "just a minute",
+    "a second",
+    "a moment",
+    "give me a second",
+    "give me a sec",
+    "give me a moment",
+    "give me a minute",
+    "hold on a second",
+    "hang on a second",
+    "hold on",
+    "hang on",
+    "let me think",
+    "let me think about it",
+    "let me think about this",
+    "let me see",
+    "let me check",
+    "let me try",
+];
+
+/// First words that make a phrase said alone a remark or a request, not a name ("I'm not sure",
+/// "stop", "keep going"). A label said with a lead-in ("this is the Go service") is not checked.
+pub const NOT_BARE_LABEL_STARTS: &[&str] = &[
+    "i", "i'm", "i'll", "i'd", "i've", "we", "we're", "we'll", "you", "you're", "it", "it's",
+    "they", "they're", "he", "she", "there's", "let", "let's", "stop", "wait", "go", "keep",
+    "cancel", "close", "forget", "think", "try", "give", "make", "take", "put", "move", "show",
+    "look", "tell", "explain", "remove", "delete", "erase", "undo", "add", "draw", "sketch",
+    "write", "label", "call", "name", "need", "want", "know", "mean", "guess", "maybe", "sorry",
+    "thanks", "thank", "nope",
+];
+
+/// Words that make a phrase a clause, not a name ("request is finished", "cache not ready").
+pub const CLAUSE_WORDS: &[&str] = &[
+    "is", "are", "was", "were", "am", "isn't", "aren't", "wasn't", "weren't", "don't", "doesn't",
+    "didn't", "can't", "won't", "not",
+];
+
+/// Leaving drawing without asking anything, as a whole utterance; your shapes stay. While you
+/// draw these win over a spoken cancel of a harness task ("cancel that" is one too): only a
+/// cancel that names its task ("stop that research") stops one.
 pub const CANCEL_PHRASES: &[&str] = &[
     "never mind",
     "nevermind",
     "forget it",
     "forget the drawing",
     "cancel",
+    "cancel it",
     "cancel that",
     "cancel drawing",
     "cancel the drawing",
@@ -173,10 +246,20 @@ pub const QUESTION_STARTS: &[&str] = &[
     "will", "where", "which", "who", "when", "isn't", "doesn't", "am",
 ];
 
+/// How a label was said: with a lead-in ("this is the cache"), or alone ("cache"). A label said
+/// with a lead-in replaces one said alone on the same shape, since a remark is easily heard as
+/// a bare label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelForm {
+    LeadIn,
+    Alone,
+}
+
 /// What a finished utterance means while you draw.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Heard<'a> {
-    /// Nothing to keep: a backchannel ("okay"), or asking to draw again.
+    /// Nothing to keep: a backchannel ("okay"), a stall ("one second"), or asking to draw
+    /// again.
     Nothing,
     /// Leave drawing without asking anything.
     Cancel,
@@ -188,7 +271,7 @@ pub enum Heard<'a> {
     /// A question finishes the drawing and is asked.
     Question,
     /// A label for your latest shape, as written.
-    Label(String),
+    Label { text: String, form: LabelForm },
     /// Talk about the drawing, kept for the talker.
     Talk,
 }
@@ -214,14 +297,33 @@ pub fn heard(text: &str) -> Heard<'_> {
     if made_of(text, DONE_PHRASES, DRAW_FILLERS) {
         return Heard::Done { before: "" };
     }
+    if made_of(text, STALL_PHRASES, DRAW_FILLERS) {
+        return Heard::Nothing;
+    }
     if let Some(before) = before_done(text) {
         return Heard::Done { before };
     }
     // "…and here is the cache" is a label, though "is" can open a question.
-    if asks(text) || (lead_in(&words(text)).is_none() && opens_a_question(text)) {
+    if ends_on_question(text) || (lead_in(&words(text)).is_none() && opens_a_question(text)) {
         return Heard::Question;
     }
+    if is_control(text) {
+        return Heard::Talk;
+    }
     label_or_talk(text)
+}
+
+/// Words that are a control outside drawing ("stop that research", "go back", "close that",
+/// "clear the board"): the engine applies what applies while you draw, and none is a label.
+fn is_control(text: &str) -> bool {
+    joined(text).is_some()
+        || harness_cancel(text).is_some()
+        || memory_cue(text).is_some()
+        || is_close_view(text)
+        || is_open_settings(text)
+        || is_end_session(text)
+        || main_board_cue(text).is_some()
+        || page_cue(text) == Some(PageCue::Only)
 }
 
 /// A label, or talk: what words that are neither a control nor a question mean.
@@ -229,29 +331,44 @@ pub fn heard(text: &str) -> Heard<'_> {
 pub fn label_or_talk(text: &str) -> Heard<'_> {
     let spans = word_spans(text);
     let normalized = words(text);
-    let (begin, words_max) = match lead_in(&normalized) {
-        Some(end) => (skip(&normalized, end, LABEL_ARTICLES), USER_LABEL_WORDS_MAX),
+    let (begin, form) = match lead_in(&normalized) {
+        Some(end) => (skip(&normalized, end, LABEL_ARTICLES), LabelForm::LeadIn),
         None => (
             skip(
                 &normalized,
                 skip(&normalized, 0, DRAW_FILLERS),
                 LABEL_ARTICLES,
             ),
-            USER_BARE_LABEL_WORDS_MAX,
+            LabelForm::Alone,
         ),
     };
-    let count = normalized.len().saturating_sub(begin);
-    let talk = normalized
-        .get(begin)
+    let words_max = match form {
+        LabelForm::LeadIn => USER_LABEL_WORDS_MAX,
+        LabelForm::Alone => USER_BARE_LABEL_WORDS_MAX,
+    };
+    let rest = normalized.get(begin..).unwrap_or_default();
+    let talk = rest
+        .first()
         .is_some_and(|first| NOT_LABEL_STARTS.contains(&first.as_str()));
+    // Said alone, a remark ("I'm not sure", "stop") is easily heard as a name.
+    let remark = form == LabelForm::Alone
+        && (rest
+            .first()
+            .is_some_and(|first| NOT_BARE_LABEL_STARTS.contains(&first.as_str()))
+            || rest
+                .iter()
+                .any(|word| CLAUSE_WORDS.contains(&word.as_str())));
     let Some(&(from, _)) = spans.get(begin) else {
         return Heard::Talk;
     };
-    if count == 0 || count > words_max || talk {
+    if rest.is_empty() || rest.len() > words_max || talk || remark {
         return Heard::Talk;
     }
     let label = text[from..].trim_end_matches(|ch: char| !ch.is_alphanumeric() && ch != ')');
-    Heard::Label(label.to_owned())
+    Heard::Label {
+        text: label.to_owned(),
+        form,
+    }
 }
 
 /// Whether the words heard so far could still become a label, for the hint under the latest
@@ -278,7 +395,7 @@ pub fn could_label(partial: &str) -> bool {
             let begin = skip(&normalized, end, LABEL_ARTICLES);
             normalized.len().saturating_sub(begin) <= USER_LABEL_WORDS_MAX
         }
-        None => matches!(heard(partial), Heard::Label(_)),
+        None => matches!(heard(partial), Heard::Label { .. }),
     }
 }
 
@@ -295,12 +412,6 @@ fn lead_in(normalized: &[String]) -> Option<usize> {
     })
 }
 
-/// It ends with a question mark.
-fn asks(text: &str) -> bool {
-    let closed = text.trim_end().trim_end_matches(['"', '\'', ')', '”', '’']);
-    closed.ends_with('?')
-}
-
 /// It opens with a question word ("does this make sense").
 fn opens_a_question(text: &str) -> bool {
     let normalized = words(text);
@@ -311,7 +422,9 @@ fn opens_a_question(text: &str) -> bool {
 }
 
 /// What comes before a done phrase that ends the utterance ("…the cache, and done" → "…the
-/// cache"), as written; `None` when it doesn't end with one or nothing comes before it.
+/// cache"), as written; `None` when it doesn't end with one, nothing comes before it, a
+/// negation or qualifier comes right before it ("I'm not done", "almost finished"), or nothing
+/// separates it from the words before ("the job is done"): a mark or a joining word.
 fn before_done(text: &str) -> Option<&str> {
     let normalized = words(text);
     let spans = word_spans(text);
@@ -323,14 +436,29 @@ fn before_done(text: &str) -> Option<&str> {
             phrase_at(&normalized, at, phrase, false)
         })
         .max()?;
+    let at = normalized.len() - length;
     // Fillers just before it ("and", "okay") belong to the done.
-    let mut end = normalized.len() - length;
+    let mut end = at;
     while end > 0 && DRAW_FILLERS.contains(&normalized[end - 1].as_str()) {
         end -= 1;
     }
+    let last = normalized.get(end.checked_sub(1)?)?;
+    if NOT_DONE_WORDS.contains(&last.as_str()) {
+        return None;
+    }
+    let joined = normalized[end..at]
+        .iter()
+        .any(|word| DONE_JOINERS.contains(&word.as_str()));
+    let &(last_begin, last_end) = spans.get(end - 1)?;
+    let &(done_begin, _) = spans.get(at)?;
+    let last_word = text[last_begin..last_end].trim_end_matches(|ch: char| !ch.is_alphanumeric());
+    let gap = text.get(last_begin + last_word.len()..done_begin)?;
+    if !joined && !gap.contains(DONE_SEPARATORS) {
+        return None;
+    }
     let &(cut, _) = spans.get(end)?;
     let before = text[..cut].trim_end_matches(|ch: char| !ch.is_alphanumeric());
-    (end > 0 && !before.is_empty()).then_some(before)
+    (!before.is_empty()).then_some(before)
 }
 
 /// The first index at or after `from` whose word is not in `table`.

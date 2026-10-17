@@ -155,7 +155,7 @@ impl Core {
     }
 }
 
-fn kind_name(kind: ViewKind) -> &'static str {
+pub(super) fn kind_name(kind: ViewKind) -> &'static str {
     match kind {
         ViewKind::Library => "library",
         ViewKind::Tasks => "Now list",

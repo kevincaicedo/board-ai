@@ -165,6 +165,16 @@ impl Voice {
         id
     }
 
+    /// The caption of the last clause that played to its end.
+    #[must_use]
+    pub fn last_played_caption(&self) -> Option<&str> {
+        self.clauses
+            .iter()
+            .rev()
+            .find(|clause| clause.status == Status::Played)
+            .map(|clause| clause.caption.as_str())
+    }
+
     #[must_use]
     pub fn clause(&self, id: ClauseId) -> Option<&VoiceClause> {
         self.clauses.iter().find(|clause| clause.id == id)

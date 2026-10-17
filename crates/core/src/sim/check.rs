@@ -2,6 +2,7 @@
 //! it happened; scenarios and the fuzzer assert there are none.
 
 mod drawing;
+mod tasks;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,6 +59,8 @@ pub struct Checker {
     last_onset: Option<SessionTime>,
     /// Drawing together: I14 and I6 for the user's shapes.
     yours: drawing::Yours,
+    /// Harness tasks still running, for the session's end.
+    tasks: tasks::Tasks,
 }
 
 impl Checker {
@@ -134,6 +137,7 @@ impl Checker {
             }
             Input::TalkerDone { .. } => self.talk_in_flight = false,
             Input::VoiceOnset => self.last_onset = Some(now),
+            Input::Harness { task, event } => self.tasks.reported(*task, event),
             Input::TalkerToolCall { .. }
             | Input::VoiceStart
             | Input::VoiceEnd { .. }
@@ -145,7 +149,6 @@ impl Checker {
             | Input::PlaybackDrained
             | Input::VoiceStopped { .. }
             | Input::ToolResult { .. }
-            | Input::Harness { .. }
             | Input::Command(_)
             | Input::Tick
             | Input::MemoryFailed { .. } => {}
@@ -190,7 +193,8 @@ impl Checker {
             Effect::Synthesize { clause, text } => {
                 self.synthesized.insert(*clause, text.clone());
             }
-            Effect::RunHarness { spec, .. } => {
+            Effect::RunHarness { task, spec } => {
+                self.tasks.started(*task);
                 if let HarnessKind::Change { branch } = &spec.kind {
                     self.check_change(now, branch, &spec.brief, speech);
                 }
@@ -209,10 +213,8 @@ impl Checker {
                     self.proposals.clear();
                 }
             }
-            Effect::RunTool { .. }
-            | Effect::CancelHarness { .. }
-            | Effect::Log(_)
-            | Effect::WakeAt { .. } => {}
+            Effect::CancelHarness { task } => self.tasks.cancelled(*task),
+            Effect::RunTool { .. } | Effect::Log(_) | Effect::WakeAt { .. } => {}
         }
     }
 
@@ -323,7 +325,10 @@ impl Checker {
             }
             UiEvent::LayerPush { .. } => self.layer_pushes += 1,
             UiEvent::LayerPop { .. } => self.layer_pops += 1,
-            UiEvent::SessionEnd => self.check_session_end(now, core, speech),
+            UiEvent::SessionEnd => {
+                self.check_session_end(now, core, speech);
+                self.tasks.on_session_end(now, &mut self.violations);
+            }
             UiEvent::PageTurn { .. } => self.on_page_turn(now, core),
             UiEvent::Thread { detours, .. } => {
                 if detours.len() > DETOUR_DEPTH_MAX {

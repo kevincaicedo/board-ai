@@ -108,6 +108,8 @@ const CONTROLS: &[&str] = &[
     "we can stop here",
     "clear the board",
     "clear the board and explain DNS",
+    "forget that, and close that",
+    "don't remember this session, we can stop here",
 ];
 
 const CUES: &[&str] = &[
@@ -305,6 +307,9 @@ const DRAWING_WORDS: &[&str] = &[
     "never mind",
     "the client calls the API and then the API reads from Postgres",
     "let me draw it",
+    "wait a second",
+    "wait, I'm not done",
+    "so the request goes through the gateway and then…",
 ];
 
 /// A random finished shape somewhere on the board, sometimes a click the core refuses.
@@ -472,6 +477,10 @@ const PATHS: &[(&str, Reached)] = &[
     ("session end", |effect| {
         matches!(effect, Effect::Ui(UiEvent::SessionEnd))
     }),
+    (
+        "end warned",
+        |effect| matches!(effect, Effect::Synthesize { text, .. } if text.contains("ending now stops it")),
+    ),
     ("diagram", |effect| {
         matches!(
             effect,
@@ -555,10 +564,30 @@ fn add_memory_calls(reply: ScriptedReply, memory: &mut Rng) -> ScriptedReply {
     }
 }
 
+/// Ending the session at the end of a seed, sometimes twice: with a harness task still running
+/// (a change the user just said yes to), the first is answered with a warning and the second
+/// stops the task. From its own generator, after everything else the seed does.
+fn end_the_session(sim: &mut Sim, ending: &mut Rng) {
+    if ending.below(3) > 0 {
+        return;
+    }
+    for _ in 0..1 + ending.below(2) {
+        let now = sim.now().as_ms() + ending.below(3_000);
+        let busy = saying(
+            sim,
+            now,
+            ending.pick(&["we can stop here", "end the session"]),
+        );
+        let until = now + busy + 10_000;
+        sim.run_until_true(until, |sim| *sim.core().state() == ConversationState::Idle);
+    }
+}
+
 fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut memory = Rng(seed.wrapping_mul(0xbf58_476d_1ce4_e5b9) | 1);
     let mut drawing = Rng(seed.wrapping_mul(0x94d0_49bb_1331_11eb) | 1);
+    let mut ending = Rng(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) | 1);
     let mut sim = Sim::new(CoreConfig {
         mic,
         suggestion: Some("Pick up where we left off?".to_owned()),
@@ -602,6 +631,7 @@ fn run_seed(seed: u64, mic: MicMode, coverage: &mut Coverage) {
         let now = sim.now().as_ms();
         saying(&mut sim, now, memory.pick(ANSWERS));
     }
+    end_the_session(&mut sim, &mut ending);
     let end = sim.now().as_ms() + 120_000;
     sim.run_until(end);
     assert!(
@@ -649,6 +679,7 @@ fn random_interleavings_keep_every_invariant_open_mic() {
         "view closed",
         "detour closed",
         "session end",
+        "end warned",
         "drawing",
         "your shape",
         "undone",

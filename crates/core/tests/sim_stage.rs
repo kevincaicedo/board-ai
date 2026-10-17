@@ -375,11 +375,12 @@ fn a_replay_opened_from_the_stage_returns_to_the_stage() {
 }
 
 /// Found by the fuzzer: a harness report that comes in while "Session saved." plays must not
-/// start a turn once the session has ended (the orchestrator would cut it off at once).
+/// start a turn once the session has ended (the orchestrator would cut it off at once). The
+/// research ends while the user says it: with it still running, BoardAI would ask first.
 #[test]
 fn a_report_waiting_when_the_session_ends_starts_nothing() {
     let mut sim = Sim::new(config());
-    sim.harness.run_ms = 5_000;
+    sim.harness.run_ms = 20_000;
     sim.talker
         .push(ScriptedReply::says("I'll look into it.").calls(
             "research",
@@ -388,7 +389,13 @@ fn a_report_waiting_when_the_session_ends_starts_nothing() {
     sim.talker.push(ScriptedReply::says("It's running."));
     sim.user_says(0, "Find where the TTL is set.");
     assert!(sim.run_until_true(20_000, |sim| sim.core().state().name() == "idle"));
-    let at = sim.now().as_ms();
+    let ran = sim
+        .effects()
+        .find_map(|(at, effect)| matches!(effect, Effect::RunHarness { .. }).then_some(at))
+        .expect("the research ran")
+        .as_ms();
+    // The report lands half a second into the words.
+    let at = ran + 20_000 - 500;
     let before = talks(&sim);
     sim.user_says(at, "Ok, let's stop here.");
     sim.run_until(at + 30_000);
@@ -398,5 +405,80 @@ fn a_report_waiting_when_the_session_ends_starts_nothing() {
         talks(&sim),
         before,
         "the report starts no turn after the end"
+    );
+}
+
+/// The detour's answer ends on an offer ("Want me to keep going on how it evicts?"): "Yes, keep
+/// going." accepts it, so the detour stays open and the talker goes on with it (D-147 closes
+/// only when "go on" asks for the main explanation).
+#[test]
+fn keep_going_after_a_detour_offer_keeps_the_detour() {
+    let mut sim = Sim::new(config());
+    sim.talker.push(ScriptedReply::says(DEMO));
+    sim.talker.push(ScriptedReply::says(concat!(
+        r#"<detour title="cache-aside"/>That's the cache-aside pattern. "#,
+        r#"<node id="redis" label="Redis" kind="db"/>Reads go to Redis first. "#,
+        "Want me to keep going on how it evicts?",
+    )));
+    sim.talker.push(ScriptedReply::says("Sure."));
+    sim.user_says(0, "Walk me through how a request reaches our API.");
+    assert!(sim.run_until_true(30_000, |sim| sim.speech.word_starts().len() > 8));
+    let at = sim.now().as_ms();
+    sim.user_says_with_onset(at, "wait, why Redis first?");
+    sim.run_until(at + 30_000);
+    assert_eq!(sim.core().thread().depth(), 1);
+    sim.user_says(at + 30_000, "Yes, keep going.");
+    sim.run_until(at + 60_000);
+    assert_clean(&sim);
+    assert_eq!(pops(&sim), 0, "the user said yes to more of the detour");
+    assert_eq!(sim.core().thread().depth(), 1);
+}
+
+/// "Go back to the main board" over a detour's stroke: the detour closes with its stroke frozen
+/// on it, so the talker isn't told that stroke finishes later.
+#[test]
+fn going_back_over_a_detour_stroke_never_promises_it_finishes() {
+    use boardai_core::history::UserPart;
+    use boardai_core::protocol::DrawOp;
+    let mut sim = Sim::new(config());
+    sim.talker.push(ScriptedReply::says(DEMO));
+    sim.talker.push(ScriptedReply::says(concat!(
+        r#"<detour title="cache-aside"/>That's the cache-aside pattern. "#,
+        r#"<node id="redis" label="Redis" kind="db"/>Reads go to Redis first, and only on a miss "#,
+        r#"do they go to Postgres, which is slower and holds the truth."#,
+    )));
+    sim.talker
+        .push(ScriptedReply::says("So, back to the request."));
+    sim.user_says(0, "Walk me through how a request reaches our API.");
+    assert!(sim.run_until_true(30_000, |sim| sim.speech.word_starts().len() > 8));
+    let at = sim.now().as_ms();
+    sim.user_says_with_onset(at, "wait, why Redis first?");
+    assert!(sim.run_until_true(at + 30_000, |sim| {
+        sim.ui().any(|(_, event)| {
+            matches!(event, UiEvent::OpStart { op: DrawOp::Node { id, .. }, .. } if id.as_str() == "redis")
+        })
+    }));
+    let over = sim.now().as_ms() + 20;
+    sim.user_says_with_onset(over, "go back to the main board");
+    sim.run_until(over + 30_000);
+    assert_clean(&sim);
+    assert_eq!(sim.core().thread().depth(), 0);
+    let request = sim.talker.requests.last().expect("asked");
+    let words = request
+        .messages
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::User { parts } => parts.iter().find_map(|part| match part {
+                UserPart::Text { text } => Some(text.clone()),
+                UserPart::ToolResult { .. } => None,
+            }),
+            Message::Assistant { .. } | Message::System { .. } => None,
+        })
+        .unwrap_or_default();
+    assert!(words.contains("go back to the main board"), "{words}");
+    assert!(
+        !words.contains("of redis"),
+        "a closed detour's stroke 'finishes': {words}"
     );
 }

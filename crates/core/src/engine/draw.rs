@@ -19,11 +19,12 @@
 
 use crate::board::user::{Added, Drawn, Undone, describe};
 use crate::conversation::ConversationState;
-use crate::conversation::cues::drawing::{self as cues, Heard};
+use crate::conversation::cues::drawing::{self as cues, Heard, LabelForm};
 use crate::conversation::cues::{MemoryCue, memory_cue};
 use crate::effect::{Dropped, Effect, LogRecord, Milestone};
 use crate::engine::gate::GateClosed;
 use crate::engine::listen::PendingUser;
+use crate::engine::stage::asks_to_end;
 use crate::engine::text::DRAW_GO_AHEAD_LINE;
 use crate::engine::{Core, TurnMarks, milestone};
 use crate::ids::{ElementId, LayerId};
@@ -46,9 +47,15 @@ pub(super) struct Watch {
     /// Your shapes of this drawing, oldest first: a label lands on the newest, and undo takes
     /// it. At most `USER_SHAPES_PER_LAYER_MAX`; past it the oldest can no longer be undone.
     shapes: Vec<(LayerId, ElementId)>,
+    /// The shape of this drawing whose label was said alone ("cache"): a label said with a
+    /// lead-in replaces it, since a remark is easily heard as a bare label.
+    bare: Option<(LayerId, ElementId)>,
     /// What you said that was not a label or a control, for the talker, within
     /// `DRAWING_WORDS_MAX_BYTES`.
     words: String,
+    /// `words` reached its bound: later words are dropped. A flag, not the "…" `bounded` ends
+    /// a cut with: speech-to-text ends a trailing-off utterance with one too.
+    full: bool,
     /// The label hint is on screen.
     hinting: bool,
 }
@@ -61,7 +68,7 @@ impl Watch {
     /// Keeps what you said for the talker; once full, later words are dropped.
     fn keep(&mut self, text: &str) {
         let text = text.trim();
-        if text.is_empty() || self.words.ends_with('…') {
+        if text.is_empty() || self.full {
             return;
         }
         let joined = if self.words.is_empty() {
@@ -69,6 +76,7 @@ impl Watch {
         } else {
             format!("{} {text}", self.words)
         };
+        self.full = joined.len() > DRAWING_WORDS_MAX_BYTES;
         self.words = bounded(&joined, DRAWING_WORDS_MAX_BYTES);
     }
 }
@@ -118,9 +126,11 @@ impl Core {
         if self.is_drawing() {
             return;
         }
-        // Drawing isn't an answer: a change or a memory waiting for a yes is closed.
+        // Drawing isn't an answer: a change or a memory waiting for a yes is closed. A view read
+        // for a tag of the reply would open over the drawing: it is dropped.
         self.close_change_gate(GateClosed::Drawing);
         self.close_proposal_for_drawing();
+        self.drop_written_reads();
         self.clear_suggestion(effects);
         let speak = match std::mem::replace(&mut self.state, ConversationState::Idle) {
             // An interruption with no words: what was heard is committed, the stroke freezes.
@@ -200,8 +210,14 @@ impl Core {
             return;
         };
         match self.board.undo_user_shape(layer, &id) {
-            Some(Undone::Removed) => {
+            Some(Undone::Removed { disconnected }) => {
                 effects.push(Effect::Ui(UiEvent::UserShapeRemove { layer, id }));
+                for arrow in disconnected {
+                    effects.push(Effect::Ui(UiEvent::UserShape {
+                        layer,
+                        shape: arrow,
+                    }));
+                }
             }
             Some(Undone::Changed(shape)) => {
                 watch.shapes.push((layer, id));
@@ -240,13 +256,16 @@ impl Core {
     }
 
     /// Esc or "never mind": you stop drawing without asking anything. Your shapes stay, and the
-    /// talker hears they were not asked about. BoardAI's line, if it is still saying it, stops.
+    /// talker hears they were not asked about. BoardAI's line, if it is still saying it, stops,
+    /// and a question nothing was heard of (you pressed `D` while BoardAI thought) is dropped
+    /// whether or not the line is still playing, as Esc drops one.
     fn cancel_drawing(&mut self, now: SessionTime, effects: &mut Vec<Effect>) {
         let Drawing::On(watch) = std::mem::take(&mut self.drawing) else {
             dropped(effects, Dropped::DrawCommand);
             return;
         };
         self.end_watch(&watch, effects);
+        self.user.pending = None;
         if matches!(
             self.state,
             ConversationState::Speaking | ConversationState::Thinking
@@ -275,22 +294,30 @@ impl Core {
             return false;
         }
         self.hint(None, effects);
-        // What means the same while you draw is answered as always: ending the session, opening
-        // settings, going off the record. None of them asks the talker.
+        // What means the same while you draw is answered as always: ending the session (alone or
+        // joined to other controls), opening settings, going off the record. None of them asks
+        // the talker.
         let off_record = matches!(memory_cue(text), Some(MemoryCue::ForgetSession));
         if self.end_session_by_voice(text, effects)
             || self.open_settings_by_voice(text, effects)
             || (off_record && self.memory_control(text, effects))
+            || (asks_to_end(text) && self.joined_controls(text, effects))
         {
             return true;
         }
-        match cues::heard(text) {
+        let meaning = cues::heard(text);
+        // "Stop that research" stops it now, as always, and the talker hears the words when you
+        // finish. A drawing control wins: "cancel that" leaves the drawing, never a task.
+        if meaning == Heard::Talk {
+            self.cancel_by_voice(text, effects);
+        }
+        match meaning {
             Heard::Nothing => {}
             Heard::Cancel => self.cancel_drawing(now, effects),
             Heard::Undo => self.undo_shape(effects),
             Heard::Done { before } => {
                 match cues::label_or_talk(before) {
-                    Heard::Label(label) => self.label_newest(&label, before, effects),
+                    Heard::Label { text, form } => self.label_newest(&text, form, before, effects),
                     Heard::Nothing
                     | Heard::Cancel
                     | Heard::Undo
@@ -301,25 +328,44 @@ impl Core {
                 self.finish_drawing(now, "", effects);
             }
             Heard::Question => self.finish_drawing(now, text, effects),
-            Heard::Label(label) => self.label_newest(&label, text, effects),
+            Heard::Label { text: label, form } => self.label_newest(&label, form, text, effects),
             Heard::Talk => self.keep_words(text),
         }
         true
     }
 
-    /// The words label your newest shape; with no shape yet they are kept as talk.
-    fn label_newest(&mut self, label: &str, said: &str, effects: &mut Vec<Effect>) {
-        let Drawing::On(watch) = &self.drawing else {
+    /// The words label your newest shape, or become its note once it has a label; a label said
+    /// with a lead-in replaces one said alone. With no shape yet they are kept as talk.
+    fn label_newest(
+        &mut self,
+        label: &str,
+        form: LabelForm,
+        said: &str,
+        effects: &mut Vec<Effect>,
+    ) {
+        let Drawing::On(watch) = &mut self.drawing else {
             return;
         };
-        let Some((layer, id)) = watch.newest().cloned() else {
+        let Some(newest) = watch.newest().cloned() else {
             self.keep_words(said);
             return;
         };
-        match self.board.label_user_shape(layer, &id, label) {
-            Some(shape) => effects.push(Effect::Ui(UiEvent::UserShape { layer, shape })),
-            None => self.keep_words(said),
+        let replaces = form == LabelForm::LeadIn && watch.bare.as_ref() == Some(&newest);
+        let (layer, id) = newest;
+        let labelled = if replaces {
+            self.board.relabel_user_shape(layer, &id, label)
+        } else {
+            self.board.label_user_shape(layer, &id, label)
+        };
+        let Some(shape) = labelled else {
+            self.keep_words(said);
+            return;
+        };
+        if let Drawing::On(watch) = &mut self.drawing {
+            let alone = form == LabelForm::Alone && shape.note.is_none();
+            watch.bare = alone.then(|| (layer, id.clone()));
         }
+        effects.push(Effect::Ui(UiEvent::UserShape { layer, shape }));
     }
 
     fn keep_words(&mut self, text: &str) {
@@ -381,6 +427,8 @@ impl Core {
         watch.keep(said);
         let mut context = std::mem::take(&mut self.user.context);
         context.drawing = self.drawing_block();
+        // Shapes from earlier drawings are on the board too: only this one's count as drawn.
+        let drew = !watch.shapes.is_empty();
         let mut text = watch.words;
         // A question nothing of whose answer was heard (you pressed D while BoardAI thought)
         // is the same turn.
@@ -390,7 +438,7 @@ impl Core {
             merged.merge(context);
             context = merged;
         }
-        if text.trim().is_empty() && context.drawing.is_none() {
+        if text.trim().is_empty() && !drew {
             self.user.context = context;
             return;
         }

@@ -20,8 +20,8 @@ use crate::board::{Board, Element, ElementKind, ElementState, Geometry, Layer, R
 use crate::geometry::{Point, Rect};
 use crate::ids::{ElementId, LayerId};
 use crate::limits::{
-    LABEL_MAX_BYTES, USER_COORDINATE_MAX, USER_SHAPE_MIN_UNITS, USER_SHAPE_STROKES_MAX,
-    USER_SHAPES_PER_LAYER_MAX, USER_STROKE_POINTS_MAX,
+    LABEL_MAX_BYTES, USER_COORDINATE_MAX, USER_SHAPE_MIN_UNITS, USER_SHAPE_SPAN_MAX,
+    USER_SHAPE_STROKES_MAX, USER_SHAPES_PER_LAYER_MAX, USER_STROKE_POINTS_MAX,
 };
 use crate::narration::tags::bounded;
 use crate::protocol::{DrawnShape, EdgePath, UserShape, UserShapeKind};
@@ -73,6 +73,9 @@ pub enum Refused {
     TooManyPoints,
     /// A coordinate past `USER_COORDINATE_MAX`.
     OutOfRange,
+    /// Wider or taller than `USER_SHAPE_SPAN_MAX`: the grid cells it would take grow with its
+    /// area.
+    TooLarge,
     /// Smaller than `USER_SHAPE_MIN_UNITS`: a click.
     TooSmall,
     /// The layer doesn't exist, is closed, or has `USER_SHAPES_PER_LAYER_MAX` of your shapes.
@@ -114,12 +117,16 @@ impl Drawn {
         {
             return Err(Refused::OutOfRange);
         }
+        let reach = match &drawn {
+            Self::Box(rect) => *rect,
+            Self::Pen(_) | Self::Arrow { .. } => points_rect(&points),
+        };
+        if reach.w > USER_SHAPE_SPAN_MAX || reach.h > USER_SHAPE_SPAN_MAX {
+            return Err(Refused::TooLarge);
+        }
         let big_enough = match &drawn {
             Self::Box(rect) => rect.w >= USER_SHAPE_MIN_UNITS && rect.h >= USER_SHAPE_MIN_UNITS,
-            Self::Pen(_) | Self::Arrow { .. } => {
-                let reach = points_rect(&points);
-                reach.w.max(reach.h) >= USER_SHAPE_MIN_UNITS
-            }
+            Self::Pen(_) | Self::Arrow { .. } => reach.w.max(reach.h) >= USER_SHAPE_MIN_UNITS,
         };
         if big_enough {
             Ok(drawn)
@@ -132,8 +139,9 @@ impl Drawn {
 /// What undoing a shape did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Undone {
-    /// The shape is gone.
-    Removed,
+    /// The shape is gone. Arrows of yours that joined it lost that end (it stays where it was
+    /// drawn), and are given as the UI draws them now.
+    Removed { disconnected: Vec<UserShape> },
     /// A pen shape lost its last stroke and keeps the others.
     Changed(UserShape),
 }
@@ -243,8 +251,10 @@ impl Board {
     }
 
     /// Undoes your shape `id` on `layer_id`: a pen shape of several strokes loses its last one,
-    /// anything else goes. A shape something else is joined to or marks (an arrow, an edge, an
-    /// annotation) stays: undo goes newest first, so only the newest can be undone.
+    /// anything else goes. A shape something of BoardAI's joins or marks (an edge, a message, an
+    /// annotation, a member or child placed in it) stays: BoardAI's drawing would point at
+    /// nothing. An arrow of yours that joined it only loses that end: an arrow is often drawn
+    /// before what it points at, and refusing would leave undo stuck on that shape.
     pub fn undo_user_shape(&mut self, layer_id: LayerId, id: &ElementId) -> Option<Undone> {
         let layer = self.layer_mut(layer_id).ok()?;
         let element = layer.element_mut(id)?;
@@ -267,13 +277,14 @@ impl Board {
             layer.occupy_yours(&element);
             return Some(Undone::Changed(changed));
         }
-        if layer.is_referenced(id) {
+        if layer.is_used_by_boardai(id) {
             return None;
         }
+        let disconnected = disconnect_arrows(layer, id);
         layer.elements.retain(|element| element.id != *id);
         layer.grid.release(id);
         layer.reindex();
-        Some(Undone::Removed)
+        Some(Undone::Removed { disconnected })
     }
 
     /// Writes what you said onto your shape `id`: its label, or its note when it has a label.
@@ -298,6 +309,30 @@ impl Board {
         } else {
             *note = Some(words);
         }
+        let element = element.clone();
+        layer.occupy_yours(&element);
+        user_shape(&element)
+    }
+
+    /// Replaces the label of your shape `id` with what you said, keeping its note: a label said
+    /// with a lead-in ("this is the cache") over one said alone. Returns the shape as the UI
+    /// draws it now.
+    pub fn relabel_user_shape(
+        &mut self,
+        layer_id: LayerId,
+        id: &ElementId,
+        words: &str,
+    ) -> Option<UserShape> {
+        let words = bounded(words, LABEL_MAX_BYTES);
+        if words.is_empty() {
+            return None;
+        }
+        let layer = self.layer_mut(layer_id).ok()?;
+        let element = layer.element_mut(id)?;
+        if !matches!(element.kind, ElementKind::User { .. }) {
+            return None;
+        }
+        element.label = words;
         let element = element.clone();
         layer.occupy_yours(&element);
         user_shape(&element)
@@ -331,17 +366,13 @@ impl Layer {
         }
     }
 
-    /// Whether anything on the layer is joined to or marks `id`.
-    fn is_referenced(&self, id: &ElementId) -> bool {
+    /// Whether anything of BoardAI's on the layer is joined to or marks `id`.
+    fn is_used_by_boardai(&self, id: &ElementId) -> bool {
         self.elements.iter().any(|element| match &element.kind {
             ElementKind::Edge { from, to, .. } | ElementKind::Message { from, to, .. } => {
                 from == id || to == id
             }
             ElementKind::Annotation { target, .. } => target == id,
-            ElementKind::User {
-                mark: UserMark::Arrow { from, to },
-                ..
-            } => from.as_ref() == Some(id) || to.as_ref() == Some(id),
             ElementKind::Node { group, parent, .. } => {
                 group.as_ref() == Some(id) || parent.as_ref() == Some(id)
             }
@@ -404,6 +435,32 @@ fn connect_loose_ends(layer: &mut Layer, id: &ElementId) -> Vec<UserShape> {
         }
     }
     connected
+}
+
+/// Your arrows joined to `id` lose that end; the end stays where it was drawn. Returns them as
+/// the UI draws them now.
+fn disconnect_arrows(layer: &mut Layer, id: &ElementId) -> Vec<UserShape> {
+    let mut disconnected = Vec::new();
+    for element in &mut layer.elements {
+        let ElementKind::User {
+            mark: UserMark::Arrow { from, to },
+            ..
+        } = &mut element.kind
+        else {
+            continue;
+        };
+        let mut changed = false;
+        for end in [from, to] {
+            if end.as_ref() == Some(id) {
+                *end = None;
+                changed = true;
+            }
+        }
+        if changed {
+            disconnected.extend(user_shape(element));
+        }
+    }
+    disconnected
 }
 
 /// A pen stroke onto `join` when it mostly overlaps that pen shape; the points come back when

@@ -90,8 +90,31 @@ pub struct CellSpan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Occupant {
     Node(ElementId),
-    /// A group's first cell, kept for its first child.
+    /// A cell of a group's frame, kept for its members.
     GroupReserve(ElementId),
+    /// Something placed off the grid (a shape of yours, a tree node) over a cell a group kept for
+    /// its members: the cell is taken, so no member lands on it (I6), and the group gets it back
+    /// when `id` is released.
+    OverReserve {
+        id: ElementId,
+        group: ElementId,
+    },
+}
+
+impl Occupant {
+    /// What holds the cell once `id` is released, if anything.
+    fn without(self, id: &ElementId) -> Option<Self> {
+        match self {
+            Self::Node(owner) | Self::GroupReserve(owner) if owner == *id => None,
+            Self::OverReserve { id: owner, group } if owner == *id => {
+                Some(Self::GroupReserve(group))
+            }
+            Self::OverReserve { id: owner, group } if group == *id => Some(Self::Node(owner)),
+            occupant @ (Self::Node(_) | Self::GroupReserve(_) | Self::OverReserve { .. }) => {
+                Some(occupant)
+            }
+        }
+    }
 }
 
 /// Which cells are taken, on one layer.
@@ -134,7 +157,7 @@ impl Grid {
             match self.occupied.get(&Cell { row: cell.row, col }) {
                 None => true,
                 Some(Occupant::GroupReserve(owner)) => group == Some(owner),
-                Some(Occupant::Node(_)) => false,
+                Some(Occupant::Node(_) | Occupant::OverReserve { .. }) => false,
             }
         })
     }
@@ -177,13 +200,20 @@ impl Grid {
             + 1
     }
 
-    /// Marks the cells `rect` overlaps as taken by `id`, keeping any earlier owner, so grid
-    /// placement steers clear of an element placed off the grid.
+    /// Marks the cells `rect` overlaps as taken by `id`, so grid placement steers clear of an
+    /// element placed off the grid. An earlier owner keeps its cell; a cell a group kept for its
+    /// members is taken too, or a member would land on `id`.
     pub fn occupy_rect(&mut self, rect: Rect, id: &ElementId) {
         for cell in cells_covering(rect) {
-            self.occupied
-                .entry(cell)
-                .or_insert_with(|| Occupant::Node(id.clone()));
+            let taken = match self.occupied.remove(&cell) {
+                None => Occupant::Node(id.clone()),
+                Some(Occupant::GroupReserve(group)) => Occupant::OverReserve {
+                    id: id.clone(),
+                    group,
+                },
+                Some(earlier @ (Occupant::Node(_) | Occupant::OverReserve { .. })) => earlier,
+            };
+            self.occupied.insert(cell, taken);
         }
     }
 
@@ -204,11 +234,12 @@ impl Grid {
             .or_insert_with(|| Occupant::GroupReserve(group.clone()));
     }
 
-    /// Frees the cells of an element that was laid out but never drawn.
+    /// Frees the cells of an element that was laid out but never drawn, or one of yours undone.
     pub fn release(&mut self, id: &ElementId) {
-        self.occupied.retain(|_, occupant| match occupant {
-            Occupant::Node(owner) | Occupant::GroupReserve(owner) => owner != id,
-        });
+        self.occupied = std::mem::take(&mut self.occupied)
+            .into_iter()
+            .filter_map(|(cell, occupant)| Some((cell, occupant.without(id)?)))
+            .collect();
     }
 }
 
@@ -509,6 +540,7 @@ pub fn path_bounds(path: EdgePath) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::{CELL_WIDTH, Cell, CellSpan, Grid, columns_for, node_size, rect_in, start_next_to};
+    use crate::geometry::Rect;
     use crate::ids::ElementId;
     use crate::narration::ops::Direction;
     use crate::protocol::NodeShape;
@@ -560,6 +592,32 @@ mod tests {
         );
         grid.release(&id("vpc"));
         assert_eq!(grid.find(cell, 1, Direction::Right, None), cell);
+    }
+
+    /// A shape placed off the grid over a reserved cell takes it from the group's members (I6),
+    /// and gives it back to the group when it goes.
+    #[test]
+    fn a_shape_over_a_reserved_cell_takes_it_until_it_goes() {
+        let mut grid = Grid::default();
+        let cell = Cell { row: 0, col: 1 };
+        let vpc = id("vpc");
+        grid.reserve(cell, &vpc);
+        let over = Rect {
+            x: 210,
+            y: 10,
+            w: 180,
+            h: 120,
+        };
+        grid.occupy_rect(over, &id("u1"));
+        let next = Cell { row: 0, col: 2 };
+        assert_eq!(grid.find(cell, 1, Direction::Right, Some(&vpc)), next);
+        grid.release(&id("u1"));
+        assert_eq!(grid.find(cell, 1, Direction::Right, Some(&vpc)), cell);
+        assert_eq!(grid.find(cell, 1, Direction::Right, None), next);
+        // The group going first leaves the cell to the shape.
+        grid.occupy_rect(over, &id("u1"));
+        grid.release(&vpc);
+        assert_eq!(grid.find(cell, 1, Direction::Right, None), next);
     }
 
     #[test]

@@ -335,22 +335,22 @@ impl Core {
         if self.stop.is_some() {
             self.settle_stop(None, effects);
         }
-        let mut text = utterance.text();
-        // While the user draws, their words label shapes or finish the drawing (artboard 13).
-        if self.drawing_heard(now, &text, effects) {
+        let said = utterance.text();
+        // After BoardAI's line about ending the session, these words decide first; while the
+        // user draws, they label shapes or finish the drawing (artboard 13).
+        if self.words_after_ending(&said, effects) || self.drawing_heard(now, &said, effects) {
             return;
         }
-        // When these words began. Joined earlier words began before anything was proposed.
-        let mut began = utterance.started_at();
         let mut context = std::mem::take(&mut self.user.context);
-        if let Some(previous) = self.user.pending.take() {
-            began = SessionTime::ZERO;
-            // Nothing of the answer to the previous words was heard: they are one turn.
-            text = format!("{} {text}", previous.text).trim().to_owned();
-            let mut merged = previous.context;
-            merged.merge(context);
-            context = merged;
-        }
+        // Nothing of the answer to a question still waiting was heard: it joins these words, and
+        // the joined words began before anything was proposed.
+        let (text, began) = match &self.user.pending {
+            Some(previous) => (
+                format!("{} {said}", previous.text).trim().to_owned(),
+                SessionTime::ZERO,
+            ),
+            None => (said.clone(), utterance.started_at()),
+        };
         if text.trim().is_empty() {
             self.user.context = context;
             return;
@@ -363,18 +363,16 @@ impl Core {
             self.user.context = context;
             return;
         }
-        self.cancel_by_voice(&text, effects);
-        if self.memory_control(&text, effects)
-            || self.open_settings_by_voice(&text, effects)
-            || self.end_session_by_voice(&text, effects)
-            || self.draw_by_voice(now, &text, effects)
-            || self.page_by_voice(&text, &mut context, effects)
-        {
-            self.user.context = context;
+        if self.control_by_voice(now, &said, &mut context, effects) {
             return;
         }
+        if let Some(previous) = self.user.pending.take() {
+            let mut merged = previous.context;
+            merged.merge(context);
+            context = merged;
+        }
         // "Back to the main board" closes the detours here; the talker still answers the words.
-        let back = self.back_to_main_board(now, &text, context.interrupted, effects);
+        let back = self.back_to_main_board(now, &said, context.interrupted, effects);
         self.turn_question = if back {
             None
         } else {
@@ -389,6 +387,42 @@ impl Core {
         self.marks = TurnMarks::default();
         self.state = ConversationState::Thinking;
         self.request_talk(now, effects);
+    }
+
+    /// The controls, matched against the new words alone: a question still waiting (nothing of
+    /// its answer heard, so it would join these words) must not hide them. Returns true when the
+    /// core answered them itself. "Let me draw" keeps that question for the drawing's turn; any
+    /// other answered control takes its place, and it is dropped as Esc drops one.
+    fn control_by_voice(
+        &mut self,
+        now: SessionTime,
+        said: &str,
+        context: &mut UserContext,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
+        self.cancel_by_voice(said, effects);
+        if self.draw_by_voice(now, said, effects) {
+            self.user.context = std::mem::take(context);
+            return true;
+        }
+        let answered = self.joined_controls(said, effects)
+            || self.memory_control(said, effects)
+            || self.open_settings_by_voice(said, effects)
+            || self.end_session_by_voice(said, effects)
+            || self.page_by_voice(said, context, effects);
+        if !answered {
+            return false;
+        }
+        let mut kept = std::mem::take(context);
+        if let Some(previous) = self.user.pending.take() {
+            // What the dropped question's turn reported (a frozen stroke, an interruption) still
+            // holds for the next one.
+            let mut merged = previous.context;
+            merged.merge(kept);
+            kept = merged;
+        }
+        self.user.context = kept;
+        true
     }
 
     /// What a detour opened in reply would answer: the user's words without their lead-in, when
@@ -407,7 +441,7 @@ impl Core {
 
     /// "Stop that research", "cancel that": the named running task is cancelled at once, and the
     /// talker hears the words with a note saying it is done, so it only has to confirm.
-    fn cancel_by_voice(&mut self, text: &str, effects: &mut Vec<Effect>) {
+    pub(super) fn cancel_by_voice(&mut self, text: &str, effects: &mut Vec<Effect>) {
         let Some(target) = cues::harness_cancel(text) else {
             return;
         };
@@ -443,7 +477,14 @@ impl Core {
         if self.thread.has_context() {
             lines.push(format!("[Thread: {}]", self.thread.describe()));
         }
-        for frozen in &context.frozen {
+        // A stroke frozen on a detour that has since closed stays unfinished there: nothing will
+        // draw on that layer again.
+        let open = |frozen: &&FrozenOp| {
+            self.board
+                .layer(frozen.layer)
+                .is_some_and(crate::board::Layer::is_open)
+        };
+        for frozen in context.frozen.iter().filter(open) {
             lines.push(format!(
                 "[Drawing stopped at {}% of {} \"{}\". It finishes when you resume or draw on that \
                  layer again.]",

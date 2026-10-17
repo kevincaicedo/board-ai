@@ -66,7 +66,7 @@ pub const DRAW_NOTE: &str = "[A note from BoardAI, not the user's words: they as
 /// The repo reads a stream wrote as words or as tags instead of calling them, once each.
 fn repo_reads_written(stream: &Stream) -> Vec<&'static str> {
     let spoken = stream.narration.spoken_calls().iter().map(|call| call.tool);
-    let tagged = written_calls(stream.narration.written());
+    let tagged = written_calls(stream.narration.written()).calls;
     let tagged = tagged.iter().filter_map(|call| {
         REPO_READS
             .iter()

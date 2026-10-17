@@ -6,6 +6,7 @@
 pub mod barge_in;
 pub mod cues;
 pub mod draw_cues;
+pub mod joined_cues;
 pub mod stage_cues;
 pub mod utterance;
 

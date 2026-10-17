@@ -1,6 +1,6 @@
 use super::{
-    CANCEL_PHRASES, DONE_PHRASES, Heard, LABEL_LEAD_INS, START_PHRASES, UNDO_PHRASES, could_label,
-    heard, is_start,
+    CANCEL_PHRASES, DONE_PHRASES, Heard, LABEL_LEAD_INS, LabelForm, STALL_PHRASES, START_PHRASES,
+    UNDO_PHRASES, could_label, heard, is_start,
 };
 use crate::conversation::cues::{BACKCHANNELS, has_interruption_cue};
 
@@ -72,22 +72,30 @@ fn a_question_finishes_the_drawing() {
 
 #[test]
 fn labels_come_after_a_lead_in_or_alone() {
+    let label = |text: &str, form| Heard::Label {
+        text: text.to_owned(),
+        form,
+    };
     let cases = [
-        ("…and this one is the cache", "cache"),
-        ("This is the client.", "client"),
-        ("That's our Postgres", "Postgres"),
-        ("Here's the API gateway.", "API gateway"),
-        ("this is called the source of truth", "source of truth"),
-        ("Okay, Redis.", "Redis"),
-        ("the load balancer", "load balancer"),
-        ("“Postgres”", "Postgres"),
+        ("…and this one is the cache", "cache", LabelForm::LeadIn),
+        ("This is the client.", "client", LabelForm::LeadIn),
+        ("That's our Postgres", "Postgres", LabelForm::LeadIn),
+        ("Here's the API gateway.", "API gateway", LabelForm::LeadIn),
+        (
+            "this is called the source of truth",
+            "source of truth",
+            LabelForm::LeadIn,
+        ),
+        ("Okay, Redis.", "Redis", LabelForm::Alone),
+        ("the load balancer", "load balancer", LabelForm::Alone),
+        ("“Postgres”", "Postgres", LabelForm::Alone),
     ];
-    for (said, label) in cases {
-        assert_eq!(heard(said), Heard::Label(label.to_owned()), "{said}");
+    for (said, text, form) in cases {
+        assert_eq!(heard(said), label(text, form), "{said}");
     }
     for lead_in in LABEL_LEAD_INS {
         let said = format!("and {lead_in} the cache");
-        assert_eq!(heard(&said), Heard::Label("cache".to_owned()), "{said}");
+        assert_eq!(heard(&said), label("cache", LabelForm::LeadIn), "{said}");
     }
 }
 
@@ -101,7 +109,11 @@ fn longer_words_are_talk_and_backchannels_nothing() {
     ] {
         assert_eq!(heard(talk), Heard::Talk, "{talk}");
     }
-    for nothing in BACKCHANNELS.iter().chain(START_PHRASES) {
+    for nothing in BACKCHANNELS
+        .iter()
+        .chain(START_PHRASES)
+        .chain(STALL_PHRASES)
+    {
         assert_eq!(heard(nothing), Heard::Nothing, "{nothing}");
     }
     assert_eq!(heard(""), Heard::Nothing);
@@ -135,4 +147,65 @@ fn a_label_on_its_way_shows_the_hint() {
 fn asking_to_draw_over_the_voice_interrupts() {
     assert!(has_interruption_cue("wait, let me draw it"));
     assert!(!BACKCHANNELS.contains(&"let me draw"));
+}
+
+/// A done phrase after a negation or a qualifier says the opposite, and one run into the words
+/// before it with no separator is part of them ("the job is done"): neither finishes.
+#[test]
+fn a_done_after_a_negation_or_run_into_the_words_finishes_nothing() {
+    for said in [
+        "Wait, I'm not done.",
+        "I'm almost done",
+        "Not finished.",
+        "Hold on, not done yet done",
+        "I'm nearly finished",
+        "the job is done",
+        "that's when the request is finished",
+        "I'll let you go ahead",
+    ] {
+        assert!(
+            !matches!(heard(said), Heard::Done { .. }),
+            "{said:?}: {:?}",
+            heard(said)
+        );
+    }
+    for (said, before) in [
+        ("Postgres. That's it.", "Postgres"),
+        (
+            "And this one is the cache, and done.",
+            "And this one is the cache",
+        ),
+        ("this is the cache and done", "this is the cache"),
+        ("the queue — your turn", "the queue"),
+    ] {
+        assert_eq!(heard(said), Heard::Done { before }, "{said:?}");
+    }
+}
+
+/// Words that are controls elsewhere, stalls and remarks never label your shape.
+#[test]
+fn controls_stalls_and_remarks_are_never_labels() {
+    for said in [
+        "Stop.",
+        "Stop that research.",
+        "Cancel the review.",
+        "Forget that.",
+        "Go back.",
+        "Close that.",
+        "Let me think.",
+        "I'm not sure.",
+        "Wait a second.",
+        "One second.",
+        "Wait, I'm not done.",
+        "Keep going.",
+        "Open settings.",
+        "Clear the board.",
+        "I think so.",
+    ] {
+        assert!(
+            !matches!(heard(said), Heard::Label { .. }),
+            "{said:?}: {:?}",
+            heard(said)
+        );
+    }
 }

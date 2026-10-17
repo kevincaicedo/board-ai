@@ -480,10 +480,56 @@ pub struct ModelProvider {
     pub throughput_tokens_per_second_p50: Option<u32>,
 }
 
+/// What the talker's key means for starting a session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TalkerKeyUse {
+    /// Saved, or the provider needs none.
+    Usable,
+    /// Missing, or the Keychain can't be read: [`SetupBlocker::TalkerKey`].
+    Blocked,
+    /// This run never read it (`KeyState::NotChecked`, while a session runs): nothing is known
+    /// to be wrong, so the screen shows no blocker, but it is never usable as it stands. Read
+    /// it before starting.
+    CheckFirst,
+}
+
+#[must_use]
+pub fn talker_key_use(key: KeyState) -> TalkerKeyUse {
+    match key {
+        KeyState::NotNeeded | KeyState::Saved => TalkerKeyUse::Usable,
+        KeyState::Missing | KeyState::Unreadable => TalkerKeyUse::Blocked,
+        KeyState::NotChecked => TalkerKeyUse::CheckFirst,
+    }
+}
+
+/// Whether a session may start from a status (the start rule).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartRule {
+    Ready,
+    /// The status names a blocker.
+    Blocked,
+    /// Nothing blocks, but the talker's key was never read this run: read it, then ask again.
+    CheckTalkerKey,
+}
+
+/// The start rule over `status`: its blockers first, then a talker key nobody checked.
+#[must_use]
+pub fn start_rule(status: &SetupStatus) -> StartRule {
+    if !blockers(status).is_empty() {
+        return StartRule::Blocked;
+    }
+    match talker_key_use(status.talker.key) {
+        TalkerKeyUse::Usable => StartRule::Ready,
+        TalkerKeyUse::Blocked => StartRule::Blocked,
+        TalkerKeyUse::CheckFirst => StartRule::CheckTalkerKey,
+    }
+}
+
 /// What stands between the screen and a session (D-101): a usable talker, the hearing files,
 /// and the microphone. The voice never blocks: the system voice speaks until Kokoro is ready.
 /// Push-to-talk needs the same files as an open mic, since both turn speech into text with
-/// Whisper; only how a turn starts and ends differs.
+/// Whisper; only how a turn starts and ends differs. These are what is known to be wrong; a
+/// talker key this run never read is not, and [`start_rule`] asks for it to be read instead.
 #[must_use]
 pub fn blockers(status: &SetupStatus) -> Vec<SetupBlocker> {
     let mut found = Vec::new();
@@ -491,11 +537,11 @@ pub fn blockers(status: &SetupStatus) -> Vec<SetupBlocker> {
         found.push(SetupBlocker::SettingsProblem);
     }
     let talker = &status.talker;
-    match talker.key {
-        KeyState::Missing | KeyState::Unreadable => found.push(SetupBlocker::TalkerKey {
+    match talker_key_use(talker.key) {
+        TalkerKeyUse::Blocked => found.push(SetupBlocker::TalkerKey {
             provider: talker.provider,
         }),
-        KeyState::NotNeeded | KeyState::Saved | KeyState::NotChecked => {}
+        TalkerKeyUse::Usable | TalkerKeyUse::CheckFirst => {}
     }
     if talker.provider == TalkerProvider::Ollama {
         match &talker.ollama {

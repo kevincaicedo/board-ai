@@ -8,8 +8,8 @@
 //! - (b) a reply already stored stays untouched, and the next user message opens with a note
 //!   saying where the user stopped hearing it.
 
-use crate::conversation::ConversationState;
 use crate::conversation::utterance::Utterance;
+use crate::conversation::{ConversationState, cues};
 use crate::effect::{Effect, Gain, Milestone};
 use crate::engine::gate::GateClosed;
 use crate::engine::{Core, milestone};
@@ -89,8 +89,9 @@ impl Core {
         effects: &mut Vec<Effect>,
     ) {
         // A stop, an interruption or mute cut the reply off: if it was the end-of-session line,
-        // the user is still here, so the session goes on.
+        // the user is still here, so the session goes on; and it asked nothing to its end.
         self.keep_session();
+        self.reply_asked = false;
         if let Some(reply) = &mut self.reply {
             if reply.in_flight {
                 effects.push(Effect::CancelTalk);
@@ -99,6 +100,8 @@ impl Core {
             // Results of calls from a cancelled stream are ignored when they arrive.
             reply.tools.clear();
         }
+        // So are views read for its tags: one must not open over the words that stopped it.
+        self.drop_written_reads();
         self.freeze(now, effects);
         if let Some(stop) = &mut self.stop {
             stop.abandon_question |= abandon_question;
@@ -233,6 +236,10 @@ impl Core {
         if !finished {
             return;
         }
+        self.reply_asked = self
+            .voice
+            .last_played_caption()
+            .is_some_and(cues::ends_on_question);
         let heard = self.voice.heard();
         self.commit_heard(heard, false);
         self.end_reply();
@@ -240,15 +247,21 @@ impl Core {
             ConversationState::Speaking | ConversationState::Thinking | ConversationState::Idle => {
                 self.maybe_end_session(effects);
             }
-            // The user started talking just as BoardAI finished: their words are a new turn.
+            // The user started talking just as BoardAI finished: their words are a new turn. An
+            // end-of-session line that drained under them still played: their words decide
+            // whether the session ends (a goodbye) or goes on (a real question).
             ConversationState::Ducked(barge_in) => {
-                self.keep_session();
+                self.end_after_words();
                 self.set_gain(Gain::FULL, effects);
                 self.hand_floor(barge_in.into_utterance(), effects);
             }
-            state @ (ConversationState::Listening(_) | ConversationState::Muted) => {
-                self.keep_session();
+            state @ ConversationState::Listening(_) => {
+                self.end_after_words();
                 self.state = state;
+            }
+            ConversationState::Muted => {
+                self.keep_session();
+                self.state = ConversationState::Muted;
             }
         }
     }

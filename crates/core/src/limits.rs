@@ -291,6 +291,11 @@ pub const USER_COORDINATE_MAX: i32 = 1_000_000;
 /// is a click, not a shape: refused.
 pub const USER_SHAPE_MIN_UNITS: u32 = 6;
 
+/// Widest or tallest shape you may draw, in world units: 40 grid cells across, 57 down, five
+/// times the canvas at 1:1. A box or pen shape takes every grid cell it covers, so its cost
+/// grows with its area; one past it is refused (dropped and counted, no echo).
+pub const USER_SHAPE_SPAN_MAX: u32 = 8_000;
+
 /// Words after a label lead-in ("this one is the cache") that still make a label; longer is
 /// talk about the drawing, kept for the talker.
 pub const USER_LABEL_WORDS_MAX: usize = 4;
