@@ -88,7 +88,8 @@ impl OpenAiCompatibleProvider {
 impl LlmProvider for OpenAiCompatibleProvider {
     fn capabilities(&self) -> LlmCapabilities {
         LlmCapabilities {
-            mid_conversation_system: true,
+            // Context is folded into user turns (D-160).
+            mid_conversation_system: false,
             tools: true,
             server_side_fallback: false,
         }

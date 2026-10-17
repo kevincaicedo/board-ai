@@ -352,9 +352,78 @@ async fn the_request_uses_chat_completions_shapes() {
                 {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{\"path\":\"src/lb.rs\"}"}}
             ]},
             {"role": "tool", "tool_call_id": "call_1", "content": "Error: not found"},
-            {"role": "system", "content": "Board: lb."},
+            {"role": "user", "content": "<system-reminder>\nBoard: lb.\n</system-reminder>"},
         ])
     );
+}
+
+/// D-160: context is never a system message after the first. Qwen's chat template on Cerebras
+/// refuses one ("System message must be at the beginning", every BoardAI request in the
+/// 2026-10-16 run): the session's opening context folds into the question, and a run of context
+/// before an assistant turn becomes one user turn of its own.
+#[tokio::test]
+async fn context_folds_into_the_next_user_turn() {
+    let server =
+        TestServer::start(vec![Scripted::sse(&fixture("openai/ollama_text.sse"), 1)]).await;
+    let mut conversation = Conversation::new();
+    conversation.push(Message::System {
+        text: "Board now:\nmain: empty".into(),
+    });
+    conversation.push(Message::User {
+        parts: vec![UserPart::Text {
+            text: "Explain the TCP handshake.".into(),
+        }],
+    });
+    conversation.push(Message::Assistant {
+        parts: vec![AssistantPart::Text {
+            text: "Three steps.".into(),
+        }],
+        raw: None,
+    });
+    conversation.push(Message::System {
+        text: "Thread: handshake".into(),
+    });
+    conversation.push(Message::System {
+        text: String::new(),
+    });
+    conversation.push(Message::System {
+        text: "Board now:\nmain: 3 boxes".into(),
+    });
+    conversation.push(Message::Assistant {
+        parts: vec![AssistantPart::Text {
+            text: "Go on.".into(),
+        }],
+        raw: None,
+    });
+    conversation.push(Message::User {
+        parts: vec![UserPart::Text {
+            text: "Why three?".into(),
+        }],
+    });
+    let _: Vec<_> = provider(&server, None)
+        .stream(&conversation, CancelToken::new())
+        .collect()
+        .await;
+    let body = server.requests()[0].json();
+    let roles: Vec<&str> = body["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .filter_map(|message| message["role"].as_str())
+        .collect();
+    assert_eq!(
+        roles,
+        ["system", "user", "assistant", "user", "assistant", "user"]
+    );
+    assert_eq!(
+        body["messages"][1]["content"],
+        "<system-reminder>\nBoard now:\nmain: empty\n</system-reminder>\n\nExplain the TCP handshake."
+    );
+    assert_eq!(
+        body["messages"][3]["content"],
+        "<system-reminder>\nThread: handshake\n</system-reminder>\n\n<system-reminder>\nBoard now:\nmain: 3 boxes\n</system-reminder>"
+    );
+    assert_eq!(body["messages"][5]["content"], "Why three?");
 }
 
 #[tokio::test]

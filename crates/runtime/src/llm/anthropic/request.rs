@@ -9,12 +9,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use super::models::ModelTraits;
-use crate::llm::{Effort, ProviderError, TalkerConfig};
-
-/// How context goes into a user turn when it cannot be a system message. The tag is the one the
-/// API docs suggest for this fallback.
-const CONTEXT_OPEN: &str = "<system-reminder>\n";
-const CONTEXT_CLOSE: &str = "\n</system-reminder>";
+use crate::llm::{CONTEXT_CLOSE, CONTEXT_OPEN, Effort, ProviderError, TalkerConfig};
 
 /// Everything but `messages`: fixed for the session, rendered once.
 #[derive(Clone, Debug)]

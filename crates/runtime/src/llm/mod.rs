@@ -36,6 +36,11 @@ pub(crate) use error::bounded_detail;
 pub use error::{ProviderError, TimeoutKind};
 
 /// The default talker (D-017). Spike S3 may change it; that is the owner's call.
+/// How context goes into a user turn when it cannot be a system message. The tag is the one the
+/// Anthropic API docs suggest for this fallback; OpenAI-compatible servers get the same.
+pub(crate) const CONTEXT_OPEN: &str = "<system-reminder>\n";
+pub(crate) const CONTEXT_CLOSE: &str = "\n</system-reminder>";
+
 pub const DEFAULT_TALKER_MODEL: &str = "claude-opus-5-5";
 /// The default scribe (D-017).
 pub const DEFAULT_SCRIBE_MODEL: &str = "claude-haiku-5-5";

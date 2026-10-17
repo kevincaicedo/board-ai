@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 
 use super::Dialect;
 use crate::llm::openrouter;
-use crate::llm::{Effort, ProviderError, TalkerConfig};
+use crate::llm::{CONTEXT_CLOSE, CONTEXT_OPEN, Effort, ProviderError, TalkerConfig};
 
 #[derive(Clone, Debug)]
 pub(super) struct FrozenRequest {
@@ -152,27 +152,40 @@ fn reasoning_effort(effort: Effort) -> &'static str {
     }
 }
 
-/// System context stays a system message (these servers accept one anywhere); tool results
-/// become `tool` messages, which must directly follow the assistant turn that called them.
+/// Context (`Message::System`) is folded into the next user turn between `<system-reminder>`
+/// marks (D-160): a chat template may take a system message only first, and Qwen's on Cerebras
+/// refuses any other ("System message must be at the beginning"), so only the frozen system
+/// prompt is one. Tool results become `tool` messages, which must directly follow the
+/// assistant turn that called them, so folded context comes after them.
 fn render_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
     let mut out = Vec::with_capacity(messages.len());
+    let mut context: Vec<&str> = Vec::new();
     for message in messages {
         match message {
             Message::System { text } if text.is_empty() => {}
-            Message::System { text } => out.push(json!({"role": "system", "content": text})),
-            Message::User { parts } => render_user(parts, &mut out),
+            Message::System { text } => context.push(text),
+            Message::User { parts } => render_user(parts, &std::mem::take(&mut context), &mut out),
             Message::Assistant { parts, raw } => {
+                if !context.is_empty() {
+                    render_user(&[], &std::mem::take(&mut context), &mut out);
+                }
                 if let Some(assistant) = render_assistant(parts, raw.as_ref())? {
                     out.push(assistant);
                 }
             }
         }
     }
+    if !context.is_empty() {
+        render_user(&[], &context, &mut out);
+    }
     Ok(out)
 }
 
-fn render_user(parts: &[UserPart], out: &mut Vec<Value>) {
-    let mut texts = Vec::new();
+fn render_user(parts: &[UserPart], context: &[&str], out: &mut Vec<Value>) {
+    let mut texts: Vec<String> = context
+        .iter()
+        .map(|text| format!("{CONTEXT_OPEN}{text}{CONTEXT_CLOSE}"))
+        .collect();
     for part in parts {
         match part {
             UserPart::ToolResult {
@@ -189,7 +202,7 @@ fn render_user(parts: &[UserPart], out: &mut Vec<Value>) {
                 out.push(json!({"role": "tool", "tool_call_id": id.as_str(), "content": content}));
             }
             UserPart::Text { text } if text.is_empty() => {}
-            UserPart::Text { text } => texts.push(text.as_str()),
+            UserPart::Text { text } => texts.push(text.clone()),
         }
     }
     if !texts.is_empty() {

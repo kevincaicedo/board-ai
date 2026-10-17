@@ -20,7 +20,7 @@ Type a line to say it; a line typed while BoardAI speaks is a barge-in. Ctrl-D e
                         openai/gpt-oss-120b (openrouter; qwen/qwen3.8-27b is the other preset)
   --effort none|low|medium|high|xhigh|max  default none for ollama, the preset's for
                         openrouter (gpt-oss: low, qwen: none), low otherwise
-  --route <a,b|none>    OpenRouter providers to try first; default the preset's (cerebras)
+  --route <a,b|none>    the only OpenRouter providers tried, in order; default the preset's (cerebras)
   --max-tokens <n>      the talker's output budget; default the preset's (4096 on OpenRouter)
   --base-url <url>      override the provider's endpoint
   --no-warm-up          skip the talker's warm-up at session open (to measure it)
