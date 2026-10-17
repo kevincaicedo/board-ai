@@ -57,6 +57,24 @@ impl Cameras {
             layer,
             frame: wanted,
             focus: None,
+            enlarge: false,
+        })
+    }
+
+    /// A frame the engine chose (a staged diagram's reveal, or its overview, D-187); the frame
+    /// to send, unless the camera already shows exactly it. `enlarge` lets the UI close up on a
+    /// staged diagram's small parts.
+    pub(super) fn frame(&mut self, layer: LayerId, frame: Rect, enlarge: bool) -> Option<UiEvent> {
+        let view = View { frame, focus: None };
+        if self.views.get(&layer) == Some(&view) {
+            return None;
+        }
+        self.views.insert(layer, view);
+        Some(UiEvent::Camera {
+            layer,
+            frame,
+            focus: None,
+            enlarge,
         })
     }
 
@@ -79,6 +97,7 @@ impl Cameras {
             layer,
             frame,
             focus: Some(target.clone()),
+            enlarge: false,
         }
     }
 }
@@ -131,7 +150,8 @@ mod tests {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
-            | UiEvent::PageTurn { .. } => None,
+            | UiEvent::PageTurn { .. }
+            | UiEvent::Diagram { .. } => None,
         }
     }
 

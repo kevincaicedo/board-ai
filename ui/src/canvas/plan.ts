@@ -23,6 +23,8 @@ import {
   roughCurve,
   roughEllipse,
   roughLine,
+  roughRoundedRect,
+  roundedRectPolygon,
   type Vec,
 } from "./geometry.ts";
 import { type Random, randomFor } from "./rng.ts";
@@ -40,6 +42,7 @@ import {
   OUTLINE_WIDTH,
   type PlanTokens,
 } from "./sketch.ts";
+import { revealItems } from "./staged.ts";
 
 export type { PlanTokens } from "./sketch.ts";
 
@@ -272,6 +275,31 @@ function actor(random: Random, rect: Rect, label: string, tokens: PlanTokens): I
   ];
   if (label !== "") {
     items.push(makeText(cx, rect.y + rect.h + 24 * sy, label, tokens.handNode, "ink"));
+  }
+  return items;
+}
+
+/** A state as a sketch draws it: a box with fully rounded ends, its label, then its fill. */
+function pill(
+  random: Random,
+  rect: Rect,
+  label: string,
+  fill: Tone | null,
+  tokens: PlanTokens,
+): Item[] {
+  const { x, y, w, h } = rect;
+  const outline = roughRoundedRect(random, x, y, w, h, h / 2);
+  const items: Item[] = [makeStroke(outline.points, "ink", OUTLINE_WIDTH, { legs: outline.legs })];
+  if (label !== "") {
+    items.push(makeText(x + w / 2, y + h / 2, label, labelSize(tokens, rect, label), "ink"));
+  }
+  if (fill !== null) {
+    items.push(
+      makeHatch(
+        hachure(random, roundedRectPolygon(x, y, w, h, h / 2), HATCH_GAP, HATCH_DEGREES),
+        fill,
+      ),
+    );
   }
   return items;
 }
@@ -604,6 +632,7 @@ export function seedKey(op: DrawOp): string {
     case "Participant":
     case "Message":
     case "Cells":
+    case "Reveal":
       return op.id;
   }
 }
@@ -674,6 +703,9 @@ export function planOp(
         case "Circle":
           items = circleItems(random, op.rect, op.label, fill, tokens);
           break;
+        case "Pill":
+          items = pill(random, op.rect, op.label, fill, tokens);
+          break;
       }
       items = [...link, ...items];
       break;
@@ -713,6 +745,14 @@ export function planOp(
       items = writeItems(op, tokens);
       fallback = op.rect;
       break;
+    case "Reveal": {
+      // Each part is seeded by its own id, so a part drawn by another reveal looks the same.
+      const staged = revealItems(op, tokens);
+      items = staged.items;
+      targets = staged.targets;
+      fallback = staged.targets[0]?.rect ?? { x: 0, y: 0, w: 0, h: 0 };
+      break;
+    }
   }
   const { starts, ends, naturalMs } = schedule(items);
   return { items, starts, ends, naturalMs, bounds: boundsOf(items, fallback), targets };

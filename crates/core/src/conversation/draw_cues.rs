@@ -35,12 +35,57 @@ const SELF: &[&str] = &["i", "i'll", "i'm", "i'd", "let's", "lets"];
 /// ("don't bother to draw", "I want to sketch").
 const NEGATION_REACH_WORDS: usize = 3;
 
+/// Asking for a detailed map of many parts (D-187): the talker is reminded to stage it as one
+/// diagram rather than sketch it tag by tag. Live, gpt-oss-120b sketched "draw the whole map in
+/// detail" tag by tag with the prompt alone.
+pub const MAP_PHRASES: &[&str] = &[
+    "map",
+    "detailed",
+    "in detail",
+    "whole system",
+    "entire system",
+    "whole thing",
+    "architecture",
+    "big picture",
+    "every part",
+    "all the parts",
+    "all its parts",
+];
+
+/// Words before "map" that make it a data structure, not a drawing ("hash map").
+const NOT_A_MAP: &[&str] = &[
+    "hash",
+    "tree",
+    "bit",
+    "sorted",
+    "ordered",
+    "concurrent",
+    "heap",
+];
+
+/// The user's words ask for a detailed map, and not only a sketch.
+#[must_use]
+pub fn asks_for_map(text: &str) -> bool {
+    let words = words(text);
+    found_unnegated(&words, MAP_PHRASES, |index| {
+        words[index] != "map"
+            || index
+                .checked_sub(1)
+                .is_none_or(|before| !NOT_A_MAP.contains(&words[before].as_str()))
+    })
+}
+
 /// The user's words ask for a drawing.
 #[must_use]
 pub fn asks_for_drawing(text: &str) -> bool {
     let words = words(text);
+    found_unnegated(&words, DRAW_PHRASES, |_| true)
+}
+
+/// A phrase of `table` at a word `keep` accepts, with no negation or "let me" just before it.
+fn found_unnegated(words: &[String], table: &[&str], keep: impl Fn(usize) -> bool) -> bool {
     (0..words.len()).any(|index| {
-        let found = DRAW_PHRASES.iter().any(|phrase| {
+        let found = table.iter().any(|phrase| {
             phrase
                 .split(' ')
                 .enumerate()
@@ -53,13 +98,35 @@ pub fn asks_for_drawing(text: &str) -> bool {
             || before
                 .windows(2)
                 .any(|pair| pair[0] == "let" && pair[1] == "me");
-        found && !negated
+        found && !negated && keep(index)
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DRAW_PHRASES, asks_for_drawing};
+    use super::{DRAW_PHRASES, MAP_PHRASES, asks_for_drawing, asks_for_map};
+
+    #[test]
+    fn a_detailed_map_is_asked_for_and_a_hash_map_is_not() {
+        for phrase in MAP_PHRASES {
+            assert!(
+                asks_for_map(&format!("Show me the {phrase} please")),
+                "{phrase}"
+            );
+        }
+        assert!(asks_for_map("Draw the whole map in detail."));
+        assert!(asks_for_map(
+            "Walk me through the architecture of inf-alloc"
+        ));
+        for other in [
+            "How does a hash map grow?",
+            "Walk me through a request",
+            "Sketch the cache",
+            "don't make it detailed",
+        ] {
+            assert!(!asks_for_map(other), "{other:?}");
+        }
+    }
 
     #[test]
     fn every_phrase_asks_and_a_negation_takes_it_back() {

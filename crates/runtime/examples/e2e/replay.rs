@@ -227,6 +227,7 @@ fn op_id(op: &DrawOp) -> OpId {
         | DrawOp::Participant { op, .. }
         | DrawOp::Message { op, .. }
         | DrawOp::Cells { op, .. }
-        | DrawOp::Write { op, .. } => *op,
+        | DrawOp::Write { op, .. }
+        | DrawOp::Reveal { op, .. } => *op,
     }
 }

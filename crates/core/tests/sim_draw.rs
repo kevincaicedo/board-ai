@@ -59,6 +59,7 @@ fn frames(sim: &Sim, layer: LayerId) -> Vec<(u64, Rect, Option<String>)> {
                 layer: framed,
                 frame,
                 focus,
+                ..
             } if *framed == layer => Some((
                 at.as_ms(),
                 *frame,

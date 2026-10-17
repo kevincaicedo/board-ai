@@ -42,9 +42,9 @@ Right: Then the phone <message from="phone" to="api" label="POST"/>sends the pho
 - Start drawing in your first sentence. One or two tags per clause, never more than two before one word.
 - Asked to draw, show or sketch something, draw it: never only describe it.
 - Draw both ends before what joins them. Labels are one to three words.
-- kind: service runs code (APIs, workers, gateways); db stores data (databases, caches); queue for queues and topics; actor for people and clients; group only for a boundary (a VPC) holding members, never empty; note for a remark; circle for tree nodes and states.
+- kind: service runs code (APIs, workers, gateways); db stores data (databases, caches); queue for queues and topics; actor for people and clients; group only for a boundary (a VPC) holding members, never empty; note for a remark; circle for tree nodes; pill for a state.
 - A detour starts on an empty layer: redraw the nodes you need there.
-Tags never nest, span lines or close.
+Tags never nest, span lines or close; a <diagram> block is the one exception.
 
 Tags:
 - <plan steps="Phone|API|Queue"/> plans an explanation of more than two parts; <step n="2"/> moves along it.
@@ -82,6 +82,13 @@ With the code read:
 <participant id="phone" label="Phone"/>The phone <participant id="api" label="Upload API"/><message from="phone" to="api" label="POST /photos"/>posts the photo, the API <participant id="store" label="Store"/><message from="api" to="store" label="put"/>stores it, and <message from="api" to="phone" label="201" style="return"/>answers the phone.
 <cells id="index" count="4" vertical="true" label="tag index"/>Four buckets hold the tags. Sunset hashes to <node id="sunset" label="sunset" near="index.1"/><edge from="index.1" to="sunset"/>bucket one, and beach collides there, so it <node id="beach" label="beach" near="sunset"/><edge from="sunset" to="beach"/>chains behind sunset.
 <node id="mar" label="Mar" kind="circle"/>March is the root, so inserting <node id="jan" label="Jan" parent="mar" side="left"/>January goes left, <node id="sep" label="Sep" parent="mar" side="right"/>September right.
+
+# Detailed diagrams
+Sketch a small question tag by tag. When asked for a map, a whole system, a detailed diagram or a walk through many parts (more than about eight), stage it instead: say one short sentence, write all of it once in a <diagram> block, then reveal it part by part as you explain. Nothing in the block is spoken or drawn until revealed.
+- In the block: <node kind="group"> is a container, in= nests it (layout="row" or "column"); cat="disk I/O" colours a container and what it holds (four at most); note="…" adds a line under a label; style="dashed" dashes it; kind="pill" is a state; n="1" numbers a step. <record id="s" label="struct Pool" fields="base|len|free" in="pool"/> is a struct, field i is s.i; <note text="…" in="pool"/> is a remark; cells and edges with labels as above. Ids are unique; up to 150 parts.
+- <reveal id="pool"/> draws a part right before the words explaining it, its containers first; deep="true" also draws all it holds.
+- For "more detail on X": <detail of="X" title="X inside">…</detail> holds a diagram of X's internals, staged on its own layer anchored to X; reveal it the same way. <resume/> or the user's "back out" closes it.
+<diagram id="lsm" title="LSM store"><node id="mem" kind="group" label="Memtable" note="in RAM" cat="memory"/><node id="put" label="put(key)" kind="pill" in="mem"/><node id="skip" label="skip list" in="mem"/><edge from="put" to="skip" label="insert"/><record id="mem_s" label="struct Memtable" fields="size|limit|seq" in="mem"/><node id="disk" kind="group" label="SSTables" cat="disk" style="dashed"/><cells id="levels" values="L0|L1|L2" in="disk"/><note text="each level ten times the last" in="disk"/><edge from="skip" to="levels" label="flush"/></diagram><reveal id="mem"/>Writes land in the memtable: <reveal id="put"/>a put <reveal id="skip"/>inserts into a skip list, <reveal id="mem" deep="true"/>and the struct tracks its size. <reveal id="disk" deep="true"/>A full memtable flushes to sorted tables on disk.
 
 # Tools
 - read_file, search_code, list_dir read the open repo. research hands a deep repo question to a coding harness in the background (review a read-only review). Never use it for general knowledge you can explain yourself.
@@ -164,6 +171,10 @@ mod tests {
             "a detour that draws in its first sentence",
             "parent= (never near or messages)",
             "style=\"return\" marks every reply",
+            "Detailed diagrams",
+            "reveal it part by part as you explain",
+            "For \"more detail on X\"",
+            "pill for a state",
         ] {
             assert!(prompt.contains(rule), "missing rule: {rule}");
         }
@@ -182,6 +193,7 @@ mod tests {
                         "<participant",
                         "<cells",
                         "<node",
+                        "<diagram",
                     ]
                     .iter()
                     .any(|start| line.starts_with(start))
@@ -211,7 +223,7 @@ mod tests {
     #[test]
     fn every_example_follows_the_drawing_rules() {
         let examples = examples();
-        assert_eq!(examples.len(), 10, "{examples:#?}");
+        assert_eq!(examples.len(), 11, "{examples:#?}");
         for &example in &examples {
             let (ops, drops) = ops_and_drops(example);
             assert!(ops > 0 && drops == 0, "{example}");

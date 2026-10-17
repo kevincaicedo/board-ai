@@ -79,11 +79,15 @@ pub enum UiEvent {
     },
     /// A detour opened a new layer; the board under it softens into the background.
     /// `question` is the user's question that opened it, for the card's subtitle ("Detour · why
-    /// Redis first?"); `None` when the talker opened it on its own.
+    /// Redis first?"); `None` when the talker opened it on its own. `anchor` makes it a detail
+    /// layer (drill-down, D-188, artboard 15b): the camera moves into that element's box and the
+    /// layer fills the board's area, with the breadcrumbs of the layers it drills through.
+    /// `None` for a detour, drawn in its card beside the board (frame 4).
     LayerPush {
         layer: LayerId,
         title: String,
         question: Option<String>,
+        anchor: Option<DetailAnchor>,
     },
     /// The detour closed; its layer goes away and the one under it returns to focus.
     LayerPop {
@@ -94,10 +98,17 @@ pub enum UiEvent {
     /// bounds plus a margin); a `focus` tag frames one element and holds the camera until the
     /// board grows past that frame. The UI fits the frame into the stage area clear of the
     /// thread bar and the captions, never enlarging past natural size.
+    ///
+    /// `enlarge`: the frame closes up on part of a staged diagram, drawn in its small sizes
+    /// (canvas 15), so the UI may enlarge it past natural size, up to
+    /// `--diagram-camera-scale-max`; a dense part then reads like a sketch. Every other frame is
+    /// never enlarged. Logs written before it existed read it as false.
     Camera {
         layer: LayerId,
         frame: Rect,
         focus: Option<ElementId>,
+        #[serde(default)]
+        enlarge: bool,
     },
     SurfaceShow {
         surface: Surface,
@@ -187,6 +198,127 @@ pub enum UiEvent {
     PageTurn {
         page: u16,
         title: Option<String>,
+    },
+    /// A staged diagram on `layer` (D-187, canvas 15): its title for the stage's header, and the
+    /// top-level part the narration is revealing, from 1, of `parts` ("part 3 of 4"); `part` is
+    /// 0 when it is laid out and nothing of it is drawn yet. Sent when it is staged and when the
+    /// narration moves to another part. A detail layer's diagram names its own parts; its title
+    /// in the breadcrumbs is the layer's (`LayerPush.title`).
+    Diagram {
+        layer: LayerId,
+        title: String,
+        part: u8,
+        parts: u8,
+    },
+}
+
+/// Where a detail layer drills in (D-188): an element of the layer under it and that element's
+/// box there, in world units, which the camera moves into as the detail layer opens; its
+/// category tones the detail card's edge (artboard 15b), and none gives the plain edge.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DetailAnchor {
+    pub layer: LayerId,
+    pub element: ElementId,
+    pub rect: Rect,
+    pub category: Option<Category>,
+}
+
+/// A line of a staged diagram's handwriting where the core placed it: `at` is on the line's centre
+/// (the UI writes with `dominant-baseline: central`), at its left end or its middle as the part
+/// says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TextAt {
+    pub text: String,
+    pub at: Point,
+}
+
+/// A staged diagram's categories (canvas 15): each pairs a stroke for frames and swatches with a
+/// soft fill for boxes, in the order a diagram first uses them. The legend names them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum Category {
+    Slate,
+    Violet,
+    Blue,
+    Green,
+}
+
+/// One part of a staged diagram (D-187), laid out with the whole diagram before its first stroke
+/// and drawn when the narration reveals it (`DrawOp::Reveal`). Its sizes are the canvas's small
+/// diagram sizes (canvas 15), not a sketch's. Each part is an element of its own: it can be
+/// pointed at, marked, joined and struck by its id.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "part")]
+#[ts(export)]
+pub enum StagedPart {
+    /// A container: its frame in its category's stroke (the light grey without one), dashed
+    /// when `dashed`, then its label (`--diagram-frame-label`) inside the top-left corner, and
+    /// its note in the second ink (`--diagram-note`), after the label or on the line under it.
+    /// Both are written from their `at`, left-aligned.
+    Frame {
+        id: ElementId,
+        rect: Rect,
+        label: TextAt,
+        note: Option<TextAt>,
+        category: Option<Category>,
+        dashed: bool,
+    },
+    /// A box, pill, cylinder, queue, actor or circle: its outline (dashed when `dashed`), then
+    /// its label (`--diagram-label`), prefixed by its step number ("1. round up to a class")
+    /// when it is a numbered step, then the note under the label in the second ink, then its
+    /// category's soft fill under the ink.
+    Node {
+        id: ElementId,
+        shape: NodeShape,
+        rect: Rect,
+        label: String,
+        note: Option<String>,
+        step: Option<u8>,
+        category: Option<Category>,
+        dashed: bool,
+    },
+    /// A remark written inside the diagram in the second ink (`--diagram-note`), one entry per
+    /// line, left-aligned from the top of `rect`.
+    Note {
+        id: ElementId,
+        rect: Rect,
+        lines: Vec<String>,
+    },
+    /// A struct with its fields in a row: each field's box with its name in the code font
+    /// (`--diagram-field`), then the struct's name under them (`--diagram-label`), left-aligned.
+    /// Each field is its own element (`arena.2`), as a cell is.
+    Record {
+        id: ElementId,
+        label: String,
+        fields: Vec<CellBox>,
+    },
+    /// A row (or column) of cells, as `DrawOp::Cells`, in the diagram's sizes: values in the code
+    /// font (`--diagram-field`), the name and index labels in the second ink.
+    Cells {
+        id: ElementId,
+        label: String,
+        cells: Vec<CellBox>,
+        vertical: bool,
+    },
+    /// A connector, its arrowhead, then its label (`--diagram-edge`) centred on its `at`, as
+    /// `DrawOp::Edge`.
+    Edge {
+        id: ElementId,
+        from: ElementId,
+        to: ElementId,
+        path: EdgePath,
+        label: Option<TextAt>,
+        style: LineStyle,
+    },
+    /// A legend entry, drawn with the first part of its category: a small dashed swatch in the
+    /// category's stroke at the left of `rect`, then the category's name.
+    Legend {
+        id: ElementId,
+        rect: Rect,
+        category: Category,
+        label: String,
     },
 }
 
@@ -307,6 +439,16 @@ pub enum DrawOp {
         label: String,
         rect: Rect,
     },
+    /// Parts of a staged diagram (D-187) the narration just named, drawn one after another in a
+    /// hand's order within one budget: a frame and its label before what is inside it, both
+    /// ends before what joins them, a legend entry with the first part of its category. They
+    /// were laid out with the whole diagram before its first stroke, so nothing drawn moves
+    /// (I6); they freeze and resume as one stroke. `id` names the reveal, not an element.
+    Reveal {
+        id: ElementId,
+        op: OpId,
+        parts: Vec<StagedPart>,
+    },
 }
 
 /// A stretch of one participant's lifeline, from `top` down to `bottom` at `x`.
@@ -354,8 +496,11 @@ pub enum NodeShape {
     Group,
     /// Handwritten text with no outline.
     Note,
-    /// A circle (an ellipse for a long label): tree nodes and states.
+    /// A circle (an ellipse for a long label): tree nodes.
     Circle,
+    /// A box with fully rounded ends: a state of a state machine (canvas 15's `Free`,
+    /// `Leased(kind)`).
+    Pill,
 }
 
 /// The hachure tones under a node's ink (the canvas's sketch fills). The core picks one per

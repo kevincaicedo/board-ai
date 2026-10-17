@@ -263,7 +263,7 @@ impl Board {
             else {
                 continue;
             };
-            if element.state == ElementState::Pending || caller == callee {
+            if !element.state.is_shown() || caller == callee {
                 continue;
             }
             let answered = open
@@ -310,7 +310,8 @@ impl Board {
                     | Placed::Write { .. }
                     | Placed::Before { .. }
                     | Placed::ResumeFrozen
-                    | Placed::Unchanged) => other,
+                    | Placed::Unchanged
+                    | Placed::Reveal(_)) => other,
                 },
             );
         }

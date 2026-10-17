@@ -13,6 +13,8 @@ use crate::protocol::{DrawOp, EdgePath, NodeShape};
 pub(super) fn repeated(existing: &Element, op: OpId, label: &str) -> Placed {
     match existing.state {
         ElementState::Frozen { .. } => Placed::ResumeFrozen,
+        // A staged part is drawn by its reveal; the engine turns a tag naming one into a reveal.
+        ElementState::Planned => Placed::Unchanged,
         ElementState::Pending
         | ElementState::Drawing { .. }
         | ElementState::Drawn
@@ -188,7 +190,7 @@ pub(super) fn edge_between(layer: &Layer, from: &ElementId, to: &ElementId) -> O
         else {
             return None;
         };
-        if element.state == ElementState::Pending {
+        if !element.state.is_shown() {
             return None;
         }
         if a == from && b == to {

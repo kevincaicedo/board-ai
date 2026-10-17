@@ -130,6 +130,7 @@ impl Board {
             .filter_map(|element| match element.state {
                 ElementState::Drawing { started_at, .. } => Some((started_at, element.op?)),
                 ElementState::Pending
+                | ElementState::Planned
                 | ElementState::Drawn
                 | ElementState::Frozen { .. }
                 | ElementState::Struck => None,

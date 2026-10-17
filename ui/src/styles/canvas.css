@@ -77,6 +77,43 @@
 .you-note {
   opacity: var(--hand-note-opacity);
 }
+/* A staged diagram's categories (canvas 15): frames and swatches in the stroke, boxes in the
+   soft fill under the ink. */
+.tone-slate {
+  stroke: var(--cat-slate);
+  fill: var(--cat-slate);
+}
+.tone-violet {
+  stroke: var(--cat-violet);
+  fill: var(--cat-violet);
+}
+.tone-blue {
+  stroke: var(--cat-blue);
+  fill: var(--cat-blue);
+}
+.tone-green {
+  stroke: var(--cat-green);
+  fill: var(--cat-green);
+}
+.tone-slate-soft {
+  stroke: var(--cat-slate-soft);
+  fill: var(--cat-slate-soft);
+}
+.tone-violet-soft {
+  stroke: var(--cat-violet-soft);
+  fill: var(--cat-violet-soft);
+}
+.tone-blue-soft {
+  stroke: var(--cat-blue-soft);
+  fill: var(--cat-blue-soft);
+}
+.tone-green-soft {
+  stroke: var(--cat-green-soft);
+  fill: var(--cat-green-soft);
+}
+path.fill {
+  stroke: none;
+}
 
 path.stroke {
   fill: none;
@@ -89,8 +126,17 @@ path.stroke {
   dominant-baseline: central;
 }
 
-.hand .unwritten {
+.hand .unwritten,
+.code .unwritten {
   fill-opacity: 0;
+}
+
+/* A staged diagram's field values and indexes (canvas 15: Geist Mono). */
+.code {
+  font-family: var(--font-code);
+  stroke: none;
+  white-space: pre;
+  dominant-baseline: central;
 }
 
 .hit {

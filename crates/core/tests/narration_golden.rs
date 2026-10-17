@@ -213,6 +213,18 @@ const PIECES: &[&str] = &[
     "files",
     "I'll list the files. ",
     "Let me search for ",
+    // Staged diagrams (D-187): blocks, their parts, reveals and details, whole and in parts.
+    "<diagram id=\"d\" title=\"t\">",
+    "<diagram>",
+    "</diagram>",
+    "<detail of=\"a\">",
+    "</detail>",
+    "<detail of=\"a\"/>",
+    "<reveal id=\"a\"/>",
+    "<reveal id=\"d\" deep=\"true\"/>",
+    "<record id=\"r\" fields=\"x|y\"/>",
+    "<note text=\"n\"/>",
+    "<node id=\"g\" kind=\"group\"/>",
 ];
 
 /// Random input never panics, keeps every clause within its cap, keeps the op cap, and stays

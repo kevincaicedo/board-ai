@@ -614,3 +614,95 @@
   font-size: 11px;
   color: var(--ink-3);
 }
+
+/* Staged diagrams and drill-down (15 · a detailed diagram revealed as it is explained, 15b ·
+   drill-down). The header sits at top left; a detail layer's card fills the board's area. */
+
+.stage-header {
+  position: absolute;
+  left: var(--stage-header-left);
+  top: var(--stage-header-top);
+  display: flex;
+  align-items: center;
+  gap: var(--stage-header-gap);
+  font-size: var(--type-stage-header);
+  color: var(--ink-2);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.stage-header-diagram {
+  gap: calc(var(--stage-header-gap) + 2px);
+}
+
+.stage-header-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--stage-header-gap);
+}
+
+.stage-header-current {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.back-out {
+  margin-left: var(--stage-header-gap);
+  height: var(--back-out-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--back-out-padding);
+  border-radius: calc(var(--back-out-height) / 2);
+  background: var(--bg);
+  box-shadow: var(--shadow-back-out);
+  font-size: var(--type-back-out);
+  color: var(--ink);
+}
+
+.depth-chip {
+  height: var(--depth-chip-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--depth-chip-padding);
+  border-radius: calc(var(--depth-chip-height) / 2);
+  background: var(--grey-100);
+  font-family: var(--font-code);
+  font-size: var(--type-depth-chip);
+}
+
+.details {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.detail-card {
+  --detail-edge-color: var(--grey-300);
+  position: absolute;
+  box-sizing: border-box;
+  display: none;
+  overflow: hidden;
+  background: var(--bg);
+  box-shadow:
+    var(--shadow-detail-card),
+    inset 0 0 0 var(--detail-card-edge) var(--detail-edge-color);
+  pointer-events: auto;
+}
+
+.detail-edge-slate {
+  --detail-edge-color: var(--cat-slate);
+}
+.detail-edge-violet {
+  --detail-edge-color: var(--cat-violet);
+}
+.detail-edge-blue {
+  --detail-edge-color: var(--cat-blue);
+}
+.detail-edge-green {
+  --detail-edge-color: var(--cat-green);
+}
+
+.detail-host {
+  position: absolute;
+  inset: 0;
+}

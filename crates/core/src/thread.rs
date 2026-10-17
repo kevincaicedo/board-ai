@@ -4,12 +4,14 @@
 use crate::ids::LayerId;
 use crate::limits::DETOUR_DEPTH_MAX;
 use crate::narration::ops::StepRef;
-use crate::protocol::UiEvent;
+use crate::protocol::{DetailAnchor, UiEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Detour {
     pub title: String,
     pub layer: LayerId,
+    /// A detail layer's place on the layer it drills into (D-188); `None` for a detour.
+    pub anchor: Option<DetailAnchor>,
 }
 
 /// At most [`DETOUR_DEPTH_MAX`] detours; a push past it is refused, never stored (I4).
@@ -146,7 +148,14 @@ impl Thread {
             }
         }
         for detour in self.detours.items() {
-            parts.push(format!("in detour \"{}\"", detour.title));
+            match &detour.anchor {
+                None => parts.push(format!("in detour \"{}\"", detour.title)),
+                Some(anchor) => parts.push(format!(
+                    "in the detail of {} \"{}\"",
+                    anchor.element.as_str(),
+                    detour.title
+                )),
+            }
         }
         parts.join("; ")
     }
@@ -183,7 +192,8 @@ mod tests {
                 thread
                     .push_detour(Detour {
                         title: format!("d{depth}"),
-                        layer
+                        layer,
+                        anchor: None,
                     })
                     .is_ok()
             );
@@ -192,6 +202,7 @@ mod tests {
         let refused = thread.push_detour(Detour {
             title: "one too many".into(),
             layer: LayerId(9),
+            anchor: None,
         });
         assert!(refused.is_err());
         assert_eq!(thread.depth(), DETOUR_DEPTH_MAX);

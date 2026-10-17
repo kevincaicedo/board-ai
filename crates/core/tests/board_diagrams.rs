@@ -55,7 +55,9 @@ impl Builder {
                 }
                 draw
             }
-            Placed::ResumeFrozen | Placed::Unchanged => panic!("nothing new was placed"),
+            Placed::ResumeFrozen | Placed::Unchanged | Placed::Reveal(_) => {
+                panic!("nothing new was placed")
+            }
         }
     }
 

@@ -14,7 +14,9 @@ use boardai_core::input::Input;
 use boardai_core::memory::MemoryWrite;
 use boardai_core::narration::quality::{NarrationQuality, assess};
 use boardai_core::narration::tags::TAG_NAMES;
-use boardai_core::protocol::{ChipKind, DrawOp, OrbState, SourceRef, Speaker, Surface, UiEvent};
+use boardai_core::protocol::{
+    ChipKind, DrawOp, OrbState, SourceRef, Speaker, StagedPart, Surface, UiEvent,
+};
 use boardai_core::time::SessionTime;
 use boardai_core::tools::ToolOutput;
 use boardai_runtime::logging::bound;
@@ -42,6 +44,12 @@ pub struct Answer {
     pub tool_calls: u32,
     pub interrupted: bool,
     text: String,
+    /// Staged diagrams (D-187): elements drawn (a reveal's parts with their fields and cells),
+    /// reveals, parts dropped, and when the last reveal's budget ends, from the request.
+    pub elements_drawn: u32,
+    pub reveals: u32,
+    pub dropped_parts: u32,
+    pub reveal_end_ms: Option<u64>,
 }
 
 impl Answer {
@@ -62,6 +70,20 @@ impl Answer {
                 u32::try_from(found).unwrap_or(u32::MAX)
             })
             .sum()
+    }
+
+    /// An op started at `at`: counts its elements, and when it is a staged diagram's reveal,
+    /// when its budget ends.
+    fn drew(&mut self, at: SessionTime, op: &DrawOp, budget_ms: u32) {
+        self.ops += 1;
+        self.elements_drawn += elements_of(op);
+        if let DrawOp::Reveal { .. } = op {
+            self.reveals += 1;
+            let end = self
+                .requested_at
+                .map(|requested| at.ms_since(requested) + u64::from(budget_ms));
+            self.reveal_end_ms = self.reveal_end_ms.max(end);
+        }
     }
 
     /// The drawing-rule numbers for everything the talker wrote in this answer.
@@ -188,6 +210,21 @@ impl Printer {
             },
         );
         line(at, "done", &summary);
+        if answer.reveals > 0 || answer.dropped_parts > 0 {
+            line(
+                at,
+                "staged",
+                &format!(
+                    "{} elements drawn in {} reveals · first stroke {} · whole reveal {} · parts \
+                     dropped {}",
+                    answer.elements_drawn,
+                    answer.reveals,
+                    ms(answer.first_op_ms),
+                    ms(answer.reveal_end_ms),
+                    answer.dropped_parts
+                ),
+            );
+        }
         state.answers.push(answer);
     }
 
@@ -212,7 +249,7 @@ impl Printer {
                 op,
                 budget_ms,
             } => {
-                self.with_answer(|answer| answer.ops += 1);
+                self.with_answer(|answer| answer.drew(at, op, *budget_ms));
                 line(
                     at,
                     "op",
@@ -226,7 +263,8 @@ impl Printer {
             UiEvent::LayerPush { .. }
             | UiEvent::Thread { .. }
             | UiEvent::Camera { .. }
-            | UiEvent::PageTurn { .. } => board_line(at, event),
+            | UiEvent::PageTurn { .. }
+            | UiEvent::Diagram { .. } => board_line(at, event),
             UiEvent::LayerPop { layer } => line(at, "detour", &format!("close L{}", layer.0)),
             UiEvent::SurfaceShow { surface } => line(at, "surface", &surface_line(surface)),
             UiEvent::SurfaceUpdate { id, update } => {
@@ -378,6 +416,7 @@ impl StoreSink for Printer {
                 self.with_answer(|answer| match what {
                     Dropped::NarrationTag => answer.dropped_tags += count,
                     Dropped::Op => answer.dropped_ops += count,
+                    Dropped::DiagramPart => answer.dropped_parts += count,
                     Dropped::Detour | Dropped::UserShape | Dropped::DrawCommand => {}
                 });
                 line(at, "drop", &format!("{what:?} x{count}"));
@@ -448,15 +487,20 @@ fn board_line(at: SessionTime, event: &UiEvent) {
         layer,
         title,
         question,
+        anchor,
     } = event
     {
         let question = question
             .as_ref()
             .map_or_else(String::new, |question| format!(" for \"{question}\""));
+        let kind = anchor.as_ref().map_or_else(
+            || "detour".to_owned(),
+            |anchor| format!("detail of {}", anchor.element.as_str()),
+        );
         line(
             at,
             "detour",
-            &format!("open L{} \"{title}\"{question}", layer.0),
+            &format!("open L{} {kind} \"{title}\"{question}", layer.0),
         );
     } else if let UiEvent::Thread {
         steps,
@@ -474,14 +518,28 @@ fn board_line(at: SessionTime, event: &UiEvent) {
         layer,
         frame,
         focus,
+        enlarge,
     } = event
     {
         let focus = focus.as_ref().map_or("-", |id| id.as_str());
+        let close_up = if *enlarge { " close-up" } else { "" };
         let text = format!(
-            "L{} frame {}x{} at ({}, {}) focus {focus}",
+            "L{} frame {}x{} at ({}, {}) focus {focus}{close_up}",
             layer.0, frame.w, frame.h, frame.x, frame.y
         );
         line(at, "camera", &text);
+    } else if let UiEvent::Diagram {
+        layer,
+        title,
+        part,
+        parts,
+    } = event
+    {
+        line(
+            at,
+            "diagram",
+            &format!("L{} \"{title}\" part {part} of {parts}", layer.0),
+        );
     } else if let UiEvent::PageTurn { page, title } = event {
         let title = title.as_deref().unwrap_or("(untitled)");
         line(at, "page", &format!("turned to page {page} {title}"));
@@ -494,6 +552,35 @@ fn chip_line(kind: ChipKind, text: &str, source: &Option<SourceRef>) -> String {
         format!(" (opens {}:{})", source.path, source.line)
     });
     format!("{kind:?} {text}{opens}")
+}
+
+/// The elements an op draws: a reveal's parts with their fields and cells, a row's cells and
+/// the row, one for anything else.
+fn elements_of(op: &DrawOp) -> u32 {
+    let count = |items: usize| u32::try_from(items).unwrap_or(u32::MAX);
+    match op {
+        DrawOp::Reveal { parts, .. } => parts
+            .iter()
+            .map(|part| match part {
+                StagedPart::Record { fields, .. } => count(fields.len()) + 1,
+                StagedPart::Cells { cells, .. } => count(cells.len()) + 1,
+                StagedPart::Frame { .. }
+                | StagedPart::Node { .. }
+                | StagedPart::Note { .. }
+                | StagedPart::Edge { .. }
+                | StagedPart::Legend { .. } => 1,
+            })
+            .sum(),
+        DrawOp::Cells { cells, .. } => count(cells.len()) + 1,
+        DrawOp::Node { .. }
+        | DrawOp::Edge { .. }
+        | DrawOp::Annotate { .. }
+        | DrawOp::Strike { .. }
+        | DrawOp::Trace { .. }
+        | DrawOp::Participant { .. }
+        | DrawOp::Message { .. }
+        | DrawOp::Write { .. } => 1,
+    }
 }
 
 fn ms(value: Option<u64>) -> String {
@@ -562,7 +649,8 @@ fn describe(op: &DrawOp) -> String {
         DrawOp::Participant { .. }
         | DrawOp::Message { .. }
         | DrawOp::Cells { .. }
-        | DrawOp::Write { .. } => describe_diagram(op),
+        | DrawOp::Write { .. }
+        | DrawOp::Reveal { .. } => describe_diagram(op),
     }
 }
 
@@ -624,6 +712,10 @@ fn describe_diagram(op: &DrawOp) -> String {
         DrawOp::Write {
             op, target, label, ..
         } => format!("#{} write {} \"{label}\"", op.0, target.as_str()),
+        DrawOp::Reveal { op, parts, .. } => {
+            let ids: Vec<&str> = parts.iter().map(|part| part.id().as_str()).collect();
+            format!("#{} reveal {} parts: {}", op.0, parts.len(), ids.join(" "))
+        }
         DrawOp::Node { .. }
         | DrawOp::Edge { .. }
         | DrawOp::Annotate { .. }

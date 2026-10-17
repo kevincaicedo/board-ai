@@ -147,6 +147,10 @@ pub enum Dropped {
     /// A drawing command that means nothing now: Done or Esc while not drawing, or Done while
     /// muted.
     DrawCommand,
+    /// A staged diagram's part dropped at a limit (D-187): past the block's size or part count,
+    /// nested too deep, a category past the palette, an id already taken, or a part that would
+    /// land on a shape the user drew.
+    DiagramPart,
 }
 
 #[cfg(test)]

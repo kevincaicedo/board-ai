@@ -10,6 +10,7 @@ import type { UiBatch } from "../protocol/generated/UiBatch.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import type { BatchSink } from "../transport/transport.ts";
+import { DiagramStore } from "./diagrams.ts";
 import { SessionStore } from "./session.ts";
 import { ViewStore } from "./views.ts";
 
@@ -25,6 +26,8 @@ export class Scene implements BatchSink {
   readonly views = new ViewStore();
   /** Drawing together (13 · You draw): the mode, your shapes and the label hint. */
   readonly draw = new DrawModel();
+  /** Staged diagrams' headers and the open detail layers (15, 15b). */
+  readonly diagrams = new DiagramStore();
   /** Bumped on reset, so views know to drop what they built. */
   generation = 0;
   readonly #lead: LeadDecision;
@@ -50,6 +53,7 @@ export class Scene implements BatchSink {
     this.store.reset();
     this.views.reset();
     this.draw.reset();
+    this.diagrams.reset();
     this.generation += 1;
   }
 
@@ -115,6 +119,7 @@ export class Scene implements BatchSink {
       case "Chip":
       case "Problem":
       case "OpenSettings":
+      case "Diagram":
         break;
       case "DrawMode":
         // BoardAI watches from the dock while you draw, as it does after drawing itself.
@@ -130,5 +135,6 @@ export class Scene implements BatchSink {
         break;
     }
     this.store.apply(event, at);
+    this.diagrams.apply(event, at);
   }
 }

@@ -8,12 +8,18 @@
 //! - `<` not followed by a letter or `/` is speech ("a < b").
 //! - A malformed tag that doesn't look like one (an unknown name and no attribute yet, as in
 //!   "if count<limit then") is given back as speech.
-//! - A malformed tag that does look like one, an unknown tag, a closing tag, and any tag over
-//!   [`NARRATION_TAG_MAX_BYTES`] are dropped and counted. The parser then skips to the tag's `>`
-//!   (at most [`NARRATION_SKIP_MAX_BYTES`]) and speech continues.
+//! - A malformed tag that does look like one, an unknown tag, a closing tag other than a block's
+//!   (`</diagram>`, `</detail>`), and any tag over [`NARRATION_TAG_MAX_BYTES`] are dropped and
+//!   counted. The parser then skips to the tag's `>` (at most [`NARRATION_SKIP_MAX_BYTES`]) and
+//!   speech continues.
+//!
+//! A block's tags (D-187) are the only ones that close: `<diagram …>` opens one and `</diagram>`
+//! ends it. The parser only reports them (`self_closing`, [`Piece::Close`]); the stream reads the
+//! block between them, so the parser itself never nests.
 
 use crate::limits::{NARRATION_SKIP_MAX_BYTES, NARRATION_TAG_MAX_BYTES};
 use crate::narration::tags::TAG_NAMES;
+use crate::narration::tags::diagram::BLOCK_TAG_NAMES;
 
 /// A tag as written: its lowercase name, attributes in order, and the exact source text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,12 +27,16 @@ pub struct RawTag {
     pub name: String,
     pub attributes: Vec<(String, String)>,
     pub written: String,
+    /// Written `<… />`. A block's opening tag (`<diagram …>`) is not.
+    pub self_closing: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Piece {
     Text(String),
     Tag(RawTag),
+    /// A block's closing tag, `</diagram>`: its lowercase name.
+    Close(String),
     /// A tag that was dropped; its text is the source that was discarded, for the log.
     Dropped(String),
 }
@@ -186,7 +196,8 @@ impl TagParser {
             }
             State::Name | State::Between if ch.is_whitespace() => State::Between,
             State::Name | State::Between | State::SlashClose if ch == '>' => {
-                self.complete(out);
+                let self_closing = self.state == State::SlashClose;
+                self.complete(self_closing, out);
                 State::Text
             }
             State::Name | State::Between if ch == '/' => State::SlashClose,
@@ -223,7 +234,7 @@ impl TagParser {
                 State::Value(quote)
             }
             State::Closing if ch == '>' => {
-                out.push(Piece::Dropped(std::mem::take(&mut self.raw)));
+                self.close(out);
                 State::Text
             }
             State::Closing => State::Closing,
@@ -239,6 +250,21 @@ impl TagParser {
         };
         self.state = next;
         None
+    }
+
+    /// `</…>` ended: a block's closing tag, or a closing tag to drop.
+    fn close(&mut self, out: &mut Vec<Piece>) {
+        let raw = std::mem::take(&mut self.raw);
+        let name = raw
+            .trim_start_matches("</")
+            .trim_end_matches('>')
+            .trim()
+            .to_ascii_lowercase();
+        out.push(if BLOCK_TAG_NAMES.contains(&name.as_str()) {
+            Piece::Close(name)
+        } else {
+            Piece::Dropped(raw)
+        });
     }
 
     fn looks_like_tag(&self) -> bool {
@@ -318,7 +344,7 @@ impl TagParser {
         };
     }
 
-    fn complete(&mut self, out: &mut Vec<Piece>) {
+    fn complete(&mut self, self_closing: bool, out: &mut Vec<Piece>) {
         let name = self.name.to_ascii_lowercase();
         let written = std::mem::take(&mut self.raw);
         if TAG_NAMES.contains(&name.as_str()) {
@@ -326,6 +352,7 @@ impl TagParser {
                 name,
                 attributes: std::mem::take(&mut self.attributes),
                 written,
+                self_closing,
             }));
         } else {
             out.push(Piece::Dropped(written));
@@ -393,7 +420,7 @@ mod tests {
             .iter()
             .filter_map(|piece| match piece {
                 Piece::Text(text) => Some(text.as_str()),
-                Piece::Tag(_) | Piece::Dropped(_) => None,
+                Piece::Tag(_) | Piece::Dropped(_) | Piece::Close(_) => None,
             })
             .collect()
     }

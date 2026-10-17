@@ -63,9 +63,20 @@ impl Core {
             ConversationState::Ducked(barge_in) => {
                 self.interrupt(now, barge_in.into_utterance(), effects);
             }
-            state @ (ConversationState::Idle
-            | ConversationState::Listening(_)
-            | ConversationState::Muted) => self.state = state,
+            // Quiet, Esc backs out of a detail layer (D-188), as "back out" does.
+            ConversationState::Idle => {
+                let detail = self
+                    .thread
+                    .detours()
+                    .top()
+                    .is_some_and(|detour| detour.anchor.is_some());
+                if detail && !self.is_drawing() {
+                    self.back_out(now, effects);
+                }
+            }
+            state @ (ConversationState::Listening(_) | ConversationState::Muted) => {
+                self.state = state;
+            }
         }
     }
 
@@ -242,6 +253,7 @@ impl Core {
             .is_some_and(cues::ends_on_question);
         let heard = self.voice.heard();
         self.commit_heard(heard, false);
+        self.show_overview(effects);
         self.end_reply();
         match std::mem::replace(&mut self.state, ConversationState::Idle) {
             ConversationState::Speaking | ConversationState::Thinking | ConversationState::Idle => {

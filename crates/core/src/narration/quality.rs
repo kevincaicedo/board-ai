@@ -21,7 +21,11 @@ const DRAWING_TAGS: &[&str] = &[
     "message",
     "cells",
     "write",
+    "reveal",
 ];
+
+/// Tags a staged diagram's block collects (D-187): inside a block they draw nothing yet.
+const BLOCK_PART_TAGS: &[&str] = &["node", "edge", "cells", "record", "note"];
 
 /// Words after which a noun must come: a tag right after one of these, followed by a word that
 /// can't start a noun phrase, stood in for the noun.
@@ -137,11 +141,19 @@ pub fn assess(written: &str) -> NarrationQuality {
         line_start: true,
         ..Scan::default()
     };
+    // A diagram block is one tag: its parts draw when revealed, and its text isn't speech.
+    let mut in_block = false;
     for piece in &pieces {
         match piece {
+            Piece::Text(_) | Piece::Dropped(_) if in_block => {}
+            Piece::Tag(tag) if in_block && BLOCK_PART_TAGS.contains(&tag.name.as_str()) => {}
             Piece::Text(text) => scan.text(text),
-            Piece::Tag(tag) => scan.tag(&tag.name),
+            Piece::Tag(tag) => {
+                in_block = !tag.self_closing && matches!(tag.name.as_str(), "diagram" | "detail");
+                scan.tag(&tag.name);
+            }
             Piece::Dropped(raw) => scan.tag(dropped_name(raw)),
+            Piece::Close(_) => in_block = false,
         }
     }
     scan.end();

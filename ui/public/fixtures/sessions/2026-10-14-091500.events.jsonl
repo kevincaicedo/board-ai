@@ -1,5 +1,5 @@
 {"v":1,"t":0,"k":"ui","event":{"type":"SessionStart","session":"2026-10-14-091500"}}
-{"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":null}}
+{"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":null,"enlarge":false}}
 {"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Idle","level_percent":0}}
 {"v":1,"t":500,"k":"ui","event":{"type":"Suggestion","text":"Pick up Raft log compaction where we left off?"}}
 {"v":1,"t":2050,"k":"ui","event":{"type":"Suggestion","text":null}}
@@ -100,7 +100,7 @@
 {"v":1,"t":20169,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":0}}
 {"v":1,"t":20169,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"If it hits, we sk—","is_final":true}}
 {"v":1,"t":20169,"k":"ui","event":{"type":"Freeze","layer":0}}
-{"v":1,"t":20229,"k":"ui","event":{"type":"LayerPush","layer":1,"title":"cache-aside","question":"why Redis first?"}}
+{"v":1,"t":20229,"k":"ui","event":{"type":"LayerPush","layer":1,"title":"cache-aside","question":"why Redis first?","anchor":null}}
 {"v":1,"t":20269,"k":"ui","event":{"type":"Orb","state":"Listening","level_percent":70}}
 {"v":1,"t":20269,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait","is_final":false}}
 {"v":1,"t":20501,"k":"ui","event":{"type":"Caption","who":"User","text":"Wait —","is_final":false}}

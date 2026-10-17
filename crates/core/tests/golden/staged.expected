@@ -1,0 +1,59 @@
+clause 0 [talker@0]
+  caption: "Here is the map."
+  speech:  "Here is the map."
+dropped NarrationTag
+dropped NarrationTag
+dropped DiagramPart
+dropped NarrationTag
+clause 1 [talker@18]
+  caption: "The arena comes first, then its states."
+  speech:  "The arena comes first, then its states."
+op 0 at clause 1 byte 0: Diagram(DiagramSpec { id: ElementId("alloc"), title: "inf-alloc", flow: Some(Row), items: [SpecItem { parent: None, part: Container { id: ElementId("arena"), label: "Arena", note: Some("slab allocation"), category: Some("RAM records"), dashed: true, flow: None } }, SpecItem { parent: Some(ElementId("arena")), part: Record { id: ElementId("arena_s"), label: "struct Arena", fields: ["cfg", "threshold", "live"] } }, SpecItem { parent: Some(ElementId("arena")), part: Note { id: None, text: "one class per chunk" } }, SpecItem { parent: Some(ElementId("arena")), part: Cells { id: ElementId("classes"), label: "", values: ["64K", "128K", ""], index: None, vertical: false } }, SpecItem { parent: Some(ElementId("arena")), part: Node { id: ElementId("free"), label: "Free", shape: Pill, note: None, step: None, category: None, dashed: false, new_row: false } }, SpecItem { parent: Some(ElementId("arena")), part: Node { id: ElementId("leased"), label: "Leased", shape: Pill, note: Some("kernel owns it"), step: Some(2), category: None, dashed: false, new_row: true } }, SpecItem { parent: None, part: Edge { id: None, from: ElementId("free"), to: ElementId("leased"), label: Some("try lease"), style: Dashed } }], dropped: 4 })
+op 1 at clause 1 byte 0: Reveal { target: ElementId("arena"), deep: false }
+op 2 at clause 1 byte 23: Reveal { target: ElementId("free"), deep: true }
+clause 2 [talker@58]
+  caption: "Inside, it rounds up."
+  speech:  "Inside, it rounds up."
+op 3 at clause 2 byte 0: Detail { of: ElementId("arena"), title: Some("Arena · inside"), spec: Some(DiagramSpec { id: ElementId("diagram"), title: "Arena · inside", flow: None, items: [SpecItem { parent: None, part: Node { id: ElementId("s1"), label: "round up", shape: Service, note: None, step: Some(1), category: None, dashed: false, new_row: false } }], dropped: 0 }) }
+clause 3 [talker@80]
+  caption: "An empty detail opens a layer."
+  speech:  "An empty detail opens a layer."
+op 4 at clause 3 byte 0: Detail { of: ElementId("arena"), title: None, spec: None }
+dropped NarrationTag
+clause 4 [talker@112]
+  caption: "A stray closing tag is dropped."
+  speech:  "A stray closing tag is dropped."
+dropped NarrationTag
+clause 5 [talker@144]
+  caption: "An empty diagram stages nothing."
+  speech:  "An empty diagram stages nothing."
+clause 6 [talker@178]
+  caption: "A reveal ends a block the talker forgot to close."
+  speech:  "A reveal ends a block the talker forgot to close."
+op 5 at clause 6 byte 0: Diagram(DiagramSpec { id: ElementId("diagram"), title: "unclosed", flow: None, items: [SpecItem { parent: None, part: Node { id: ElementId("x"), label: "X", shape: Service, note: None, step: None, category: None, dashed: false, new_row: false } }], dropped: 0 })
+op 6 at clause 6 byte 0: Reveal { target: ElementId("x"), deep: false }
+clause 7 [talker@228]
+  caption: "The talker forgot to close this one and kept speaking for a long while,"
+  speech:  "The talker forgot to close this one and kept speaking for a long while,"
+op 7 at clause 7 byte 0: Diagram(DiagramSpec { id: ElementId("diagram"), title: "talks on", flow: None, items: [SpecItem { parent: None, part: Node { id: ElementId("y"), label: "Y", shape: Service, note: None, step: None, category: None, dashed: false, new_row: false } }], dropped: 0 })
+clause 8 [talker@300]
+  caption: "long enough that the words can only be speech: more than two hundred and forty bytes of plain text,"
+  speech:  "long enough that the words can only be speech: more than two hundred and forty bytes of plain text,"
+clause 9 [talker@400]
+  caption: "with no tag in sight at all, so the block ends where they began,"
+  speech:  "with no tag in sight at all, so the block ends where they began,"
+clause 10 [talker@465]
+  caption: "the diagram is staged with what it held,"
+  speech:  "the diagram is staged with what it held,"
+clause 11 [talker@506]
+  caption: "and every one of these words is spoken as it was written."
+  speech:  "and every one of these words is spoken as it was written."
+dropped NarrationTag
+clause 12 [talker@564]
+  caption: "A part outside a diagram is dropped."
+  speech:  "A part outside a diagram is dropped."
+dropped NarrationTag
+clause 13 [talker@601]
+  caption: "A reveal with no id too."
+  speech:  "A reveal with no id too."
+op 8 at clause 13 byte 24: Diagram(DiagramSpec { id: ElementId("diagram"), title: "last", flow: None, items: [SpecItem { parent: None, part: Node { id: ElementId("z"), label: "Z", shape: Service, note: None, step: None, category: None, dashed: false, new_row: false } }], dropped: 0 })

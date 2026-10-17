@@ -5,6 +5,7 @@
 import { createContext } from "preact";
 import { LEAVING_PAGE } from "../canvas/board.ts";
 import { emptyArea, type FitArea, stageArea, type Viewport } from "../canvas/camera.ts";
+import { detailCard } from "../canvas/detail.ts";
 import {
   cardBounds,
   columnWidth,
@@ -262,7 +263,12 @@ export class Runtime {
         card = emptyCard();
         this.detourCards.set(layer.id, card);
       }
-      detourCardAt(layer.camera, at, this.#cardBase, this.#cardMax, this.tokens, card);
+      // A detail layer fills the board's area (15b); a detour's card is sized from its drawing.
+      if (layer.anchor !== null) {
+        detailCard(this.#stage, this.tokens, card);
+      } else {
+        detourCardAt(layer.camera, at, this.#cardBase, this.#cardMax, this.tokens, card);
+      }
     }
   }
 

@@ -42,6 +42,7 @@ function toneOf(shape: CoverShape["shape"], serviceIndex: number): CoverTone {
       return "blush";
     case "Note":
     case "Circle":
+    case "Pill":
       return "lilac";
     case "Service":
       return SERVICE_TONES[serviceIndex % SERVICE_TONES.length] ?? "sky";

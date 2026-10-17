@@ -383,6 +383,24 @@ impl Voice {
         }
     }
 
+    /// Milliseconds until everything said so far has played, estimated as
+    /// [`Self::estimate_ms_until`] is: a staged diagram's reveal draws while it is explained.
+    #[must_use]
+    pub fn estimate_ms_until_end(&self, now: SessionTime) -> u64 {
+        self.clauses
+            .iter()
+            .map(|clause| match (clause.status, clause.started_at) {
+                (Status::Played | Status::Skipped, _) => 0,
+                (Status::Ready, Some(started_at)) => clause
+                    .duration_ms()
+                    .saturating_sub(now.ms_since(started_at)),
+                (Status::Ready | Status::Synthesizing, None) | (Status::Synthesizing, Some(_)) => {
+                    clause.duration_ms()
+                }
+            })
+            .sum()
+    }
+
     /// Milliseconds from `now` until speakable `offset` of `clause` plays, estimated from the
     /// timings known so far. Only op budgets use this; firing waits for real playback.
     #[must_use]

@@ -177,6 +177,8 @@ export class SessionStore {
   readonly settingsOpen = signal(false);
   readonly #tokens: SessionTokens;
   #chipSerial = 0;
+  /** Open detail layers, which take no card in the column. */
+  readonly #details = new Set<number>();
 
   constructor(tokens: SessionTokens) {
     this.#tokens = tokens;
@@ -189,6 +191,7 @@ export class SessionStore {
     this.chips.value = [];
     this.orb.value = { state: "Idle", previous: "Idle", at: 0 };
     this.suggestion.value = null;
+    this.#details.clear();
   }
 
   apply(event: UiEvent, at: number): void {
@@ -209,6 +212,11 @@ export class SessionStore {
         this.#thread(event.steps, event.current, event.detours, at);
         break;
       case "LayerPush":
+        // A detail layer (D-188) fills the stage; it is no card in the column.
+        if (event.anchor !== null) {
+          this.#details.add(event.layer);
+          break;
+        }
         this.#show({
           kind: "detour",
           key: key({ kind: "detour", layer: event.layer }),
@@ -223,6 +231,9 @@ export class SessionStore {
         });
         break;
       case "LayerPop":
+        if (this.#details.delete(event.layer)) {
+          break;
+        }
         this.#leave(key({ kind: "detour", layer: event.layer }), at);
         this.#uncover(at);
         break;
@@ -261,6 +272,8 @@ export class SessionStore {
       case "LabelHint":
       // The core closes the detours and cards a page turn takes away with their own events.
       case "PageTurn":
+      // Staged diagrams' headers and detail layers are the diagram store's.
+      case "Diagram":
         break;
     }
   }

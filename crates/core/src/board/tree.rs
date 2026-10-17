@@ -75,9 +75,11 @@ impl Board {
         };
         let shape = node.shape.unwrap_or(match parent_shape {
             NodeShape::Group | NodeShape::Actor | NodeShape::Note => NodeShape::Service,
-            NodeShape::Service | NodeShape::Db | NodeShape::Queue | NodeShape::Circle => {
-                parent_shape
-            }
+            NodeShape::Service
+            | NodeShape::Db
+            | NodeShape::Queue
+            | NodeShape::Circle
+            | NodeShape::Pill => parent_shape,
         });
         let (width, height) = layout::node_size(shape, node.label);
         let rect = child_rect(layer, (parent, parent_rect), side, (width, height));
@@ -140,7 +142,7 @@ impl Board {
 fn parent_node(layer: &Layer, parent: &ElementId) -> Option<(Rect, NodeShape)> {
     let element = layer
         .element(parent)
-        .filter(|element| element.state != ElementState::Pending)?;
+        .filter(|element| element.state.is_shown())?;
     if let (ElementKind::Node { shape, .. }, Geometry::Box(rect)) =
         (&element.kind, &element.geometry)
     {

@@ -49,7 +49,10 @@ function shown(item: ColumnItem | undefined, at: number): boolean {
 
 test("an open detour keeps its card while the core shows two surfaces", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "LayerPush", layer: 1, title: "cache-aside", question: null }, 1000);
+  store.apply(
+    { type: "LayerPush", layer: 1, title: "cache-aside", question: null, anchor: null },
+    1000,
+  );
   store.apply({ type: "SurfaceShow", surface: code }, 2000);
   // The core has two surfaces open and sends no dismiss.
   store.apply({ type: "SurfaceShow", surface: compare }, 3000);
@@ -61,7 +64,7 @@ test("a highlight on a code card the core still has open is applied", () => {
   const store = new SessionStore(tokens);
   store.apply({ type: "SurfaceShow", surface: code }, 1000);
   store.apply({ type: "SurfaceShow", surface: compare }, 2000);
-  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 3000);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null, anchor: null }, 3000);
   store.apply({ type: "SurfaceUpdate", id: 0, update: { kind: "Highlight", line: 2 } }, 4000);
   const card = store.column.value.find((item) => item.kind === "surface" && item.surface.id === 0);
   assert.equal(card?.leftAt, null);
@@ -70,9 +73,9 @@ test("a highlight on a code card the core still has open is applied", () => {
 
 test("nested detours cover the outer card and bring it back when they close", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 1000);
-  store.apply({ type: "LayerPush", layer: 2, title: "d2", question: null }, 2000);
-  store.apply({ type: "LayerPush", layer: 3, title: "d3", question: null }, 3000);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null, anchor: null }, 1000);
+  store.apply({ type: "LayerPush", layer: 2, title: "d2", question: null, anchor: null }, 2000);
+  store.apply({ type: "LayerPush", layer: 3, title: "d3", question: null, anchor: null }, 3000);
   assert.equal(shown(detourCard(store, 1), 3900), false, "only the innermost detour shows");
   assert.equal(shown(detourCard(store, 2), 4900), false);
   assert.equal(shown(detourCard(store, 3), 4900), true);
@@ -93,15 +96,15 @@ test("nested detours cover the outer card and bring it back when they close", ()
 
 test("a covered card leaves its place: the nested detour's card sits alone, centered", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 1000);
-  store.apply({ type: "LayerPush", layer: 2, title: "d2", question: null }, 2000);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null, anchor: null }, 1000);
+  store.apply({ type: "LayerPush", layer: 2, title: "d2", question: null, anchor: null }, 2000);
   const tops = columnTops(store.column.value, 5000, tokens);
   assert.equal(tops.get("layer-2"), tokens.surfaceCenter - tokens.detourCardHeight / 2);
 });
 
 test("a third surface steps the oldest surface out, never the detour card", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 0);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null, anchor: null }, 0);
   for (let id = 0; id < SURFACES_VISIBLE_MAX + 1; id += 1) {
     store.apply({ type: "SurfaceShow", surface: { ...code, id } }, 1000 * (id + 1));
   }
@@ -119,7 +122,10 @@ test("a third surface steps the oldest surface out, never the detour card", () =
 test("detour cards stay bounded even if pops never come", () => {
   const store = new SessionStore(tokens);
   for (let layer = 1; layer <= DETOUR_CARDS_MAX + 2; layer += 1) {
-    store.apply({ type: "LayerPush", layer, title: `d${layer}`, question: null }, layer * 100);
+    store.apply(
+      { type: "LayerPush", layer, title: `d${layer}`, question: null, anchor: null },
+      layer * 100,
+    );
   }
   const open = store.column.value.filter((item) => item.kind === "detour" && item.leftAt === null);
   assert.equal(open.length, DETOUR_CARDS_MAX);
@@ -149,7 +155,7 @@ test("a lone card taller than the column's middle allows starts at the column's 
 // up, and once the column has settled the same tops are handed back until something changes.
 test("a settled column hands back the same tops each frame; a change lays it out again", () => {
   const store = new SessionStore(tokens);
-  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null }, 1000);
+  store.apply({ type: "LayerPush", layer: 1, title: "d1", question: null, anchor: null }, 1000);
   store.apply({ type: "SurfaceShow", surface: code }, 2000);
   const items = store.column.value;
   const grown = new Map<string, number>([["layer-1", 500]]);

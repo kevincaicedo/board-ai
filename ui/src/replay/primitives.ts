@@ -196,7 +196,10 @@ const SHAPES: readonly [number, DrawOp][] = [
 
 function timed(): { at: number; event: UiEvent }[] {
   const events: { at: number; event: UiEvent }[] = [
-    { at: 0, event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null } },
+    {
+      at: 0,
+      event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null, enlarge: false },
+    },
     { at: 0, event: { type: "Orb", state: "Drawing", level_percent: 60 } },
     {
       at: 300,
@@ -321,7 +324,7 @@ function timed(): { at: number; event: UiEvent }[] {
     },
     {
       at: 17_500,
-      event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: "users" },
+      event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: "users", enlarge: false },
     },
     {
       at: 18_000,

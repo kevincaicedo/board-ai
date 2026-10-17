@@ -1,0 +1,22 @@
+Here is the map. <diagram id="alloc" title="inf-alloc" layout="row">
+  <node id="arena" kind="group" label="Arena" note="slab allocation" cat="RAM records" style="dashed" color="red"/>
+  <record id="arena_s" label="struct Arena" fields="cfg|threshold|live" in="arena"/>
+  <note in="arena" text="one class per chunk"/>
+  <cells id="classes" values="64K|128K" count="3" index="none" in="arena"/>
+  <node id="free" label="Free" kind="state" in="arena"/>
+  <node id="leased" label="Leased" kind="pill" in="arena" dir="below" n="2" note="kernel owns it"/>
+  <edge from="free" to="leased" label="try lease" dashed="true"/>
+  <edge from="free" to="free"/>
+  <record id="bad"/>
+  <message from="a" to="b"/>
+  <node id=bad/>
+</diagram>
+<reveal id="arena"/>The arena comes first, <reveal id="free" deep="yes"/>then its states.
+<detail of="arena" title="Arena · inside">
+  <node id="s1" label="round up" n="1"/>
+</detail>Inside, it rounds up. <detail of="arena"/>An empty detail opens a layer.
+</detail> A stray closing tag is dropped. <diagram/>An empty diagram stages nothing.
+<diagram title="unclosed"><node id="x" label="X"/> <reveal id="x"/>A reveal ends a block the talker forgot to close.
+<diagram title="talks on"><node id="y" label="Y"/>The talker forgot to close this one and kept speaking for a long while, long enough that the words can only be speech: more than two hundred and forty bytes of plain text, with no tag in sight at all, so the block ends where they began, the diagram is staged with what it held, and every one of these words is spoken as it was written.
+<record id="outside" fields="a|b"/>A part outside a diagram is dropped. <reveal/>A reveal with no id too.
+<diagram title="last"><node id="z" label="Z"/>

@@ -5,8 +5,11 @@
 // crates/core/tests/sim_diagrams.rs, drawn through the simulator), each scene moved to its own
 // place on the board and framed in turn, so a screenshot shows one diagram at its natural size.
 
+import { partRect } from "../canvas/staged.ts";
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
+import type { StagedPart } from "../protocol/generated/StagedPart.ts";
+import type { TextAt } from "../protocol/generated/TextAt.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
 import type { UiLogLine } from "../protocol/generated/UiLogLine.ts";
 import { say } from "./speech.ts";
@@ -527,6 +530,46 @@ function moved(op: DrawOp, dx: number, base: number): DrawOp {
         op: opNumber,
         cells: op.cells.map((cell) => ({ ...cell, rect: shift(cell.rect) })),
       };
+    case "Reveal":
+      return { ...op, op: opNumber, parts: op.parts.map((part) => movedPart(part, dx)) };
+  }
+}
+
+/** A staged part moved `dx` across, its words with it. */
+function movedPart(part: StagedPart, dx: number): StagedPart {
+  const shift = (rect: Rect): Rect => ({ ...rect, x: rect.x + dx });
+  const text = (placed: TextAt): TextAt => ({ ...placed, at: point(placed.at.x, placed.at.y, dx) });
+  switch (part.part) {
+    case "Frame":
+      return {
+        ...part,
+        rect: shift(part.rect),
+        label: text(part.label),
+        note: part.note === null ? null : text(part.note),
+      };
+    case "Node":
+    case "Note":
+    case "Legend":
+      return { ...part, rect: shift(part.rect) };
+    case "Record":
+      return {
+        ...part,
+        fields: part.fields.map((field) => ({ ...field, rect: shift(field.rect) })),
+      };
+    case "Cells":
+      return { ...part, cells: part.cells.map((cell) => ({ ...cell, rect: shift(cell.rect) })) };
+    case "Edge": {
+      const { start, control, end } = part.path;
+      return {
+        ...part,
+        path: {
+          start: point(start.x, start.y, dx),
+          control: control === null ? null : point(control.x, control.y, dx),
+          end: point(end.x, end.y, dx),
+        },
+        label: part.label === null ? null : text(part.label),
+      };
+    }
   }
 }
 
@@ -559,6 +602,9 @@ function area(op: DrawOp): Rect {
       break;
     case "Cells":
       boxes.push(...op.cells.map((cell) => cell.rect));
+      break;
+    case "Reveal":
+      boxes.push(...op.parts.map(partRect));
       break;
   }
   return boxes.reduce(union);
@@ -622,7 +668,7 @@ function timed(): Timed[] {
         at: start - 200,
         event: { type: "Thread", steps: SCENES.map((s) => s.title), current: index, detours: [] },
       },
-      { at: start, event: { type: "Camera", layer: 0, frame, focus: null } },
+      { at: start, event: { type: "Camera", layer: 0, frame, focus: null, enlarge: false } },
     );
     for (const [at, budget, op] of ops) {
       events.push({ at: start + at, event: { type: "OpStart", layer: 0, op, budget_ms: budget } });

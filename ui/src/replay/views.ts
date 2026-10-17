@@ -361,7 +361,16 @@ function raftSession(): Timed[] {
   ];
   const timed: Timed[] = [
     { at: 0, event: { type: "SessionStart", session: SESSIONS[1]?.id ?? null } },
-    { at: 0, event: { type: "Camera", layer: 0, frame: rect(0, 0, 1440, 900), focus: null } },
+    {
+      at: 0,
+      event: {
+        type: "Camera",
+        layer: 0,
+        frame: rect(0, 0, 1440, 900),
+        focus: null,
+        enlarge: false,
+      },
+    },
     orb(0, "Idle"),
     orb(1200, "Listening"),
     ...captions(question),

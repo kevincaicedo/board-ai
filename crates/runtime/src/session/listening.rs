@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use boardai_core::MicMode;
 use boardai_core::conversation::ConversationState;
-use boardai_core::protocol::{DrawOp, UiEvent};
+use boardai_core::protocol::{DrawOp, StagedPart, UiEvent};
 use tokio::sync::watch;
 
 use crate::limits::{VOCABULARY_RECENT_TERMS_MAX, VOCABULARY_TERM_MAX_BYTES};
@@ -63,7 +63,7 @@ impl ListeningPublisher {
         self.sender.send_if_modified(|listening| {
             let mut changed = listening.open != open;
             listening.open = open;
-            for term in events.iter().filter_map(drawn_term) {
+            for term in events.iter().flat_map(drawn_terms) {
                 changed |= remember(&mut listening.recent_terms, term);
             }
             changed
@@ -71,21 +71,24 @@ impl ListeningPublisher {
     }
 }
 
-/// A label the board just drew: a node's, a participant's or a row's, or an edge's or a
-/// message's when it has one.
-fn drawn_term(event: &UiEvent) -> Option<&str> {
+/// The labels the board just drew: a node's, a participant's or a row's, an edge's or a
+/// message's when it has one, and every label a staged diagram's reveal wrote.
+fn drawn_terms(event: &UiEvent) -> Vec<&str> {
     let UiEvent::OpStart { op, .. } = event else {
-        return None;
+        return Vec::new();
     };
     match op {
         DrawOp::Node { label, .. }
         | DrawOp::Participant { label, .. }
-        | DrawOp::Cells { label, .. } => Some(label),
-        DrawOp::Edge { label, .. } | DrawOp::Message { label, .. } => label.as_deref(),
+        | DrawOp::Cells { label, .. } => vec![label.as_str()],
+        DrawOp::Edge { label, .. } | DrawOp::Message { label, .. } => {
+            label.as_deref().into_iter().collect()
+        }
+        DrawOp::Reveal { parts, .. } => parts.iter().filter_map(StagedPart::label).collect(),
         DrawOp::Annotate { .. }
         | DrawOp::Strike { .. }
         | DrawOp::Trace { .. }
-        | DrawOp::Write { .. } => None,
+        | DrawOp::Write { .. } => Vec::new(),
     }
 }
 

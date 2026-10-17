@@ -6,6 +6,7 @@
 // The parser tables are typed by the generated unions, so a new protocol variant fails typecheck
 // until it is handled here.
 
+import { cellBox, edgePath, LINE_STYLES, NODE_SHAPES } from "./draw.ts";
 import {
   elementId,
   fields,
@@ -29,20 +30,16 @@ import {
   u8,
   u32,
 } from "./fields.ts";
-import type { CellBox } from "./generated/CellBox.ts";
 import type { CellMark } from "./generated/CellMark.ts";
 import type { ChipKind } from "./generated/ChipKind.ts";
 import type { ColumnRange } from "./generated/ColumnRange.ts";
 import type { CoverShape } from "./generated/CoverShape.ts";
 import type { DigestCard } from "./generated/DigestCard.ts";
 import type { DrawOp } from "./generated/DrawOp.ts";
-import type { EdgePath } from "./generated/EdgePath.ts";
 import type { Fill } from "./generated/Fill.ts";
 import type { Lifeline } from "./generated/Lifeline.ts";
-import type { LineStyle } from "./generated/LineStyle.ts";
 import type { Mark } from "./generated/Mark.ts";
 import type { MemoryRow } from "./generated/MemoryRow.ts";
-import type { NodeShape } from "./generated/NodeShape.ts";
 import type { NoteRow } from "./generated/NoteRow.ts";
 import type { OrbState } from "./generated/OrbState.ts";
 import type { PastLayer } from "./generated/PastLayer.ts";
@@ -57,6 +54,7 @@ import type { UiBatch } from "./generated/UiBatch.ts";
 import type { UiEvent } from "./generated/UiEvent.ts";
 import type { UiLogLine } from "./generated/UiLogLine.ts";
 import type { View } from "./generated/View.ts";
+import { detailAnchor, stagedParts } from "./staged.ts";
 import { labelHint, userShape } from "./yours.ts";
 
 export type { RowSkips } from "./fields.ts";
@@ -69,14 +67,6 @@ function columnRange(value: unknown): ColumnRange | null {
   return begin === null || end === null || begin >= end ? null : { begin, end };
 }
 
-function edgePath(value: unknown): EdgePath | null {
-  const f = fields(value);
-  const start = point(f?.start);
-  const end = point(f?.end);
-  const control = nullable(f?.control, point);
-  return start === null || end === null || control === undefined ? null : { start, control, end };
-}
-
 const ORB_STATES: readonly OrbState[] = [
   "Idle",
   "Listening",
@@ -86,16 +76,6 @@ const ORB_STATES: readonly OrbState[] = [
   "Muted",
 ];
 const SPEAKERS: readonly Speaker[] = ["User", "Assistant"];
-const NODE_SHAPES: readonly NodeShape[] = [
-  "Service",
-  "Db",
-  "Queue",
-  "Actor",
-  "Group",
-  "Note",
-  "Circle",
-];
-const LINE_STYLES: readonly LineStyle[] = ["Solid", "Dashed"];
 const MARKS: readonly Mark[] = ["Circle", "Underline", "Arrow", "Bracket", "Highlight"];
 const CHIP_KINDS: readonly ChipKind[] = ["Note", "Task", "Memory", "Source"];
 const FILLS: readonly Fill[] = ["Lilac", "Sky", "Mint", "Blush"];
@@ -111,17 +91,6 @@ function lifeline(value: unknown): Lifeline | null {
   return participant === null || x === null || top === null || bottom === null
     ? null
     : { participant, x, top, bottom };
-}
-
-function cellBox(value: unknown): CellBox | null {
-  const f = fields(value);
-  const id = elementId(f?.id);
-  const r = rect(f?.rect);
-  const content = text(f?.value);
-  const index = nullable(f?.index, text);
-  return id === null || r === null || content === null || index === undefined
-    ? null
-    : { id, rect: r, value: content, index };
 }
 
 function sourceRef(value: unknown): SourceRef | null {
@@ -257,6 +226,12 @@ const DRAW_OPS: Tagged<DrawOp, "kind"> = {
     return op === null || target === null || label === null || r === null
       ? null
       : { kind: "Write", op, target, label, rect: r };
+  },
+  Reveal: (f) => {
+    const id = elementId(f.id);
+    const op = u32(f.op);
+    const parts = stagedParts(f.parts);
+    return id === null || op === null || parts === null ? null : { kind: "Reveal", id, op, parts };
   },
 };
 
@@ -517,9 +492,11 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const layer = u8(f.layer);
     const title = text(f.title);
     const question = optional(f.question, text);
-    return layer === null || title === null || question === undefined
+    // Protocol v5 (D-188): a log from before detail layers reads as a detour.
+    const anchor = optional(f.anchor, detailAnchor);
+    return layer === null || title === null || question === undefined || anchor === undefined
       ? null
-      : { type: "LayerPush", layer, title, question };
+      : { type: "LayerPush", layer, title, question, anchor };
   },
   LayerPop: (f) => {
     const layer = u8(f.layer);
@@ -529,9 +506,11 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const layer = u8(f.layer);
     const frame = rect(f.frame);
     const focus = nullable(f.focus, elementId);
-    return layer === null || frame === null || focus === undefined
+    // Protocol v5: a log from before close-ups reads as a frame never enlarged.
+    const enlarge = f.enlarge === undefined ? false : flag(f.enlarge);
+    return layer === null || frame === null || focus === undefined || enlarge === null
       ? null
-      : { type: "Camera", layer, frame, focus };
+      : { type: "Camera", layer, frame, focus, enlarge };
   },
   SurfaceShow: (f) => {
     const surface = tagged<Surface>(SURFACES, "kind", f.surface);
@@ -599,6 +578,15 @@ const EVENTS: Tagged<UiEvent, "type"> = {
     const page = integer(f.page, 2, U16_MAX);
     const title = nullable(f.title, text);
     return page === null || title === undefined ? null : { type: "PageTurn", page, title };
+  },
+  Diagram: (f) => {
+    const layer = u8(f.layer);
+    const title = text(f.title);
+    const part = u8(f.part);
+    const parts = u8(f.parts);
+    return layer === null || title === null || part === null || parts === null || part > parts
+      ? null
+      : { type: "Diagram", layer, title, part, parts };
   },
 };
 

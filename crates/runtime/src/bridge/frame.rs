@@ -111,7 +111,8 @@ impl Frame {
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
             | UiEvent::LabelHint { .. }
-            | UiEvent::PageTurn { .. } => key,
+            | UiEvent::PageTurn { .. }
+            | UiEvent::Diagram { .. } => key,
         };
         if let Some(key) = held {
             self.keys.push((key, self.slots.len()));
@@ -150,7 +151,8 @@ fn key(event: &UiEvent) -> Option<Key> {
         | UiEvent::UserShape { .. }
         | UiEvent::UserShapeRemove { .. }
         | UiEvent::LabelHint { .. }
-        | UiEvent::PageTurn { .. } => None,
+        | UiEvent::PageTurn { .. }
+        | UiEvent::Diagram { .. } => None,
     }
 }
 
@@ -296,6 +298,7 @@ mod tests {
                 h: 10,
             },
             focus: None,
+            enlarge: false,
         };
         let mut frame = Frame::default();
         let mut full = Vec::new();

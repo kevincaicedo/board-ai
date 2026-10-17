@@ -7,6 +7,7 @@
 //! simulator and session replay rely on.
 
 mod camera;
+mod detail;
 mod draw;
 mod gate;
 mod listen;
@@ -16,6 +17,7 @@ mod ops;
 pub mod pages;
 mod reply;
 mod repo_names;
+mod reveal;
 mod sources;
 mod stage;
 mod stop;
@@ -156,6 +158,8 @@ pub struct Core {
     drawing: Drawing,
     /// What the repo tools returned, for checking a module map's labels (D-180).
     repo_names: repo_names::RepoNames,
+    /// Staged diagrams waiting for their reveals (D-187).
+    staging: reveal::Staging,
     /// Where each op of the current turn was anchored; only the simulator reads it (I1).
     #[cfg(feature = "sim")]
     anchors: std::collections::BTreeMap<crate::ids::OpId, (crate::ids::ClauseId, usize)>,
@@ -198,6 +202,7 @@ impl Core {
             written_reads: written::WrittenReads::default(),
             drawing: Drawing::Off,
             repo_names: repo_names::RepoNames::default(),
+            staging: reveal::Staging::default(),
             #[cfg(feature = "sim")]
             anchors: std::collections::BTreeMap::new(),
         }

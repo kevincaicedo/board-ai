@@ -44,6 +44,9 @@ pub const GROUP_LABEL_SPACE: i32 = 22;
 /// How far an annotation mark sits outside its target.
 pub const ANNOTATION_MARGIN: i32 = 10;
 
+/// A state's pill in a sketch: a little lower than a box, its ends fully rounded.
+const PILL_HEIGHT: u32 = 52;
+
 /// Smallest circle; a longer label stretches it into an ellipse of this height.
 const CIRCLE_DIAMETER: u32 = 56;
 
@@ -295,6 +298,8 @@ pub fn node_size(shape: NodeShape, label: &str) -> (u32, u32) {
         // Room for the message dividers on the right.
         NodeShape::Queue => (boxed(32, NODE_MIN_WIDTH + 20), 64),
         NodeShape::Db => (boxed(0, NODE_MIN_WIDTH - 10), 88),
+        // Rounded ends need room past the label.
+        NodeShape::Pill => (boxed(16, NODE_MIN_WIDTH), PILL_HEIGHT),
         // A figure with the label under it.
         NodeShape::Actor => ((label_width + 16).clamp(80, NODE_MAX_WIDTH), 96),
         NodeShape::Note => ((label_width + 8).min(NODE_MAX_WIDTH), LABEL_LINE_HEIGHT + 8),
@@ -514,6 +519,11 @@ pub fn op_bounds(op: &DrawOp) -> Rect {
             vertical,
             ..
         } => cells_extent(cells, label, *vertical),
+        DrawOp::Reveal { parts, .. } => parts
+            .iter()
+            .map(super::staged::metrics::part_area)
+            .reduce(Rect::union)
+            .unwrap_or_default(),
     }
 }
 

@@ -27,6 +27,7 @@ impl Board {
             return Ok(match existing.state {
                 ElementState::Frozen { .. } => Placed::ResumeFrozen,
                 ElementState::Pending
+                | ElementState::Planned
                 | ElementState::Drawing { .. }
                 | ElementState::Drawn
                 | ElementState::Struck => Placed::Unchanged,
@@ -104,7 +105,7 @@ impl Board {
         let layer = self.layer_mut(layer_id)?;
         let existing = layer
             .element(target)
-            .filter(|element| element.state != ElementState::Pending)
+            .filter(|element| element.state.is_shown())
             .ok_or_else(|| Rejected::UnknownElement(target.clone()))?;
         super::user::not_yours(existing)?;
         if !existing.label.trim().is_empty() {

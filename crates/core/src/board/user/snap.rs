@@ -2,7 +2,7 @@
 //! connects to it and moves onto its outline along the line you drew. Pure geometry over the
 //! layer's elements, one pass per end, so it is bounded by the layer's element count.
 
-use crate::board::{ElementKind, ElementState, Geometry, Layer, UserMark};
+use crate::board::{ElementKind, Geometry, Layer, UserMark};
 use crate::geometry::{Point, Rect};
 use crate::ids::ElementId;
 use crate::protocol::NodeShape;
@@ -65,7 +65,7 @@ pub fn snap(layer: &Layer, start: Point, end: Point) -> Snapped {
 fn target_at(layer: &Layer, point: Point) -> Option<(ElementId, Rect)> {
     let mut best: Option<(ElementId, Rect)> = None;
     for element in layer.elements() {
-        if element.state == ElementState::Pending {
+        if !element.state.is_shown() {
             continue;
         }
         let Some(rect) = target_rect(&element.kind, &element.geometry) else {

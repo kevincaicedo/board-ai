@@ -6,8 +6,10 @@
 //! at every split point). It also keeps what was written, so an interruption can commit exactly
 //! the heard prefix with the tags of the ops that were drawn (LLD §2.7).
 
+mod block;
 pub mod citation;
 pub mod clauses;
+pub mod diagram;
 pub mod ops;
 pub mod parser;
 pub mod quality;
@@ -17,9 +19,10 @@ pub mod tags;
 
 use crate::effect::Dropped;
 use crate::limits::{CITATION_TOKEN_MAX_BYTES, DETOUR_DEPTH_MAX, OPS_PER_RESPONSE_MAX};
+use block::{Ending, OpenBlock};
 use clauses::ClauseCutter;
 use ops::NarrationOp;
-use parser::{Piece, TagParser};
+use parser::{Piece, RawTag, TagParser};
 use speakable::Speakable;
 use spoken_calls::{SpokenCall, SpokenCalls, without_stray_tokens};
 
@@ -97,6 +100,11 @@ pub struct NarrationStream {
     word: Word,
     /// Tool calls written as words, kept out of speech (D-179).
     calls: SpokenCalls,
+    /// A `<diagram>` or `<detail>` block being read (D-187).
+    block: Option<OpenBlock>,
+    /// The diagrams this stream staged, by op index, and whether any drawing op came after
+    /// each: one nothing drew after is revealed whole by the engine.
+    staged: Vec<(u32, bool)>,
 }
 
 /// The word being read: held while it could still be a citation, passed through once it is too
@@ -123,7 +131,17 @@ impl NarrationStream {
             written: String::new(),
             word: Word::Held(String::new()),
             calls: SpokenCalls::default(),
+            block: None,
+            staged: Vec::new(),
         }
+    }
+
+    /// The diagrams this stream staged that no drawing tag after them reveals, by op index.
+    pub fn unrevealed_diagrams(&self) -> impl Iterator<Item = u32> + '_ {
+        self.staged
+            .iter()
+            .filter(|(_, revealed)| !revealed)
+            .map(|(op, _)| *op)
     }
 
     pub fn push(&mut self, text: &str, out: &mut Vec<NarrationOutput>) {
@@ -139,6 +157,7 @@ impl NarrationStream {
         self.parser.finish(&mut pieces);
         self.consume(&mut pieces, out);
         self.pieces = pieces;
+        self.end_block(Ending::Unclosed, "", out);
         self.end_word(out);
         self.boundary(out);
         self.cutter.finish(out);
@@ -210,31 +229,105 @@ impl NarrationStream {
             match piece {
                 Piece::Text(text) => {
                     for ch in text.chars() {
-                        self.speak_char(ch, out);
+                        self.text_char(ch, out);
                     }
                 }
-                Piece::Tag(tag) => {
-                    self.end_word(out);
-                    self.boundary(out);
-                    let op = match tags::to_op(&tag) {
-                        Ok(op) => self.keep_op(op, out),
-                        Err(_) => {
-                            out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
-                            None
-                        }
-                    };
-                    self.segments.push(Segment::Tag {
-                        written: tag.written,
-                        op,
-                    });
-                }
+                Piece::Tag(tag) => self.tag(tag, out),
                 Piece::Dropped(written) => {
-                    self.end_word(out);
-                    self.boundary(out);
                     out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
-                    self.segments.push(Segment::Tag { written, op: None });
+                    self.dropped_tag(written, out);
+                }
+                Piece::Close(name) => {
+                    let closing = format!("</{name}>");
+                    if self.block.as_ref().is_some_and(|block| block.closes(&name)) {
+                        self.end_block(Ending::Closed, &closing, out);
+                        continue;
+                    }
+                    // A closing tag of no open block is dropped, as any closing tag was.
+                    out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
+                    self.dropped_tag(closing, out);
                 }
             }
+        }
+    }
+
+    /// A tag: a part of the open block, the start of a block, or an op. Any tag other than a
+    /// part ends the open block first.
+    fn tag(&mut self, tag: RawTag, out: &mut Vec<NarrationOutput>) {
+        if let Some(block) = &mut self.block {
+            if OpenBlock::takes(&tag) {
+                if let Some(what) = block.part(&tag) {
+                    out.push(NarrationOutput::Dropped(what));
+                }
+                return;
+            }
+            self.end_block(Ending::Unclosed, "", out);
+        }
+        self.end_word(out);
+        self.boundary(out);
+        let op = match OpenBlock::open(&tag) {
+            Some(Ok(block)) => {
+                self.block = Some(block);
+                return;
+            }
+            Some(Err(_)) => None,
+            None => tags::to_op(&tag).ok(),
+        };
+        let op = match op {
+            Some(op) => self.keep_op(op, out),
+            None => {
+                out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
+                None
+            }
+        };
+        self.segments.push(Segment::Tag {
+            written: tag.written,
+            op,
+        });
+    }
+
+    /// A dropped tag's text: kept with the open block, or among what was written.
+    fn dropped_tag(&mut self, written: String, out: &mut Vec<NarrationOutput>) {
+        if let Some(block) = &mut self.block {
+            block.malformed(&written);
+            return;
+        }
+        self.end_word(out);
+        self.boundary(out);
+        self.segments.push(Segment::Tag { written, op: None });
+    }
+
+    /// Text: inside a block it is the block's, until it can only be speech; outside, speech.
+    fn text_char(&mut self, ch: char, out: &mut Vec<NarrationOutput>) {
+        let Some(block) = &mut self.block else {
+            self.speak_char(ch, out);
+            return;
+        };
+        if block.text(ch) {
+            self.end_block(Ending::Unclosed, "", out);
+        }
+    }
+
+    /// The open block ends: its op is kept (anchored on the first word after it, like any tag),
+    /// and, when it ended unclosed, the text since its last part is spoken.
+    fn end_block(&mut self, ending: Ending, closing: &str, out: &mut Vec<NarrationOutput>) {
+        let Some(block) = self.block.take() else {
+            return;
+        };
+        let ended = block.end(ending, closing);
+        let op = match ended.op {
+            Some(op) => self.keep_op(op, out),
+            None => {
+                out.push(NarrationOutput::Dropped(Dropped::NarrationTag));
+                None
+            }
+        };
+        self.segments.push(Segment::Tag {
+            written: ended.written,
+            op,
+        });
+        for ch in ended.speech.chars() {
+            self.speak_char(ch, out);
         }
     }
 
@@ -316,13 +409,15 @@ impl NarrationStream {
             return None;
         }
         match op {
-            NarrationOp::Detour { .. } if self.planned_depth >= DETOUR_DEPTH_MAX => {
+            NarrationOp::Detour { .. } | NarrationOp::Detail { .. }
+                if self.planned_depth >= DETOUR_DEPTH_MAX =>
+            {
                 out.push(NarrationOutput::Dropped(Dropped::Detour));
                 self.refused_detours += 1;
                 self.cutter.inject(DETOUR_REFUSAL_LINE, out);
                 return None;
             }
-            NarrationOp::Detour { .. } => self.planned_depth += 1,
+            NarrationOp::Detour { .. } | NarrationOp::Detail { .. } => self.planned_depth += 1,
             // The resume that closes a refused detour has nothing to close.
             NarrationOp::Resume if self.refused_detours > 0 => {
                 self.refused_detours -= 1;
@@ -353,10 +448,24 @@ impl NarrationStream {
             | NarrationOp::Message { .. }
             | NarrationOp::Cells(_)
             | NarrationOp::Write { .. }
-            | NarrationOp::Cite { .. } => {}
+            | NarrationOp::Cite { .. }
+            | NarrationOp::Diagram(_)
+            | NarrationOp::Reveal { .. } => {}
         }
         let index = self.ops_kept;
         self.ops_kept += 1;
+        if op.draws() {
+            for (_, revealed) in &mut self.staged {
+                *revealed = true;
+            }
+        }
+        let stages = matches!(
+            op,
+            NarrationOp::Diagram(_) | NarrationOp::Detail { spec: Some(_), .. }
+        );
+        if stages {
+            self.staged.push((index, false));
+        }
         self.cutter.push_op(index, op);
         Some(index)
     }

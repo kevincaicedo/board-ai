@@ -8,6 +8,7 @@
 //! from element ids, so the same board always exports the same file, and nothing here reads a
 //! clock or a random source.
 
+mod staged;
 mod user;
 
 use serde_json::{Value, json};
@@ -15,7 +16,7 @@ use serde_json::{Value, json};
 use crate::board::metrics::{
     INDEX_FONT_SIZE, LABEL_FONT_SIZE, LABEL_LINE_HEIGHT, SMALL_LABEL_FONT_SIZE, text_width,
 };
-use crate::board::{Board, Element, ElementKind, ElementState, Geometry, Layer, layout};
+use crate::board::{Board, Element, ElementKind, Geometry, Layer, layout};
 use crate::geometry::{Point, Rect};
 use crate::protocol::{EdgePath, Fill, LineStyle, Mark, NodeShape};
 
@@ -163,10 +164,13 @@ fn layer_elements(layer: &Layer) -> Vec<Value> {
 fn elements_with_prefix(layer: &Layer, prefix: &str) -> Vec<Value> {
     let mut elements = Vec::new();
     for element in layer.elements() {
-        if element.state != ElementState::Pending {
+        // A staged diagram's parts export as the diagram draws them (D-187).
+        let staged = crate::board::staged::summary::is_part(layer, &element.id);
+        if element.state.is_shown() && !staged {
             export_element(&mut elements, layer, prefix, element);
         }
     }
+    staged::export(&mut elements, layer, prefix);
     elements
 }
 
@@ -356,7 +360,11 @@ fn node(out: &mut Vec<Value>, id: &str, element: &Element, look: NodeLook, rect:
     let label_id = format!("{id}#label");
     let kind = match shape {
         NodeShape::Db | NodeShape::Actor | NodeShape::Circle => "ellipse",
-        NodeShape::Service | NodeShape::Queue | NodeShape::Group | NodeShape::Note => "rectangle",
+        NodeShape::Service
+        | NodeShape::Queue
+        | NodeShape::Group
+        | NodeShape::Note
+        | NodeShape::Pill => "rectangle",
     };
     if shape == NodeShape::Note {
         out.push(text(id, &element.label, rect.center(), None, INK));

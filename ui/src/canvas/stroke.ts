@@ -5,7 +5,8 @@
 import type { Vec } from "./geometry.ts";
 import { clamp, easeInOutCubic, lerp, round1 } from "./math.ts";
 
-export type StrokeKind = "line" | "curve" | "ellipse" | "head" | "hatch";
+/** A `fill` is a closed shape painted in its tone, under the ink, fading in over its duration. */
+export type StrokeKind = "line" | "curve" | "ellipse" | "head" | "hatch" | "fill";
 
 /** Colors are tokens; the renderer maps a tone to a CSS class, never to a hex value. */
 export type Tone =
@@ -20,7 +21,19 @@ export type Tone =
   | "mint"
   | "blush"
   /** The user's own ink (13 · You draw). */
-  | "you";
+  | "you"
+  /** A staged diagram's categories (canvas 15): the stroke, and the soft fill. */
+  | "slate"
+  | "violet"
+  | "blue"
+  | "green"
+  | "slate-soft"
+  | "violet-soft"
+  | "blue-soft"
+  | "green-soft";
+
+/** Handwriting, or a staged diagram's field values in the code font. */
+export type TextFont = "hand" | "code";
 
 export interface Stroke {
   readonly type: "stroke";
@@ -35,6 +48,8 @@ export interface Stroke {
   readonly tone: Tone;
   readonly width: number;
   readonly dashed: boolean;
+  /** A dashed stroke's own dash and gap (`"3 2"`); null draws the canvas's hand dash. */
+  readonly dashPattern: string | null;
   /** Point indexes where legs begin and end; pacing restarts at each. */
   readonly legs: Int32Array;
   /** Fraction of the stroke's time at which each leg boundary is reached. */
@@ -50,12 +65,16 @@ export interface TextMark {
   readonly size: number;
   readonly tone: Tone;
   readonly align: TextAlign;
+  readonly font: TextFont;
   readonly durationMs: number;
   /** Characters, counted as code points so a letter is never split. */
   readonly count: number;
   /** UTF-16 offset where each letter ends, so a reveal slices without splitting a letter. */
   readonly letterEnds: Int32Array;
-  /** The handwriting nib's advance per letter: half the font size, as in the design. */
+  /**
+   * The nib's advance per letter: half the font size for handwriting, as in the design; the code
+   * font's 0.6 em.
+   */
   readonly letterWidth: number;
   readonly start: Vec;
   readonly end: Vec;
@@ -70,9 +89,14 @@ export interface StrokeOptions {
   readonly kind?: StrokeKind;
   readonly legs?: readonly number[];
   readonly dashed?: boolean;
+  /** A dash and gap of its own, for a dashed stroke drawn finer than the hand dash. */
+  readonly dash?: readonly [number, number];
   /** Multiplies the natural duration; the design draws group frames faster (0.55). */
   readonly pace?: number;
 }
+
+/** A fill fades in under its outline at the pace of a quick hachure. */
+const FILL_MS = 240;
 
 /** Natural stroke durations from the design: hachure is quick, ellipses slow, lines by length. */
 function naturalDurationMs(kind: StrokeKind, length: number): number {
@@ -83,6 +107,8 @@ function naturalDurationMs(kind: StrokeKind, length: number): number {
       return (0.08 + length / 640) * 1000;
     case "head":
       return 120;
+    case "fill":
+      return FILL_MS;
     case "line":
     case "curve":
       return (0.05 + length / 760) * 1000;
@@ -120,6 +146,9 @@ export function makeStroke(
         Math.hypot(point[0] - (flat[index * 2 - 2] ?? 0), point[1] - (flat[index * 2 - 1] ?? 0));
     }
   }
+  if (kind === "fill") {
+    path += "Z";
+  }
   const length = cumulative[count - 1] || 1;
   const legIndexes = options.legs ?? [0, count - 1];
   const legs = Int32Array.from(legIndexes);
@@ -148,6 +177,7 @@ export function makeStroke(
     tone,
     width,
     dashed: options.dashed ?? false,
+    dashPattern: options.dash === undefined ? null : `${options.dash[0]} ${options.dash[1]}`,
     legs,
     legTimes,
     durationMs: naturalDurationMs(kind, length) * (options.pace ?? 1),
@@ -161,6 +191,40 @@ export function makeHatch(points: readonly Vec[], tone: Tone): Stroke {
     legs.push(index);
   }
   return makeStroke(points, tone, 1.7, { kind: "hatch", legs });
+}
+
+/** A closed shape painted in `tone` under the ink (a staged box's soft fill, canvas 15). */
+export function makeFill(points: readonly Vec[], tone: Tone): Stroke {
+  return makeStroke(points, tone, 0, { kind: "fill" });
+}
+
+/**
+ * The box a stroke's points cover, grown by `pad` on every side and rounded outward to whole
+ * units: the region a dashed stroke's reveal mask needs, so nothing of it is ever clipped.
+ */
+export function maskRegion(
+  stroke: Stroke,
+  pad: number,
+): { x: number; y: number; w: number; h: number } {
+  const points = stroke.points;
+  let left = Number.POSITIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index + 1 < points.length; index += 2) {
+    const x = points[index] ?? 0;
+    const y = points[index + 1] ?? 0;
+    left = Math.min(left, x);
+    right = Math.max(right, x);
+    top = Math.min(top, y);
+    bottom = Math.max(bottom, y);
+  }
+  if (left > right) {
+    return { x: 0, y: 0, w: 0, h: 0 };
+  }
+  const x = Math.floor(left - pad);
+  const y = Math.floor(top - pad);
+  return { x, y, w: Math.ceil(right + pad) - x, h: Math.ceil(bottom + pad) - y };
 }
 
 /** Reveal-curve blend per kind: hachure and ellipses are steadier, outlines snap into corners. */
@@ -241,6 +305,10 @@ export function pointAtLength(stroke: Stroke, length: number, out: Vec): Vec {
   return out;
 }
 
+/** The nib's advance per letter, in ems: the design's handwriting, and Geist Mono's 0.6. */
+const HAND_ADVANCE = 0.5;
+const CODE_ADVANCE = 0.6;
+
 export function makeText(
   x: number,
   y: number,
@@ -248,6 +316,7 @@ export function makeText(
   size: number,
   tone: Tone,
   align: TextAlign = "center",
+  font: TextFont = "hand",
 ): TextMark {
   const letters = Array.from(text);
   const count = letters.length;
@@ -257,7 +326,7 @@ export function makeText(
     offset += (letters[index] ?? "").length;
     letterEnds[index] = offset;
   }
-  const letterWidth = size * 0.5;
+  const letterWidth = size * (font === "code" ? CODE_ADVANCE : HAND_ADVANCE);
   const width = count * letterWidth;
   const startX = align === "left" ? x : align === "right" ? x - width : x - width / 2;
   return {
@@ -268,6 +337,7 @@ export function makeText(
     size,
     tone,
     align,
+    font,
     durationMs: (0.05 + count * 0.046) * 1000,
     count,
     letterEnds,

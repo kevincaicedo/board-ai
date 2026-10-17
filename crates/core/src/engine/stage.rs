@@ -117,12 +117,19 @@ impl Core {
     /// Controls said in one breath ("don't remember this session, we can stop here"): each is
     /// carried out, ending the session last. True when the core answered; a spoken cancel alone
     /// says nothing, so the words then go on to the talker, which confirms it.
-    pub(super) fn joined_controls(&mut self, said: &str, effects: &mut Vec<Effect>) -> bool {
+    pub(super) fn joined_controls(
+        &mut self,
+        now: SessionTime,
+        said: &str,
+        effects: &mut Vec<Effect>,
+    ) -> bool {
         let Some(controls) = joined_cues::joined(said) else {
             return false;
         };
         let mut answered = false;
         let mut end = None;
+        // A drill-down's detail layer is filled by the talker, so its words reach it.
+        let mut for_talker = false;
         for control in controls {
             answered |= match control.cue {
                 JoinedCue::Memory(_) => self.memory_control(control.words, effects),
@@ -136,12 +143,20 @@ impl Core {
                     end = Some(control.words);
                     false
                 }
+                // While the user draws, the board stays where they draw it.
+                JoinedCue::BackOut if self.is_drawing() => false,
+                JoinedCue::Detail if self.is_drawing() => false,
+                JoinedCue::BackOut => self.back_out(now, effects),
+                JoinedCue::Detail => {
+                    for_talker |= self.detail_by_voice(control.words, effects);
+                    false
+                }
             };
         }
         if let Some(words) = end {
             answered |= self.end_session_by_voice(words, effects);
         }
-        answered
+        answered && !for_talker
     }
 
     /// The reply that answered "end the session" finished playing: the session ends now. A

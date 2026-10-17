@@ -16,24 +16,24 @@ import {
   traceRunning,
 } from "./board.ts";
 import { cameraAt, depthOfField, type FitArea, type Viewport } from "./camera.ts";
+import type { Box } from "./detail.ts";
 import type { DetourCard } from "./detourCard.ts";
 import type { Vec } from "./geometry.ts";
+import { createStroke, createText, type ItemView, svg } from "./items.ts";
 import { clamp, easeInOutCubic, easeOut, ramp, round1, round2 } from "./math.ts";
 import { type Anchors, type NibFrame, nibAt, type Presence, type Transform } from "./presence.ts";
+import { boardPush, writePush } from "./push.ts";
+import { TARGET_PASSES, targetPass } from "./staged.ts";
 import {
   lettersAt,
   pointAtLength,
   revealLength,
   revealLengthStepped,
-  type Stroke,
-  type TextMark,
   textOffset,
 } from "./stroke.ts";
 import { naturalTime } from "./timeline.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
-/** Gap after a stroke's dash so the hidden remainder never shows (the design's +40). */
-const DASH_TAIL = 40;
 const HOVER_PAD = 16;
 
 type RenderTokens = Pick<
@@ -49,6 +49,10 @@ type RenderTokens = Pick<
   | "dofFade"
   | "handDash"
   | "handDashGap"
+  | "diagramCameraScaleMax"
+  | "detailPushBlur"
+  | "detailPushFade"
+  | "detailPushShrink"
 >;
 
 export interface BoardViewOptions {
@@ -61,48 +65,26 @@ export interface BoardViewOptions {
   readonly yours?: YoursView;
 }
 
-function svg<K extends keyof SVGElementTagNameMap>(
-  name: K,
-  parent: Element,
-  className?: string,
-): SVGElementTagNameMap[K] {
-  const element = document.createElementNS(SVG, name);
-  if (className !== undefined) {
-    element.setAttribute("class", className);
-  }
-  parent.append(element);
-  return element;
-}
-
 const HIDDEN = 0;
 const PARTIAL = 1;
 const DONE = 2;
 
-interface StrokeView {
-  readonly item: Stroke;
-  readonly path: SVGPathElement;
-  /** The reveal path for a dashed stroke lives in a mask; the visible path carries the dashes. */
-  readonly reveal: SVGPathElement;
-}
-
-interface TextView {
-  readonly item: TextMark;
-  readonly text: SVGTextElement;
-  readonly written: SVGTSpanElement;
-  readonly unwritten: SVGTSpanElement;
-}
-
-type ItemView = StrokeView | TextView;
-
 interface RunView {
   readonly run: Run;
   readonly group: SVGGElement;
+  /**
+   * The run's strokes, under its pointer targets. An item's element is made the first frame it
+   * shows, so a reveal of a whole section spreads its DOM work over the frames that draw it.
+   */
+  readonly strokes: SVGGElement;
   /** Handwriting sits above every stroke on the layer, as in the design, so fills never cross it. */
   readonly labels: SVGGElement;
-  readonly items: ItemView[];
+  readonly items: (ItemView | null)[];
   readonly states: Int8Array;
   readonly progress: Float64Array;
   readonly trace: { readonly dot: SVGGElement; readonly at: Vec } | null;
+  /** The elements inside the drawing (a reveal's parts), so a focus on one keeps it sharp. */
+  readonly targets: ReadonlySet<string>;
   done: boolean;
   soft: boolean;
 }
@@ -158,11 +140,16 @@ export class BoardView {
    * so a still frame builds no string. NaN forces the first write, so a reset never leaves a
    * stale push-back on the board.
    */
-  readonly #lastPush = Float64Array.of(Number.NaN, Number.NaN);
+  readonly #lastPush = Float64Array.of(Number.NaN, Number.NaN, Number.NaN, Number.NaN, Number.NaN);
+  /** The push-back this frame, before it is compared with the last one written. */
+  readonly #push = new Float64Array(5);
+  /** Where a detail's anchor sits on the stage this frame, for the board's step back. */
+  readonly #anchorBox: Box = { x: 0, y: 0, w: 0, h: 0 };
   /** The nib last written: shown (1 or 0), x, y, scale, pulse, pen down (1 or 0). */
   readonly #lastNib = new Float64Array(NIB_STATE_SIZE).fill(Number.NaN);
   #hovered: { layer: number; key: string } | null = null;
-  #maskSerial = 0;
+  /** The hand dash every dashed stroke without one of its own is drawn with. */
+  readonly #handDash: string;
 
   constructor(
     model: BoardModel,
@@ -174,6 +161,7 @@ export class BoardView {
     this.#presence = presence;
     this.#mainHost = mainHost;
     this.#options = options;
+    this.#handDash = `${options.tokens.handDash} ${options.tokens.handDashGap}`;
     this.#hosts.set(0, mainHost);
     this.#nib = document.createElement("div");
     this.#nib.className = "nib";
@@ -207,6 +195,11 @@ export class BoardView {
   /** The main layer's current world → screen transform, for the nib and pointer math. */
   get mainTransform(): Transform {
     return this.#layers.get(0)?.transform ?? { scale: 1, x: 0, y: 0 };
+  }
+
+  /** A layer's world → layer-view transform as last rendered, or null before its first frame. */
+  layerTransform(layer: number): Transform | null {
+    return this.#layers.get(layer)?.transform ?? null;
   }
 
   reset(): void {
@@ -345,13 +338,9 @@ export class BoardView {
 
   #createRun(layer: LayerView, run: Run): RunView {
     const group = svg("g", layer.strokes, "element");
+    const strokes = svg("g", group);
     const labels = svg("g", layer.labels);
-    const items: ItemView[] = [];
-    for (const item of run.plan.items) {
-      items.push(
-        item.type === "stroke" ? this.#createStroke(group, item) : this.#createText(labels, item),
-      );
-    }
+    const items: (ItemView | null)[] = new Array(run.plan.items.length).fill(null);
     let trace: RunView["trace"] = null;
     if (run.trace !== null) {
       const dot = svg("g", group, "trace-dot");
@@ -359,6 +348,16 @@ export class BoardView {
       svg("circle", dot, "trace-core").setAttribute("r", "5");
       dot.style.display = "none";
       trace = { dot, at: [0, 0] };
+    } else if (run.op.kind === "Reveal") {
+      // A reveal names no element: each part is a target of its own. Frames go under edges and
+      // edges under everything else, so pointing inside a frame names what is there.
+      for (const pass of TARGET_PASSES) {
+        for (const target of run.plan.targets) {
+          if (targetPass(run.op.parts, target.id) === pass) {
+            this.#hit(group, layer, target.rect, target.id, 0);
+          }
+        }
+      }
     } else if (run.op.kind !== "Strike" && run.op.kind !== "Write") {
       this.#hit(group, layer, run.plan.bounds, run.op.id, 6);
       // A row's cells sit over the row, so pointing at a cell names the cell (`arr.3`).
@@ -369,73 +368,16 @@ export class BoardView {
     return {
       run,
       group,
+      strokes,
       labels,
       items,
       states: new Int8Array(items.length),
       progress: new Float64Array(items.length).fill(-1),
       trace,
+      targets: new Set(run.plan.targets.map((target) => target.id)),
       done: false,
       soft: false,
     };
-  }
-
-  #createStroke(group: SVGGElement, item: Stroke): StrokeView {
-    const path = svg("path", group, `stroke tone-${item.tone}`);
-    if (item.kind === "hatch") {
-      // Fills are drawn last but sit under the ink, so dividers and outlines stay unbroken.
-      group.prepend(path);
-    }
-    path.setAttribute("d", item.path);
-    path.setAttribute("stroke-width", String(item.width));
-    path.style.display = "none";
-    if (!item.dashed) {
-      path.setAttribute(
-        "stroke-dasharray",
-        `${round1(item.length)} ${round1(item.length + DASH_TAIL)}`,
-      );
-      path.setAttribute("stroke-dashoffset", String(round1(item.length)));
-      return { item, path, reveal: path };
-    }
-    // A dashed stroke can't also use its dash array to reveal itself, so a mask path does.
-    this.#maskSerial += 1;
-    const maskId = `reveal-${this.#maskSerial}`;
-    const mask = svg("mask", group);
-    mask.setAttribute("id", maskId);
-    mask.setAttribute("maskUnits", "userSpaceOnUse");
-    const reveal = svg("path", mask, "stroke-reveal");
-    reveal.setAttribute("d", item.path);
-    reveal.setAttribute("stroke-width", String(item.width + 4));
-    reveal.setAttribute(
-      "stroke-dasharray",
-      `${round1(item.length)} ${round1(item.length + DASH_TAIL)}`,
-    );
-    reveal.setAttribute("stroke-dashoffset", String(round1(item.length)));
-    path.setAttribute(
-      "stroke-dasharray",
-      `${this.#options.tokens.handDash} ${this.#options.tokens.handDashGap}`,
-    );
-    path.setAttribute("mask", `url(#${maskId})`);
-    return { item, path, reveal };
-  }
-
-  #createText(group: SVGGElement, item: TextMark): TextView {
-    const text = svg("text", group, `hand tone-${item.tone}`);
-    text.setAttribute("x", String(round1(item.x)));
-    text.setAttribute("y", String(round1(item.y)));
-    text.setAttribute("font-size", String(item.size));
-    text.setAttribute(
-      "text-anchor",
-      item.align === "left" ? "start" : item.align === "right" ? "end" : "middle",
-    );
-    // The design centers a line box 55% above the baseline point; central sits 0.05em lower.
-    // Set as attributes: WebKit honors dominant-baseline on SVG text more reliably than in CSS.
-    text.setAttribute("dominant-baseline", "central");
-    text.setAttribute("dy", "-0.1em");
-    text.style.display = "none";
-    const written = svg("tspan", text);
-    const unwritten = svg("tspan", text, "unwritten");
-    unwritten.textContent = item.text;
-    return { item, text, written, unwritten };
   }
 
   /** A pointer target for element `id`; the hover is keyed by the element it names. */
@@ -479,7 +421,14 @@ export class BoardView {
 
   #renderLayer(view: LayerView, layer: Layer, at: number, area: FitArea): void {
     const tokens = this.#options.tokens;
-    cameraAt(layer.camera, at, area, tokens.durationSceneMs, view.transform);
+    cameraAt(
+      layer.camera,
+      at,
+      area,
+      tokens.durationSceneMs,
+      view.transform,
+      tokens.diagramCameraScaleMax,
+    );
     const scale = Math.round(view.transform.scale * 1000) / 1000;
     const x = round1(view.transform.x);
     const y = round1(view.transform.y);
@@ -499,7 +448,11 @@ export class BoardView {
     const focus = layer.camera.focus ?? layer.camera.previousFocus;
     for (const runView of view.runs.values()) {
       const soft =
-        dof > 0.001 && focus !== null && runView.run.key !== focus && runView.run.trace === null;
+        dof > 0.001 &&
+        focus !== null &&
+        runView.run.key !== focus &&
+        !runView.targets.has(focus) &&
+        runView.run.trace === null;
       if (soft !== runView.soft || soft) {
         runView.soft = soft;
         for (const group of [runView.group, runView.labels]) {
@@ -558,15 +511,18 @@ export class BoardView {
     const { starts, ends } = run.plan;
     let finished = natural >= run.clock.naturalMs;
     for (let index = 0; index < view.items.length; index += 1) {
-      const itemView = view.items[index];
-      if (itemView === undefined) {
-        continue;
-      }
       const start = starts[index] ?? 0;
       const end = ends[index] ?? 0;
       if (natural < 0 || local < start) {
         finished = false;
-        this.#setState(view, index, itemView, HIDDEN);
+        const hidden = view.items[index];
+        if (hidden !== null && hidden !== undefined) {
+          this.#setState(view, index, hidden, HIDDEN);
+        }
+        continue;
+      }
+      const itemView = view.items[index] ?? this.#createItem(view, index);
+      if (itemView === null) {
         continue;
       }
       const f = clamp((local - start) / (end - start || 1));
@@ -582,6 +538,20 @@ export class BoardView {
     view.done = finished && !runActive(run, at);
   }
 
+  /** The element of item `index`, made the first frame it shows (it starts hidden). */
+  #createItem(view: RunView, index: number): ItemView | null {
+    const item = view.run.plan.items[index];
+    if (item === undefined) {
+      return null;
+    }
+    const created =
+      item.type === "stroke"
+        ? createStroke(view.strokes, item, this.#handDash)
+        : createText(view.labels, item);
+    view.items[index] = created;
+    return created;
+  }
+
   #setState(view: RunView, index: number, item: ItemView, state: number): void {
     if (view.states[index] === state) {
       return;
@@ -595,6 +565,14 @@ export class BoardView {
   }
 
   #write(view: RunView, index: number, item: ItemView, f: number): void {
+    if ("path" in item && item.item.kind === "fill") {
+      const opacity = this.#options.reducedMotion ? 1 : round2(f);
+      if (view.progress[index] !== opacity) {
+        view.progress[index] = opacity;
+        item.path.style.opacity = String(opacity);
+      }
+      return;
+    }
     if ("path" in item) {
       const stroke = item.item;
       const length = this.#options.reducedMotion
@@ -639,49 +617,29 @@ export class BoardView {
   }
 
   /**
-   * The board steps back while a detour is open: blurred, faded, nudged left (frame 4). When the
-   * session ends it fades out for good, blurring as a card leaves (D-145).
+   * The board steps back while a detour or a detail layer is open (frame 4, 15b), and fades out
+   * for good when the session ends (D-145). Only a changed amount is written.
    */
   #renderPush(at: number): void {
-    const tokens = this.#options.tokens;
-    let amount = 0;
-    for (let index = this.#model.detours.length - 1; index >= 0; index -= 1) {
-      const span = this.#model.detours[index];
-      if (span === undefined || span.openAt > at) {
-        continue;
-      }
-      const rise = easeOut(ramp(at, span.openAt, span.openAt + tokens.durationSceneMs));
-      const fall =
-        span.closeAt === null || at < span.closeAt
-          ? 0
-          : easeOut(ramp(at, span.closeAt, span.closeAt + tokens.durationSceneMs));
-      amount = rise * (1 - fall);
-      break;
-    }
-    // While you draw, the main board you draw on stays sharp (13 · You draw).
-    if (this.#options.yours?.lifted === true) {
-      amount = 0;
-    }
-    const rounded = amount <= 0.001 ? 0 : Math.round(amount * 1000) / 1000;
-    const ended = this.#model.endedAmount(at, tokens.durationSceneMs);
-    const gone = ended <= 0.001 ? 0 : Math.round(ended * 1000) / 1000;
+    const now = boardPush(
+      this.#model,
+      at,
+      this.#options.tokens,
+      this.#options.yours?.lifted === true,
+      this.mainTransform,
+      this.#anchorBox,
+      this.#push,
+    );
     const last = this.#lastPush;
-    if (rounded === last[0] && gone === last[1]) {
-      return;
+    const same =
+      now[0] === last[0] &&
+      now[1] === last[1] &&
+      now[2] === last[2] &&
+      (now[2] === 0 || (now[3] === last[3] && now[4] === last[4]));
+    if (!same) {
+      last.set(now);
+      writePush(this.#mainHost.style, now, this.#options.tokens);
     }
-    last[0] = rounded;
-    last[1] = gone;
-    const host = this.#mainHost.style;
-    if (rounded === 0 && gone === 0) {
-      host.removeProperty("filter");
-      host.removeProperty("opacity");
-      host.removeProperty("transform");
-      return;
-    }
-    const blur = rounded * tokens.detourPushBlur + gone * tokens.surfaceBlurOut;
-    host.filter = `blur(${round1(blur)}px)`;
-    host.opacity = String(round2((1 - tokens.detourPushFade * rounded) * (1 - gone)));
-    host.transform = `translateX(${round1(-tokens.detourPushShift * rounded)}px) scale(${Math.round((1 - tokens.detourPushShrink * rounded) * 1000) / 1000})`;
   }
 
   #renderNib(at: number, anchors: Anchors): void {

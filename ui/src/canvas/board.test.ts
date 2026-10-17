@@ -207,7 +207,7 @@ test("an op that arrives before the orb finished condensing waits for it", () =>
 
 test("detour layers push, pop, and stop accepting more than the board can hold", () => {
   const { board, apply } = scene();
-  apply({ type: "LayerPush", layer: 1, title: "cache-aside", question: null }, 100);
+  apply({ type: "LayerPush", layer: 1, title: "cache-aside", question: null, anchor: null }, 100);
   apply(start(box("api"), 500, 1), 200);
   assert.equal(board.openDetours().length, 1);
   apply({ type: "LayerPop", layer: 1 }, 900);
@@ -226,7 +226,16 @@ test("detour layers push, pop, and stop accepting more than the board can hold",
 test("a page turn sends the drawing away whole and starts layer 0 empty", () => {
   const { board, apply } = scene();
   apply(start(box("api")), 100);
-  apply({ type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 300, h: 200 }, focus: null }, 100);
+  apply(
+    {
+      type: "Camera",
+      layer: 0,
+      frame: { x: 0, y: 0, w: 300, h: 200 },
+      focus: null,
+      enlarge: false,
+    },
+    100,
+  );
   const before = board.main.runs[0];
   apply({ type: "PageTurn", page: 2, title: "DNS" }, 2000);
   assert.equal(board.main.runs.length, 0);
@@ -376,7 +385,13 @@ test("a first frame over shapes you drew eases from where you drew them; BoardAI
   assert.deepEqual(out, { scale: 1, x: 260, y: 125 }, "an empty layer's first frame jumps");
   const model = new BoardModel(tokens);
   const lead = { nibAtRest: () => "out" as const, flightLead: () => ({ waitMs: 0, flightMs: 0 }) };
-  const camera = { type: "Camera" as const, layer: 0, frame: first.frame, focus: null };
+  const camera = {
+    type: "Camera" as const,
+    layer: 0,
+    frame: first.frame,
+    focus: null,
+    enlarge: false,
+  };
   model.apply(camera, 1000, lead, true);
   assert.equal(model.main.camera.fromIdentity, true);
   model.apply(camera, 2000, lead, true);

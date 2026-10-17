@@ -212,7 +212,7 @@ function reply(): Timed[] {
   // The core frames the layer's drawing, yours included, with its first stroke (camera follow).
   const frame: Rect = { x: 262 - 60, y: 228 + DY - 60, w: 982 - 262 + 120, h: 490 - 228 + 120 };
   return [
-    { at: ring, event: { type: "Camera", layer: 0, frame, focus: null } },
+    { at: ring, event: { type: "Camera", layer: 0, frame, focus: null, enlarge: false } },
     { at: ring, event: { type: "OpStart", layer: 0, op: apiRing, budget_ms: join - ring } },
     { at: join, event: { type: "OpStart", layer: 0, op: cacheToApi, budget_ms: 1400 } },
     orb(ring, "Drawing", 70),

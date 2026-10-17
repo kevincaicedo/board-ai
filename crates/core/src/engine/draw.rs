@@ -301,7 +301,7 @@ impl Core {
         if self.end_session_by_voice(text, effects)
             || self.open_settings_by_voice(text, effects)
             || (off_record && self.memory_control(text, effects))
-            || (asks_to_end(text) && self.joined_controls(text, effects))
+            || (asks_to_end(text) && self.joined_controls(now, text, effects))
         {
             return true;
         }

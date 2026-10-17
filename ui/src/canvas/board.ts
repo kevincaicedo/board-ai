@@ -2,6 +2,7 @@
 // clock. This module holds no DOM; the renderer reads it every frame. Everything is stamped with
 // session time, so rebuilding from the event log at any time gives the same board (replay seek).
 
+import type { DetailAnchor } from "../protocol/generated/DetailAnchor.ts";
 import type { DrawOp } from "../protocol/generated/DrawOp.ts";
 import type { Rect } from "../protocol/generated/Rect.ts";
 import type { UiEvent } from "../protocol/generated/UiEvent.ts";
@@ -95,11 +96,16 @@ export interface Camera {
    * the view eases from identity instead of jumping, so your drawing glides into the frame.
    */
   readonly fromIdentity?: boolean;
+  /** The frame (and the one before it) is a close-up of a staged diagram's dense part. */
+  readonly enlarge?: boolean;
+  readonly previousEnlarge?: boolean;
 }
 
 export interface Layer {
   readonly id: number;
   readonly title: string;
+  /** A detail layer's anchor (D-188, 15b): it fills the stage instead of a detour card. */
+  readonly anchor: DetailAnchor | null;
   readonly pushedAt: number;
   poppedAt: number | null;
   readonly runs: Run[];
@@ -139,6 +145,7 @@ function keyOf(op: DrawOp): string {
     case "Participant":
     case "Message":
     case "Cells":
+    case "Reveal":
       return op.id;
   }
 }
@@ -179,6 +186,7 @@ export class BoardModel {
     this.layers.set(0, {
       id: 0,
       title: "",
+      anchor: null,
       pushedAt: 0,
       poppedAt: null,
       runs: [],
@@ -206,11 +214,20 @@ export class BoardModel {
     return endedAt === null ? 0 : easeOut(ramp(at, endedAt, endedAt + durationMs));
   }
 
-  /** Open detour layers, outermost first. */
+  /** Open detour layers (drawn in cards beside the board), outermost first. */
   openDetours(): Layer[] {
+    return this.#open(false);
+  }
+
+  /** Open detail layers (drill-down, D-188, drawn over the whole stage), outermost first. */
+  openDetails(): Layer[] {
+    return this.#open(true);
+  }
+
+  #open(details: boolean): Layer[] {
     const open: Layer[] = [];
     for (const layer of this.layers.values()) {
-      if (layer.id !== 0 && layer.poppedAt === null) {
+      if (layer.id > 0 && layer.poppedAt === null && (layer.anchor !== null) === details) {
         open.push(layer);
       }
     }
@@ -230,13 +247,13 @@ export class BoardModel {
         this.#resume(event.layer, at, event.budget_ms);
         break;
       case "LayerPush":
-        this.#push(event.layer, event.title, at);
+        this.#push(event.layer, event.title, at, event.anchor);
         break;
       case "LayerPop":
         this.#pop(event.layer, at);
         break;
       case "Camera":
-        this.#camera(event.layer, event.frame, event.focus, at, drawnAtIdentity);
+        this.#camera(event.layer, event.frame, event.focus, at, drawnAtIdentity, event.enlarge);
         break;
       case "PageTurn":
         this.#turnPage(at);
@@ -265,7 +282,7 @@ export class BoardModel {
     }
     // An op for a layer that was never pushed: show it rather than lose it, and count it.
     this.counters.orphanEvents += 1;
-    this.#push(id, "", at);
+    this.#push(id, "", at, null);
     return this.layers.get(id) ?? null;
   }
 
@@ -294,13 +311,7 @@ export class BoardModel {
     const round =
       op.kind === "Annotate" &&
       op.mark === "Highlight" &&
-      layer.runs.some(
-        (run) =>
-          run.replacedAt === null &&
-          run.key === op.target &&
-          run.op.kind === "Node" &&
-          run.op.shape === "Circle",
-      );
+      layer.runs.some((run) => run.replacedAt === null && isCircle(run.op, run.key, op.target));
     if (!replaces && sameKind >= LAYER_ELEMENTS_MAX) {
       this.counters.droppedOps += 1;
       return;
@@ -395,7 +406,7 @@ export class BoardModel {
     }
   }
 
-  #push(layerId: number, title: string, at: number): void {
+  #push(layerId: number, title: string, at: number, anchor: DetailAnchor | null): void {
     if (layerId === 0) {
       this.counters.orphanEvents += 1;
       return;
@@ -404,12 +415,14 @@ export class BoardModel {
     this.layers.set(layerId, {
       id: layerId,
       title,
+      anchor,
       pushedAt: at,
       poppedAt: null,
       runs: [],
       camera: NO_CAMERA,
     });
-    if (!wasOpen) {
+    // A detail layer steps the board back around its anchor instead (15b), not as a detour.
+    if (!wasOpen && anchor === null) {
       this.detours.push({ openAt: at, closeAt: null });
       if (this.detours.length > DETOUR_SPANS_MAX) {
         this.detours.shift();
@@ -426,7 +439,12 @@ export class BoardModel {
     }
     layer.poppedAt = at;
     const span = this.detours[this.detours.length - 1];
-    if (span !== undefined && span.closeAt === null && this.openDetours().length === 0) {
+    if (
+      layer.anchor === null &&
+      span !== undefined &&
+      span.closeAt === null &&
+      this.openDetours().length === 0
+    ) {
       span.closeAt = at;
     }
     this.version += 1;
@@ -446,6 +464,7 @@ export class BoardModel {
     this.layers.set(0, {
       id: 0,
       title: "",
+      anchor: null,
       pushedAt: at,
       poppedAt: null,
       runs: [],
@@ -465,6 +484,7 @@ export class BoardModel {
     focus: string | null,
     at: number,
     drawnAtIdentity: boolean,
+    enlarge: boolean,
   ): void {
     const layer = this.layers.get(layerId);
     if (layer === undefined) {
@@ -480,6 +500,8 @@ export class BoardModel {
       previousFocus: camera.focus,
       focusAt: focus === camera.focus ? camera.focusAt : at,
       fromIdentity: camera.frame === null && drawnAtIdentity,
+      enlarge,
+      previousEnlarge: camera.enlarge === true,
     };
   }
 
@@ -515,6 +537,16 @@ function struckLabel(runs: readonly Run[], target: string): StruckLabel | null {
     }
   }
   return own === null ? inside : labelOf(own.plan);
+}
+
+/** Whether `target` is a circle drawn by `op`: a sketch's circle node, or a staged one. */
+function isCircle(op: DrawOp, key: string, target: string): boolean {
+  if (op.kind === "Reveal") {
+    return op.parts.some(
+      (part) => part.part === "Node" && part.id === target && part.shape === "Circle",
+    );
+  }
+  return key === target && op.kind === "Node" && op.shape === "Circle";
 }
 
 /** Lets go of drawings a newer run replaced; the renderer has already removed them. */

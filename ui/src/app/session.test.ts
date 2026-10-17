@@ -129,7 +129,13 @@ test("surfaces stack beside an open detour's card and take updates", () => {
     highlight: null,
   });
   store.apply(
-    { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
+    {
+      type: "LayerPush",
+      layer: 1,
+      title: "cache-aside",
+      question: "why Redis first?",
+      anchor: null,
+    },
     0,
   );
   store.apply({ type: "SurfaceShow", surface: code(1) }, 2000);

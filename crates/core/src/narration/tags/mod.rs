@@ -4,6 +4,8 @@
 //! `style="dull"`) falls back to its default after a table of common synonyms, so a near miss
 //! never costs the drawing (live runs with small models lost whole nodes to these).
 
+pub mod diagram;
+
 use crate::ids::ElementId;
 use crate::limits::{
     CELL_VALUE_MAX_BYTES, CELLS_PER_STRIP_MAX, COMPARE_AXIS_MAX, LABEL_MAX_BYTES, NODE_STACK_MAX,
@@ -39,6 +41,11 @@ pub const TAG_NAMES: &[&str] = &[
     "cells",
     "write",
     "page",
+    "diagram",
+    "reveal",
+    "detail",
+    "record",
+    "note",
 ];
 
 /// Why a well-formed tag was dropped. For the log and golden files only.
@@ -74,12 +81,18 @@ const NODE_KINDS: &[(&str, NodeShape)] = &[
     ("boundary", NodeShape::Group),
     ("cluster", NodeShape::Group),
     ("vpc", NodeShape::Group),
+    ("section", NodeShape::Group),
+    ("container", NodeShape::Group),
+    ("frame", NodeShape::Group),
+    ("subnet", NodeShape::Group),
     ("text", NodeShape::Note),
     ("circle", NodeShape::Circle),
     ("round", NodeShape::Circle),
     ("ellipse", NodeShape::Circle),
     ("oval", NodeShape::Circle),
-    ("state", NodeShape::Circle),
+    ("pill", NodeShape::Pill),
+    ("state", NodeShape::Pill),
+    ("status", NodeShape::Pill),
 ];
 
 /// A tree child's side, then synonyms. An unknown side lines children up instead.
@@ -211,6 +224,7 @@ pub fn to_op(tag: &RawTag) -> Result<NarrationOp, BadTag> {
                 .get("title")
                 .map(|title| bounded(title, TITLE_MAX_BYTES)),
         }),
+        "reveal" | "detail" | "diagram" | "record" | "note" => diagram::outside_block(tag),
         "write" => Ok(NarrationOp::Write {
             target: attributes.id("target")?,
             text: bounded(

@@ -7,9 +7,11 @@ import { Views } from "../views/Views.tsx";
 import { Captions } from "./Captions.tsx";
 import { Chips } from "./Chips.tsx";
 import { Column } from "./Column.tsx";
+import { DetailStage } from "./DetailStage.tsx";
 import { MicButton } from "./MicButton.tsx";
 import { ReplayControls } from "./ReplayControls.tsx";
 import { type Runtime, RuntimeContext } from "./runtime.ts";
+import { StageHeader } from "./StageHeader.tsx";
 import { Suggestion } from "./Suggestion.tsx";
 import { ThreadBar } from "./ThreadBar.tsx";
 
@@ -68,7 +70,9 @@ export function Stage({
         <div class="orb-host" ref={orbRef} />
         <Suggestion />
         <ThreadBar />
+        <StageHeader />
         <Column />
+        <DetailStage />
         <Views />
         <Chips />
         <Captions />

@@ -5,6 +5,7 @@ import type { Rect } from "../protocol/generated/Rect.ts";
 import type { Tokens } from "../styles/tokens.ts";
 import { roughLine } from "./geometry.ts";
 import type { Random } from "./rng.ts";
+import type { StagedTokens } from "./staged.ts";
 import { makeStroke, type Stroke, type Tone } from "./stroke.ts";
 
 export type PlanTokens = Pick<
@@ -16,7 +17,8 @@ export type PlanTokens = Pick<
   | "handEdge"
   | "handAnnotation"
   | "handIndex"
->;
+> &
+  StagedTokens;
 
 export const OUTLINE_WIDTH = 2.1;
 export const CONNECTOR_WIDTH = 2;

@@ -13,6 +13,7 @@ use super::cues::{
     CONTROL_FILLERS, CancelTarget, MemoryCue, harness_cancel, is_backchannel, is_close_view,
     is_open_settings, memory_cue, words,
 };
+use super::detail_cues::{is_back_out, is_detail};
 use super::stage_cues::{STAGE_FILLERS, is_end_session};
 
 /// Words that join two controls ("forget that and close it"). None of the controls' phrases has
@@ -30,6 +31,10 @@ pub enum JoinedCue {
     OpenSettings,
     Cancel(CancelTarget),
     EndSession,
+    /// "Back out" of a detail layer (D-188).
+    BackOut,
+    /// "More detail on the arena": the talker fills the detail layer it opens.
+    Detail,
 }
 
 /// One control of a joined utterance, with its words as written.
@@ -67,6 +72,10 @@ fn control(part: &str) -> Option<JoinedCue> {
         Some(JoinedCue::OpenSettings)
     } else if is_close_view(part) {
         Some(JoinedCue::CloseView)
+    } else if is_back_out(part) {
+        Some(JoinedCue::BackOut)
+    } else if is_detail(part) {
+        Some(JoinedCue::Detail)
     } else {
         None
     }
@@ -149,6 +158,14 @@ mod tests {
             (
                 "Close that — open settings.",
                 vec![JoinedCue::CloseView, JoinedCue::OpenSettings],
+            ),
+            (
+                "Back out, then more detail on the slot pool.",
+                vec![JoinedCue::BackOut, JoinedCue::Detail],
+            ),
+            (
+                "close that and back out",
+                vec![JoinedCue::CloseView, JoinedCue::BackOut],
             ),
         ] {
             assert_eq!(cues(said), Some(expected), "{said:?}");

@@ -18,7 +18,7 @@ use crate::effect::Effect;
 use crate::engine::Core;
 use crate::limits::{LABEL_MAX_BYTES, VIEW_TALKER_ITEMS_MAX};
 use crate::narration::tags::bounded;
-use crate::protocol::{DrawOp, UiEvent};
+use crate::protocol::{DrawOp, StagedPart, UiEvent};
 use crate::views::{NoteRow, PastLayer, SessionCard, TaskRow, View, ViewKind};
 
 /// The library while it is on screen, and the library a replay was opened over: closing that
@@ -263,18 +263,33 @@ fn describe_past(text: &mut String, session: &SessionCard, recap: &str, layers: 
     let labels: Vec<String> = layers
         .iter()
         .flat_map(|layer| layer.ops.iter())
-        .filter_map(|op| match op {
+        .flat_map(|op| match op {
             DrawOp::Node { label: name, .. } | DrawOp::Participant { label: name, .. } => {
-                Some(label(name))
+                vec![label(name)]
             }
-            DrawOp::Cells { label: name, .. } if !name.is_empty() => Some(label(name)),
+            DrawOp::Cells { label: name, .. } if !name.is_empty() => vec![label(name)],
+            // A staged diagram's frames and boxes name what it shows.
+            DrawOp::Reveal { parts, .. } => parts
+                .iter()
+                .filter(|part| {
+                    matches!(
+                        part,
+                        StagedPart::Frame { .. }
+                            | StagedPart::Node { .. }
+                            | StagedPart::Record { .. }
+                    )
+                })
+                .filter_map(StagedPart::label)
+                .filter(|name| !name.is_empty())
+                .map(label)
+                .collect(),
             DrawOp::Cells { .. }
             | DrawOp::Edge { .. }
             | DrawOp::Annotate { .. }
             | DrawOp::Strike { .. }
             | DrawOp::Trace { .. }
             | DrawOp::Message { .. }
-            | DrawOp::Write { .. } => None,
+            | DrawOp::Write { .. } => Vec::new(),
         })
         .take(VIEW_TALKER_ITEMS_MAX * 3)
         .collect();

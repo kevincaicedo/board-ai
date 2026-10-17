@@ -128,7 +128,7 @@
 {"v":1,"t":33519,"k":"ui","event":{"type":"Orb","state":"Speaking","level_percent":70}}
 {"v":1,"t":33519,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes.","is_final":false}}
 {"v":1,"t":33978,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your","is_final":false}}
-{"v":1,"t":33978,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":202,"y":248,"w":840,"h":382},"focus":null}}
+{"v":1,"t":33978,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":202,"y":248,"w":840,"h":382},"focus":null,"enlarge":false}}
 {"v":1,"t":33978,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Annotate","id":"a:0","op":0,"target":"u3","mark":"Circle","rect":{"x":520,"y":308,"w":162,"h":108},"text":null,"fill":null},"budget_ms":729}}
 {"v":1,"t":33978,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":70}}
 {"v":1,"t":34210,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Yes. Your API","is_final":false}}

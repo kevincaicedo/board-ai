@@ -257,6 +257,7 @@ mod tests {
             layer: LayerId(1),
             title: "cache-aside".into(),
             question: None,
+            anchor: None,
         });
         board.extend((1..=PAST_BOARD_OPS_MAX + 2).map(|index| op(1, index)));
         let view = SessionView {

@@ -242,6 +242,7 @@ impl Core {
             self.carry_out_written_calls(index, effects);
             self.notice_spoken_calls(index);
             self.mark_tour(index);
+            self.auto_reveal(index);
         }
         // A proposed change is asked about only when the reply ends normally; a refusal or a
         // failure ends the reply with a problem line, and the proposal is dropped with it.

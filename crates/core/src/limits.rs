@@ -1,5 +1,9 @@
 //! The core's named limits (LLD §5). Each one says what happens when it is crossed.
 
+mod diagrams;
+
+pub use diagrams::*;
+
 /// Longest element id the talker may use; a longer id drops the tag (counted).
 pub const ELEMENT_ID_MAX_BYTES: usize = 64;
 
@@ -144,9 +148,12 @@ pub const SPOKEN_CALL_MAX_BYTES: usize = 240;
 /// system prompt from the front, so the model answers without drawing. At 9,150 + 5,188 bytes
 /// they measured 2,466 + 1,122 gemma4 tokens, leaving about 500 for the conversation and the
 /// answer; the prompt's tests fail past this. The runtime now asks a local Ollama for 16,384
-/// tokens (`OLLAMA_CONTEXT_TOKENS`), so this bounds the prompt's cold prefill (~5 s at ~700
-/// tokens/s) and keeps Ollama reached through its OpenAI-compatible endpoint working.
-pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 14_400;
+/// tokens (`OLLAMA_CONTEXT_TOKENS`), so this bounds the prompt's cold prefill and keeps Ollama
+/// reached through its OpenAI-compatible endpoint working. Staged diagrams' section (D-187) took
+/// it from 14,375 to 16,421 bytes: gemma4 on the native API (M4 Pro) counts 4,224 prompt tokens
+/// instead of 3,638 and prefills them cold in 3.39 s instead of 2.90 s (+17 %, within the 25 %
+/// the owner allowed); a prompt past this must be measured again.
+pub const PROMPT_AND_TOOLS_MAX_BYTES: usize = 16_500;
 
 /// Source chips one reply shows; later citations in the reply show none (the talker still
 /// says them).

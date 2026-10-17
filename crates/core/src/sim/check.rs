@@ -2,6 +2,7 @@
 //! it happened; scenarios and the fuzzer assert there are none.
 
 mod drawing;
+mod staged;
 mod tasks;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,6 +62,8 @@ pub struct Checker {
     yours: drawing::Yours,
     /// Harness tasks still running, for the session's end.
     tasks: tasks::Tasks,
+    /// Staged diagrams: I16.
+    staged: staged::Staged,
 }
 
 impl Checker {
@@ -314,6 +317,7 @@ impl Checker {
     fn on_ui(&mut self, now: SessionTime, event: &UiEvent, core: &Core, speech: &FakeSpeech) {
         self.yours
             .on_ui(now, event, self.talk_in_flight, &mut self.violations);
+        self.staged.on_ui(now, event, core, &mut self.violations);
         match event {
             UiEvent::OpStart { layer, op, .. } => {
                 self.check_anchor(now, op, core, speech);
@@ -353,7 +357,8 @@ impl Checker {
             | UiEvent::DrawMode { .. }
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
-            | UiEvent::LabelHint { .. } => {}
+            | UiEvent::LabelHint { .. }
+            | UiEvent::Diagram { .. } => {}
         }
     }
 
@@ -453,6 +458,7 @@ impl Checker {
             DrawOp::Participant { .. } | DrawOp::Message { .. } | DrawOp::Cells { .. } => {
                 self.check_stable_diagram(now, layer, op);
             }
+            DrawOp::Reveal { .. } => {}
         }
     }
 
@@ -519,7 +525,8 @@ impl Checker {
             | DrawOp::Annotate { .. }
             | DrawOp::Strike { .. }
             | DrawOp::Trace { .. }
-            | DrawOp::Write { .. } => {}
+            | DrawOp::Write { .. }
+            | DrawOp::Reveal { .. } => {}
         }
     }
 
@@ -648,7 +655,8 @@ fn op_id(op: &DrawOp) -> OpId {
         | DrawOp::Participant { op, .. }
         | DrawOp::Message { op, .. }
         | DrawOp::Cells { op, .. }
-        | DrawOp::Write { op, .. } => *op,
+        | DrawOp::Write { op, .. }
+        | DrawOp::Reveal { op, .. } => *op,
     }
 }
 

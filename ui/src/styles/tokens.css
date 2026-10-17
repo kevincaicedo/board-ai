@@ -374,6 +374,71 @@
   --draw-hint-radius: 14px;
   --type-draw-hint: 13px;
   --duration-draw-preview-hold: 600ms;
+
+  /* Staged diagrams (15 · a detailed diagram revealed as it is explained, D-187). The category
+     pairs are canvas 15's frame strokes and box fills. Sizes and offsets mirror the core's
+     board::staged::metrics, which lays the parts out for exactly these. */
+  --cat-slate: #9aa3b2;
+  --cat-slate-soft: #eef0f4;
+  --cat-violet: #b565d8;
+  --cat-violet-soft: #e9ddf6;
+  --cat-blue: #4a8bd6;
+  --cat-blue-soft: #e2eefb;
+  --cat-green: #2f8f5b;
+  --cat-green-soft: #e3f5ea;
+  --diagram-frame-label: 20px;
+  --diagram-note: 13px;
+  --diagram-label: 14px;
+  --diagram-field: 11px;
+  --diagram-edge: 12px;
+  --diagram-legend: 14px;
+  --diagram-note-line: 18px;
+  --diagram-node-label-center: 16px;
+  --diagram-node-note-center: 36px;
+  --diagram-record-label-center: 16px;
+  --diagram-cells-label-above: 12px;
+  --diagram-cells-index-below: 11px;
+  --diagram-legend-swatch-width: 14px;
+  --diagram-legend-swatch-height: 10px;
+  --diagram-legend-gap: 8px;
+  --diagram-frame-radius: 14px;
+  --diagram-node-radius: 6px;
+  --diagram-field-radius: 4px;
+  --diagram-frame-width: 1.6;
+  --diagram-node-width: 1.5;
+  --diagram-field-width: 1.4;
+  --diagram-edge-width: 1.4;
+  --diagram-arrow-head: 9px;
+  --diagram-frame-dash: 7px;
+  --diagram-frame-dash-gap: 6px;
+  --diagram-swatch-dash: 3px;
+  --diagram-swatch-dash-gap: 2px;
+  /* A close-up of a dense part (Camera.enlarge) may enlarge this far past natural size. */
+  --diagram-camera-scale-max: 1.5;
+
+  /* Drill-down (15b · a detail layer anchored to a part, D-188): the card fills the board's
+     area, the board under it steps back around the part, and the header shows the path. */
+  --detail-card-side: 60px;
+  --detail-card-top: 70px;
+  --detail-card-bottom: 170px;
+  --detail-card-radius: 26px;
+  --detail-card-edge: 1.5px;
+  --detail-board-inset: 34px;
+  --shadow-detail-card: 0 30px 80px rgba(20, 20, 40, 0.12);
+  --detail-push-blur: 5px;
+  --detail-push-fade: 0.72;
+  --detail-push-shrink: 0.06;
+  --stage-header-left: 28px;
+  --stage-header-top: 22px;
+  --stage-header-gap: 8px;
+  --type-stage-header: 13px;
+  --back-out-height: 24px;
+  --back-out-padding: 10px;
+  --type-back-out: 12px;
+  --shadow-back-out: 0 6px 18px rgba(20, 20, 40, 0.08);
+  --depth-chip-height: 22px;
+  --depth-chip-padding: 8px;
+  --type-depth-chip: 11px;
 }
 
 html,

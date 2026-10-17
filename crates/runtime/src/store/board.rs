@@ -96,7 +96,8 @@ pub(crate) fn final_board(lines: impl Iterator<Item = LogLine>) -> BoardState {
             | UiEvent::DrawMode { .. }
             | UiEvent::UserShape { .. }
             | UiEvent::UserShapeRemove { .. }
-            | UiEvent::LabelHint { .. } => {}
+            | UiEvent::LabelHint { .. }
+            | UiEvent::Diagram { .. } => {}
         }
     }
     let mut events = Vec::new();
@@ -159,6 +160,7 @@ mod tests {
                 layer: LayerId(1),
                 title: "cache".into(),
                 question: None,
+                anchor: None,
             }),
             node(1, "redis"),
             ui(UiEvent::LayerPop { layer: LayerId(1) }),
@@ -167,6 +169,7 @@ mod tests {
                 layer: LayerId(2),
                 title: "open".into(),
                 question: None,
+                anchor: None,
             }),
             node(2, "queue"),
         ];
@@ -206,6 +209,7 @@ mod tests {
                     h: 100,
                 },
                 focus: None,
+                enlarge: false,
             })
         };
         let lines = vec![
@@ -216,6 +220,7 @@ mod tests {
                 layer: LayerId(1),
                 title: "closed".into(),
                 question: None,
+                anchor: None,
             }),
             camera(1, 3),
             ui(UiEvent::LayerPop { layer: LayerId(1) }),
@@ -223,6 +228,7 @@ mod tests {
                 layer: LayerId(2),
                 title: "open".into(),
                 question: Some("why?".into()),
+                anchor: None,
             }),
             camera(2, 4),
         ];

@@ -25,6 +25,28 @@ const CURVE_CLEARANCE: i32 = 6;
 /// way, then one curve bowing around every node, the nearest bow that clears them.
 #[must_use]
 pub fn edge_path(from: Rect, to: Rect, obstacles: &[Rect]) -> EdgePath {
+    route(from, to, obstacles, CURVE_LIFT, Fallback::FirstBow)
+}
+
+/// A staged diagram's connector (D-187): `edge_path` bowing `lift` units further each try (its
+/// boxes are smaller and closer than a sketch's), and when nothing clears every box, the line or
+/// bow that crosses the fewest: a map's long connectors cross a section or two, and the first bow
+/// alone ran through the boxes in their way.
+#[must_use]
+pub fn staged_edge_path(from: Rect, to: Rect, obstacles: &[Rect], lift: i32) -> EdgePath {
+    route(from, to, obstacles, lift, Fallback::FewestCrossings)
+}
+
+/// What a blocked edge does when no bow clears everything.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fallback {
+    FirstBow,
+    FewestCrossings,
+}
+
+/// Where an edge between two boxes leaves and arrives: the nearest sides, and whether it runs
+/// more across than down.
+fn ends(from: Rect, to: Rect) -> (Point, Point, bool) {
     let (a, b) = (from.center(), to.center());
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let horizontal = dx.abs() >= dy.abs();
@@ -43,6 +65,11 @@ pub fn edge_path(from: Rect, to: Rect, obstacles: &[Rect]) -> EdgePath {
         };
         (Point { x: a.x, y: start_y }, Point { x: b.x, y: end_y })
     };
+    (start, end, horizontal)
+}
+
+fn route(from: Rect, to: Rect, obstacles: &[Rect], lift: i32, fallback: Fallback) -> EdgePath {
+    let (start, end, horizontal) = ends(from, to);
     let corridor = segment_box(start, end);
     let blocked = obstacles.iter().any(|rect| rect.intersects(corridor));
     let middle = Point {
@@ -62,25 +89,39 @@ pub fn edge_path(from: Rect, to: Rect, obstacles: &[Rect]) -> EdgePath {
             }
         }
     };
-    let clears = |control: Point| {
-        obstacles.iter().all(|rect| {
-            let kept = inflate(*rect, CURVE_CLEARANCE, 0);
-            (0..CURVE_SEGMENTS).all(|segment| {
-                let from = quadratic_at(start, control, end, segment);
-                let to = quadratic_at(start, control, end, segment + 1);
-                !segment_crosses(from, to, kept)
+    let crossings = |control: Point| {
+        obstacles
+            .iter()
+            .filter(|rect| {
+                let kept = inflate(**rect, CURVE_CLEARANCE, 0);
+                (0..CURVE_SEGMENTS).any(|segment| {
+                    let from = quadratic_at(start, control, end, segment);
+                    let to = quadratic_at(start, control, end, segment + 1);
+                    segment_crosses(from, to, kept)
+                })
             })
+            .count()
+    };
+    let bows = || {
+        (0..CURVE_TRIES_MAX).map(|attempt| {
+            let side = if attempt % 2 == 0 { 1 } else { -1 };
+            bowed(side * (attempt / 2 + 1) * lift)
         })
     };
-    let control = blocked.then(|| {
-        (0..CURVE_TRIES_MAX)
-            .map(|attempt| {
-                let side = if attempt % 2 == 0 { 1 } else { -1 };
-                bowed(side * (attempt / 2 + 1) * CURVE_LIFT)
-            })
-            .find(|control| clears(*control))
-            .unwrap_or_else(|| bowed(CURVE_LIFT))
-    });
+    let control = if !blocked {
+        None
+    } else if let Some(clear) = bows().find(|control| crossings(*control) == 0) {
+        Some(clear)
+    } else {
+        match fallback {
+            Fallback::FirstBow => Some(bowed(lift)),
+            // The line itself is a candidate: its control point is its middle.
+            Fallback::FewestCrossings => {
+                let best = bows().min_by_key(|control| crossings(*control));
+                best.filter(|control| crossings(*control) < crossings(middle))
+            }
+        }
+    };
     EdgePath {
         start,
         control,

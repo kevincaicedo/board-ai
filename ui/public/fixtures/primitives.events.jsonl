@@ -1,4 +1,4 @@
-{"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":null}}
+{"v":1,"t":0,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":null,"enlarge":false}}
 {"v":1,"t":0,"k":"ui","event":{"type":"Orb","state":"Drawing","level_percent":60}}
 {"v":1,"t":300,"k":"ui","event":{"type":"Thread","steps":["Shapes","Edges","Marks","Surfaces"],"current":0,"detours":[]}}
 {"v":1,"t":900,"k":"ui","event":{"type":"OpStart","layer":0,"op":{"kind":"Node","id":"auth","op":1,"shape":"Service","label":"auth","rect":{"x":40,"y":150,"w":140,"h":76},"stack":1,"fill":"Sky","link":null},"budget_ms":1100}}
@@ -30,7 +30,7 @@
 {"v":1,"t":16700,"k":"ui","event":{"type":"Chip","kind":"Source","text":"internal/user/service.go","source":null}}
 {"v":1,"t":17200,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got","is_final":false}}
 {"v":1,"t":17399,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got it.","is_final":false}}
-{"v":1,"t":17500,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":"users"}}
+{"v":1,"t":17500,"k":"ui","event":{"type":"Camera","layer":0,"frame":{"x":48,"y":120,"w":1344,"h":630},"focus":"users","enlarge":false}}
 {"v":1,"t":17825,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got it. I'll","is_final":false}}
 {"v":1,"t":18000,"k":"ui","event":{"type":"SurfaceShow","surface":{"kind":"Code","id":3,"path":"internal/user/cache.go","first_line":12,"lines":["func ttl() time.Duration {","    return 10 * time.Minute","}"],"highlight":13}}}
 {"v":1,"t":18024,"k":"ui","event":{"type":"Caption","who":"Assistant","text":"Got it. I'll remember","is_final":false}}

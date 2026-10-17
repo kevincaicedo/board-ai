@@ -59,8 +59,16 @@ export function cardArea(card: Viewport, tokens: AreaTokens, out: FitArea): FitA
   return out;
 }
 
-/** The transform that fits `frame` inside the area, centered, keeping its aspect ratio. */
-export function fitFrame(frame: Rect, area: FitArea, out: Transform): Transform {
+/**
+ * The transform that fits `frame` inside the area, centered, keeping its aspect ratio, enlarged
+ * at most `maxScale` (the area's own unless a close-up allows more).
+ */
+export function fitFrame(
+  frame: Rect,
+  area: FitArea,
+  out: Transform,
+  maxScale = area.maxScale,
+): Transform {
   const cx = area.x + area.w / 2;
   const cy = area.y + area.h / 2;
   if (frame.w <= 0 || frame.h <= 0 || area.w <= 0 || area.h <= 0) {
@@ -69,11 +77,16 @@ export function fitFrame(frame: Rect, area: FitArea, out: Transform): Transform 
     out.y = cy - frame.y;
     return out;
   }
-  const scale = Math.min(area.maxScale, area.w / frame.w, area.h / frame.h);
+  const scale = Math.min(maxScale, area.w / frame.w, area.h / frame.h);
   out.scale = scale;
   out.x = cx - (frame.x + frame.w / 2) * scale;
   out.y = cy - (frame.y + frame.h / 2) * scale;
   return out;
+}
+
+/** How far a frame may enlarge: a close-up up to `closeUp`, any other frame to the area's cap. */
+function scaleCap(enlarge: boolean | undefined, area: FitArea, closeUp: number): number {
+  return enlarge === true ? Math.max(area.maxScale, closeUp) : area.maxScale;
 }
 
 const fromScratch: Transform = { scale: 1, x: 0, y: 0 };
@@ -81,7 +94,8 @@ const toScratch: Transform = { scale: 1, x: 0, y: 0 };
 
 /**
  * The view at `at`: identity with no frame, else easing from the previous frame (or from identity,
- * for a first frame over shapes you drew) to the new one.
+ * for a first frame over shapes you drew) to the new one. A close-up of a staged diagram's dense
+ * part (`enlarge`) may grow up to `closeUpScaleMax`, past the area's natural-size cap.
  */
 export function cameraAt(
   camera: Camera,
@@ -89,6 +103,7 @@ export function cameraAt(
   area: FitArea,
   durationMs: number,
   out: Transform,
+  closeUpScaleMax = area.maxScale,
 ): Transform {
   if (camera.frame === null) {
     out.scale = 1;
@@ -96,7 +111,7 @@ export function cameraAt(
     out.y = 0;
     return out;
   }
-  fitFrame(camera.frame, area, toScratch);
+  fitFrame(camera.frame, area, toScratch, scaleCap(camera.enlarge, area, closeUpScaleMax));
   if (camera.previous === null && camera.fromIdentity !== true) {
     out.scale = toScratch.scale;
     out.x = toScratch.x;
@@ -109,7 +124,12 @@ export function cameraAt(
     fromScratch.x = 0;
     fromScratch.y = 0;
   } else {
-    fitFrame(camera.previous, area, fromScratch);
+    fitFrame(
+      camera.previous,
+      area,
+      fromScratch,
+      scaleCap(camera.previousEnlarge, area, closeUpScaleMax),
+    );
   }
   const f = easeOut(ramp(at, camera.at, camera.at + durationMs));
   out.scale = lerp(fromScratch.scale, toScratch.scale, f);

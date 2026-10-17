@@ -248,3 +248,86 @@ export function ellipsePolygon(
   }
   return points;
 }
+
+/** Points along a quarter (or any) arc of a rounded corner, from `start` sweeping `span`. */
+function arcPoints(
+  cx: number,
+  cy: number,
+  radius: number,
+  start: number,
+  span: number,
+  out: Vec[],
+): void {
+  const steps = Math.max(3, Math.round((radius * Math.abs(span)) / 4));
+  for (let index = 1; index <= steps; index += 1) {
+    const angle = start + (span * index) / steps;
+    out.push([cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius]);
+  }
+}
+
+/**
+ * A rounded rectangle drawn in one stroke, clockwise from the top-left corner's end: four rough
+ * sides joined by their corners, closing a little past where it began, as a hand does. `radius`
+ * of half the height or more gives a pill. Legs turn at each corner, so the pen slows into them.
+ */
+export function roughRoundedRect(
+  random: Random,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): { readonly points: Vec[]; readonly legs: number[] } {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  const points: Vec[] = [];
+  const legs: number[] = [0];
+  const side = (x1: number, y1: number, x2: number, y2: number): void => {
+    const line = roughLine(random, x1, y1, x2, y2, { overshoot: 0.6 });
+    points.push(...(points.length === 0 ? line : line.slice(1)));
+    legs.push(points.length - 1);
+  };
+  const corner = (cx: number, cy: number, start: number): void => {
+    if (r > 0) {
+      arcPoints(cx, cy, r, start, Math.PI / 2, points);
+    }
+  };
+  side(x + r, y, x + w - r, y);
+  corner(x + w - r, y + r, -Math.PI / 2);
+  side(x + w, y + r, x + w, y + h - r);
+  corner(x + w - r, y + h - r, 0);
+  side(x + w - r, y + h, x + r, y + h);
+  corner(x + r, y + h - r, Math.PI / 2);
+  side(x, y + h - r, x, y + r);
+  corner(x + r, y + r, Math.PI);
+  // The pen runs a little past the start, so the outline closes like a hand's.
+  const overlap = Math.min(8, Math.max(2, (w - 2 * r) * 0.08));
+  points.push([x + r + overlap, y + (random() - 0.5) * 0.8]);
+  legs.push(points.length - 1);
+  return { points, legs };
+}
+
+/** A rounded rectangle's outline as a polygon, for its fill. */
+export function roundedRectPolygon(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+): Vec[] {
+  const r = Math.max(0, Math.min(radius, w / 2, h / 2));
+  const points: Vec[] = [[x + r, y]];
+  const corner = (cx: number, cy: number, start: number): void => {
+    if (r > 0) {
+      arcPoints(cx, cy, r, start, Math.PI / 2, points);
+    }
+  };
+  points.push([x + w - r, y]);
+  corner(x + w - r, y + r, -Math.PI / 2);
+  points.push([x + w, y + h - r]);
+  corner(x + w - r, y + h - r, 0);
+  points.push([x + r, y + h]);
+  corner(x + r, y + h - r, Math.PI / 2);
+  points.push([x, y + r]);
+  corner(x + r, y + r, Math.PI);
+  return points;
+}

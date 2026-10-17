@@ -56,6 +56,7 @@ async fn load_balancing_session(store: &Store) -> String {
             layer: detour,
             title: "readiness".into(),
             question: None,
+            anchor: None,
         }],
     );
     store.log_ui(at(1_100), vec![node(1, "probe", "Readiness probe")]);

@@ -97,7 +97,7 @@ impl Core {
 
     /// Closes the open detours, then turns the page when there is drawing to turn away from.
     /// The old topic's plan and cards go either way, unless the session is out of pages.
-    fn turn_page(
+    pub(super) fn turn_page(
         &mut self,
         title: Option<String>,
         effects: &mut Vec<Effect>,

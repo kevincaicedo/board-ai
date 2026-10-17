@@ -6,6 +6,7 @@ import {
   makeHatch,
   makeStroke,
   makeText,
+  maskRegion,
   pointAtLength,
   revealLength,
   revealLengthStepped,
@@ -94,4 +95,43 @@ test("handwriting writes letter by letter, never splitting a letter", () => {
 test("the pen's travel costs a beat plus distance", () => {
   assert.equal(travelMs([0, 0], [0, 0]), 30);
   assert.equal(travelMs([0, 0], [2600, 0]), 1030);
+});
+
+test("a dashed stroke's mask covers the whole stroke, however far from the origin it reaches", () => {
+  // A frame's bottom side far below the viewport (world y ≈ 1092 under a scaled-down camera) was
+  // clipped by the mask's default region of -10%…120% of the viewport.
+  const far = makeStroke(
+    [
+      [22, 14],
+      [1418, 14],
+      [1418, 1092],
+      [22, 1092],
+    ],
+    "slate",
+    1.6,
+    { dashed: true },
+  );
+  const region = maskRegion(far, 6);
+  assert.deepEqual(region, { x: 16, y: 8, w: 1408, h: 1090 });
+  assert.ok(region.y + region.h >= 1092 + 6 && region.x <= 22 - 6);
+  // Fractional points round outward.
+  assert.deepEqual(
+    maskRegion(
+      makeStroke(
+        [
+          [0.5, 0.5],
+          [9.5, 2.25],
+        ],
+        "ink",
+        1,
+      ),
+      1,
+    ),
+    {
+      x: -1,
+      y: -1,
+      w: 12,
+      h: 5,
+    },
+  );
 });

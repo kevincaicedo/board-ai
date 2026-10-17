@@ -2,6 +2,7 @@
 //! narration boundary; the board, thread and surfaces only ever see typed ops.
 
 use crate::ids::ElementId;
+use crate::narration::diagram::DiagramSpec;
 use crate::protocol::{CellMark, Fill, LineStyle, Mark, NodeShape};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +114,24 @@ pub enum NarrationOp {
     Page {
         title: Option<String>,
     },
+    /// A staged diagram (D-187): laid out whole on the layer when its words play, drawn by
+    /// later reveals. Nothing of it is drawn yet.
+    Diagram(Box<DiagramSpec>),
+    /// Draws a staged part when its words play: a container's frame and label, or with `deep`
+    /// everything inside it too; the parts it sits in come first, and connectors once both
+    /// their ends are drawn.
+    Reveal {
+        target: ElementId,
+        deep: bool,
+    },
+    /// Opens a detail layer anchored to `of` (D-188): the camera moves into it and the layer
+    /// fills the board's area, with the diagram it holds staged on it. `title` is the layer's
+    /// name in the breadcrumbs; without one it is named after what it drills into.
+    Detail {
+        of: ElementId,
+        title: Option<String>,
+        spec: Option<Box<DiagramSpec>>,
+    },
 }
 
 /// What a `cells` tag asks for.
@@ -152,7 +171,8 @@ impl NarrationOp {
             | Self::Participant { .. }
             | Self::Message { .. }
             | Self::Cells(_)
-            | Self::Write { .. } => true,
+            | Self::Write { .. }
+            | Self::Reveal { .. } => true,
             Self::Cite { .. }
             | Self::Plan { .. }
             | Self::Step { .. }
@@ -166,7 +186,9 @@ impl NarrationOp {
             | Self::Close { .. }
             | Self::MarkCode { .. }
             | Self::Recap { .. }
-            | Self::Page { .. } => false,
+            | Self::Page { .. }
+            | Self::Diagram(_)
+            | Self::Detail { .. } => false,
         }
     }
 }

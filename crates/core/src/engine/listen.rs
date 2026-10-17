@@ -15,6 +15,11 @@ use crate::narration::tags::bounded;
 use crate::protocol::{MicAction, PointerTarget, Speaker, UiEvent};
 use crate::time::SessionTime;
 
+/// What a request for a detailed map carries (D-187): a reminder to stage it, which the prompt
+/// alone didn't always get across.
+const STAGE_HINT: &str = "[BoardAI: this asks for a detailed map: say one short sentence, then \
+     stage it in one <diagram> block and <reveal> its parts as you explain them.]";
+
 /// The user's message for the turn being answered. It enters the history right before the first
 /// assistant content of the turn, so words added before anything was heard can still join it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -405,11 +410,16 @@ impl Core {
             self.user.context = std::mem::take(context);
             return true;
         }
-        let answered = self.joined_controls(said, effects)
+        let answered = self.joined_controls(now, said, effects)
             || self.memory_control(said, effects)
             || self.open_settings_by_voice(said, effects)
             || self.end_session_by_voice(said, effects)
-            || self.page_by_voice(said, context, effects);
+            || self.page_by_voice(said, context, effects)
+            || self.back_out_by_voice(now, said, effects);
+        if !answered {
+            // A drill-down opens its detail layer here; the talker fills it (D-188).
+            self.detail_by_voice(said, effects);
+        }
         if !answered {
             return false;
         }
@@ -470,6 +480,9 @@ impl Core {
         // A finished drawing may come with no words at all.
         if !text.trim().is_empty() {
             lines.push(text.to_owned());
+        }
+        if crate::conversation::draw_cues::asks_for_map(text) {
+            lines.push(STAGE_HINT.to_owned());
         }
         if let Some(pointer) = self.describe_pointer() {
             lines.push(pointer);

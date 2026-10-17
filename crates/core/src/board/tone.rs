@@ -43,7 +43,7 @@ impl Tones {
             NodeShape::Actor | NodeShape::Group | NodeShape::Note => return None,
             // Tree nodes and states are plain ink unless the talker gives a tone: a tone per
             // subject would make every node of a tree a different color.
-            NodeShape::Circle => return chosen,
+            NodeShape::Circle | NodeShape::Pill => return chosen,
             NodeShape::Db | NodeShape::Queue | NodeShape::Service => {}
         }
         if let Some(chosen) = chosen {
@@ -57,7 +57,8 @@ impl Tones {
             | NodeShape::Actor
             | NodeShape::Group
             | NodeShape::Note
-            | NodeShape::Circle => {}
+            | NodeShape::Circle
+            | NodeShape::Pill => {}
         }
         if let Some(known) = self.by_subject.get(&subject) {
             return Some(*known);

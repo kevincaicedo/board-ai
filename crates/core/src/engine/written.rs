@@ -74,7 +74,7 @@ pub(super) fn written_calls(text: &str) -> WrittenCalls {
     for piece in pieces {
         let call = match piece {
             Piece::Dropped(text) => tool_tag(text),
-            Piece::Text(_) | Piece::Tag(_) => None,
+            Piece::Text(_) | Piece::Tag(_) | Piece::Close(_) => None,
         };
         let Some(call) = call else {
             continue;

@@ -15,7 +15,7 @@ use crate::geometry::Rect;
 use crate::ids::{ClauseId, ElementId, LayerId, OpId};
 use crate::limits::{OP_BUDGET_MAX_MS, OP_BUDGET_MIN_MS, OP_SPACING_MIN_MS};
 use crate::narration::ops::{NarrationOp, Placement};
-use crate::protocol::{DrawOp, LineStyle, NodeShape, UiEvent};
+use crate::protocol::{DetailAnchor, DrawOp, LineStyle, NodeShape, UiEvent};
 use crate::surfaces::SurfaceRefused;
 use crate::thread::Detour;
 use crate::time::SessionTime;
@@ -30,11 +30,11 @@ pub(super) enum Anchor {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct QueuedOp {
-    id: OpId,
-    op: NarrationOp,
-    anchor: Anchor,
+    pub(super) id: OpId,
+    pub(super) op: NarrationOp,
+    pub(super) anchor: Anchor,
     /// Laid out (the element is `Pending`) while it waits for its drawing slot.
-    placed: Option<(LayerId, Placed)>,
+    pub(super) placed: Option<(LayerId, Placed)>,
 }
 
 impl QueuedOp {
@@ -62,6 +62,16 @@ impl OpQueue {
         self.ops.push_back(op);
     }
 
+    /// Puts `op` next in line.
+    pub(super) fn push_front(&mut self, op: QueuedOp) {
+        self.ops.push_front(op);
+    }
+
+    /// The ops waiting, in order.
+    pub(super) fn ops(&self) -> impl Iterator<Item = &QueuedOp> {
+        self.ops.iter()
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }
@@ -72,7 +82,7 @@ impl OpQueue {
         self.ops
             .iter()
             .fold(depth, |depth, queued| match queued.op {
-                NarrationOp::Detour { .. } => depth + 1,
+                NarrationOp::Detour { .. } | NarrationOp::Detail { .. } => depth + 1,
                 NarrationOp::Resume => depth.saturating_sub(1),
                 NarrationOp::Page { .. } => 0,
                 NarrationOp::Plan { .. }
@@ -94,7 +104,9 @@ impl OpQueue {
                 | NarrationOp::Message { .. }
                 | NarrationOp::Cells(_)
                 | NarrationOp::Write { .. }
-                | NarrationOp::Cite { .. } => depth,
+                | NarrationOp::Cite { .. }
+                | NarrationOp::Diagram(_)
+                | NarrationOp::Reveal { .. } => depth,
             })
     }
 }
@@ -208,27 +220,12 @@ impl Core {
     /// Lays a drawing op out on the active layer.
     fn place(&mut self, queued: &QueuedOp) -> Result<(LayerId, Placed), Rejected> {
         let layer = self.thread.active_layer();
+        // A reveal, or a drawing tag naming a staged part (D-187), draws staged parts.
+        if let Some(placed) = self.place_staged(layer, queued) {
+            return placed.map(|placed| (layer, placed));
+        }
         let placed = match &queued.op {
-            NarrationOp::Node {
-                id,
-                label,
-                shape,
-                placement,
-                stack,
-                fill,
-            } => {
-                let (label, shape) = self.checked_label(label, *shape);
-                let shape = self.group_or_box(id, shape);
-                let node = NodeRequest {
-                    id,
-                    label: &label,
-                    shape,
-                    placement,
-                    stack: *stack,
-                    fill: *fill,
-                };
-                self.board.place_node(layer, queued.id, node)?
-            }
+            NarrationOp::Node { .. } => self.place_node_op(layer, queued)?,
             NarrationOp::Edge {
                 from,
                 to,
@@ -274,9 +271,37 @@ impl Core {
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
             | NarrationOp::Recap { .. }
-            | NarrationOp::Page { .. } => Placed::Unchanged,
+            | NarrationOp::Page { .. }
+            | NarrationOp::Diagram(_)
+            | NarrationOp::Reveal { .. }
+            | NarrationOp::Detail { .. } => Placed::Unchanged,
         };
         Ok((layer, placed))
+    }
+
+    fn place_node_op(&mut self, layer: LayerId, queued: &QueuedOp) -> Result<Placed, Rejected> {
+        let NarrationOp::Node {
+            id,
+            label,
+            shape,
+            placement,
+            stack,
+            fill,
+        } = &queued.op
+        else {
+            return Ok(Placed::Unchanged);
+        };
+        let (label, shape) = self.checked_label(label, *shape);
+        let shape = self.group_or_box(id, shape);
+        let node = NodeRequest {
+            id,
+            label: &label,
+            shape,
+            placement,
+            stack: *stack,
+            fill: *fill,
+        };
+        self.board.place_node(layer, queued.id, node)
     }
 
     /// A group no queued op of the reply places a member in is drawn as a box (D-181): models
@@ -311,7 +336,10 @@ impl Core {
                 | NarrationOp::Message { .. }
                 | NarrationOp::Write { .. }
                 | NarrationOp::Cite { .. }
-                | NarrationOp::Page { .. } => return false,
+                | NarrationOp::Page { .. }
+                | NarrationOp::Diagram(_)
+                | NarrationOp::Reveal { .. }
+                | NarrationOp::Detail { .. } => return false,
             };
             matches!(placement, Placement::Inside { group, .. } if group == id)
         });
@@ -359,7 +387,10 @@ impl Core {
             | NarrationOp::Close { .. }
             | NarrationOp::MarkCode { .. }
             | NarrationOp::Recap { .. }
-            | NarrationOp::Page { .. } => Ok(Placed::Unchanged),
+            | NarrationOp::Page { .. }
+            | NarrationOp::Diagram(_)
+            | NarrationOp::Reveal { .. }
+            | NarrationOp::Detail { .. } => Ok(Placed::Unchanged),
         }
     }
 
@@ -367,8 +398,19 @@ impl Core {
         let Some((layer, placed)) = queued.placed.clone() else {
             return;
         };
-        let budget_ms = self.budget(now, &queued);
+        let budget_ms = match placed {
+            Placed::Reveal(_) => self.reveal_budget(now),
+            Placed::New { .. }
+            | Placed::Strike { .. }
+            | Placed::Write { .. }
+            | Placed::Before { .. }
+            | Placed::ResumeFrozen
+            | Placed::Unchanged => self.budget(now, &queued),
+        };
         match placed {
+            Placed::Reveal(reveal) => {
+                self.start_reveal(now, layer, queued.id, &reveal, budget_ms, effects)
+            }
             Placed::New { id, draw } => {
                 let growth = self.board.start(layer, &id, now, budget_ms);
                 let stroke = growth
@@ -416,7 +458,7 @@ impl Core {
             .max(now.plus_ms(u64::from(OP_SPACING_MIN_MS)));
     }
 
-    fn op_start(
+    pub(super) fn op_start(
         &mut self,
         now: SessionTime,
         layer: LayerId,
@@ -547,6 +589,10 @@ impl Core {
                 true
             }
             NarrationOp::Page { title } => self.page_by_tag(title.as_deref(), effects),
+            NarrationOp::Diagram(spec) => self.stage_diagram(queued.id, spec, effects),
+            NarrationOp::Detail { of, title, spec } => {
+                self.open_detail(queued.id, of, title.as_deref(), spec.as_deref(), effects)
+            }
             NarrationOp::Node { .. }
             | NarrationOp::Edge { .. }
             | NarrationOp::Annotate { .. }
@@ -555,7 +601,8 @@ impl Core {
             | NarrationOp::Participant { .. }
             | NarrationOp::Message { .. }
             | NarrationOp::Cells(_)
-            | NarrationOp::Write { .. } => false,
+            | NarrationOp::Write { .. }
+            | NarrationOp::Reveal { .. } => false,
         };
         effects.extend(events.into_iter().map(Effect::Ui));
         if applied {
@@ -628,7 +675,10 @@ impl Core {
             | NarrationOp::Cells(_)
             | NarrationOp::Write { .. }
             | NarrationOp::Cite { .. }
-            | NarrationOp::Page { .. } => false,
+            | NarrationOp::Page { .. }
+            | NarrationOp::Diagram(_)
+            | NarrationOp::Reveal { .. }
+            | NarrationOp::Detail { .. } => false,
         }
     }
 
@@ -665,6 +715,22 @@ impl Core {
         events: &mut Vec<UiEvent>,
         effects: &mut Vec<Effect>,
     ) -> bool {
+        if self.absorbs_detour() {
+            return true;
+        }
+        self.push_detour_layer(title, None, events, effects)
+            .is_some()
+    }
+
+    /// Opens a detour layer, or a detail layer anchored to `anchor` (D-188); `None` when the
+    /// session has no layer left or the thread is as deep as it goes (I4).
+    pub(super) fn push_detour_layer(
+        &mut self,
+        title: &str,
+        anchor: Option<DetailAnchor>,
+        events: &mut Vec<UiEvent>,
+        effects: &mut Vec<Effect>,
+    ) -> Option<LayerId> {
         let refused = || {
             Effect::Log(LogRecord::Dropped {
                 what: Dropped::Detour,
@@ -673,24 +739,26 @@ impl Core {
         };
         let Some(layer) = self.board.push_layer(title) else {
             effects.push(refused());
-            return false;
+            return None;
         };
         let detour = Detour {
             title: title.to_owned(),
             layer,
+            anchor: anchor.clone(),
         };
         if self.thread.push_detour(detour).is_err() {
             self.board.close_layer(layer);
             effects.push(refused());
-            return false;
+            return None;
         }
         events.push(UiEvent::LayerPush {
             layer,
             title: title.to_owned(),
             question: self.turn_question.clone(),
+            anchor,
         });
         events.push(self.thread.event());
-        true
+        Some(layer)
     }
 
     pub(super) fn close_detour(&mut self, events: &mut Vec<UiEvent>) {

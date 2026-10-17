@@ -15,6 +15,7 @@ fn tag(name: &str, attributes: &[(&str, &str)]) -> RawTag {
             .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
             .collect(),
         written: String::new(),
+        self_closing: true,
     }
 }
 
@@ -51,11 +52,18 @@ fn a_minimal_valid_form_of_every_tag_parses() {
         ("cells", &[("id", "arr"), ("count", "4")]),
         ("write", &[("target", "arr.0"), ("text", "7")]),
         ("page", &[]),
+        // A staged diagram's block and its parts are read by the stream (D-187), never alone.
+        ("diagram", &[("title", "inf-alloc")]),
+        ("reveal", &[("id", "arena")]),
+        ("detail", &[("of", "arena")]),
+        ("record", &[("id", "arena_s"), ("fields", "cfg|live")]),
+        ("note", &[("text", "shaded = live")]),
     ];
     assert_eq!(minimal.len(), TAG_NAMES.len());
     for ((name, attributes), expected) in minimal.iter().zip(TAG_NAMES) {
         assert_eq!(name, expected, "the table follows TAG_NAMES");
-        assert!(to_op(&tag(name, attributes)).is_ok(), "{name}");
+        let block_only = matches!(*name, "diagram" | "record" | "note");
+        assert_eq!(to_op(&tag(name, attributes)).is_ok(), !block_only, "{name}");
     }
 }
 
@@ -129,7 +137,9 @@ fn unknown_optional_values_fall_back_to_their_defaults() {
     assert_eq!(shape("browser"), Some(NodeShape::Actor));
     assert_eq!(shape("cluster"), Some(NodeShape::Group));
     assert_eq!(shape("spaceship"), Some(NodeShape::Service));
-    assert_eq!(shape("State"), Some(NodeShape::Circle));
+    assert_eq!(shape("oval"), Some(NodeShape::Circle));
+    assert_eq!(shape("State"), Some(NodeShape::Pill));
+    assert_eq!(shape("pill"), Some(NodeShape::Pill));
     let unparsable = to_op(&tag(
         "node",
         &[("id", "a"), ("near", "crates/app"), ("parent", "not an id")],

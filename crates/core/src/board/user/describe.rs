@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use crate::board::{Element, ElementKind, ElementState, Geometry, Layer, UserMark};
+use crate::board::{Element, ElementKind, Geometry, Layer, UserMark};
 use crate::geometry::Point;
 use crate::ids::ElementId;
 use crate::limits::DRAWING_DESCRIPTION_MAX_BYTES;
@@ -71,7 +71,7 @@ fn shapes_of(layer: &Layer) -> Vec<&Element> {
     layer
         .elements()
         .iter()
-        .filter(|element| element.state != ElementState::Pending)
+        .filter(|element| element.state.is_shown())
         .filter(|element| {
             matches!(
                 element.kind,
@@ -89,7 +89,7 @@ fn arrows_of(layer: &Layer) -> Vec<Arrow<'_>> {
     layer
         .elements()
         .iter()
-        .filter(|element| element.state != ElementState::Pending)
+        .filter(|element| element.state.is_shown())
         .filter_map(|element| match &element.kind {
             ElementKind::User {
                 mark: UserMark::Arrow { from, to },
@@ -223,7 +223,7 @@ fn place(layer: &Layer, shape: &Element) -> Option<String> {
     let nearest = layer
         .elements()
         .iter()
-        .filter(|other| other.id != shape.id && other.state != ElementState::Pending)
+        .filter(|other| other.id != shape.id && other.state.is_shown())
         .filter(|other| is_landmark(other))
         .min_by_key(|other| distance(other.geometry.bounds().center()))?;
     let other = nearest.geometry.bounds().center();

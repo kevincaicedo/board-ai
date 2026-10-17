@@ -11,9 +11,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::board::staged::metrics::part_area;
 use crate::geometry::Rect;
 use crate::ids::{ElementId, LayerId};
-use crate::protocol::{DrawOp, NodeShape, UiEvent, UserShapeKind};
+use crate::protocol::{DrawOp, NodeShape, StagedPart, UiEvent, UserShapeKind};
 use crate::time::SessionTime;
 
 #[derive(Clone, Debug, Default)]
@@ -95,7 +96,8 @@ impl Yours {
             | UiEvent::ViewDismiss
             | UiEvent::OpenSettings
             | UiEvent::SessionEnd
-            | UiEvent::LabelHint { .. } => {}
+            | UiEvent::LabelHint { .. }
+            | UiEvent::Diagram { .. } => {}
         }
     }
 
@@ -117,7 +119,34 @@ impl Yours {
                     .contains_key(&(layer, target.clone()))
                     .then(|| format!("I6: BoardAI rewrote the user's {}", target.as_str()));
             }
+            // A staged diagram's parts each count; its frames and connectors may cross.
+            DrawOp::Reveal { parts, .. } => {
+                return parts
+                    .iter()
+                    .find_map(|part| self.part_over_yours(layer, part));
+            }
         };
+        self.solid_over_yours(layer, id, area)
+    }
+
+    fn part_over_yours(&self, layer: LayerId, part: &StagedPart) -> Option<String> {
+        let area = match part {
+            StagedPart::Frame { .. } | StagedPart::Edge { .. } => None,
+            StagedPart::Node { .. }
+            | StagedPart::Note { .. }
+            | StagedPart::Record { .. }
+            | StagedPart::Cells { .. }
+            | StagedPart::Legend { .. } => Some(part_area(part)),
+        };
+        self.solid_over_yours(layer, part.id(), area)
+    }
+
+    fn solid_over_yours(
+        &self,
+        layer: LayerId,
+        id: &ElementId,
+        area: Option<Rect>,
+    ) -> Option<String> {
         if self.shapes.contains_key(&(layer, id.clone())) {
             return Some(format!("I6: BoardAI redrew the user's {}", id.as_str()));
         }
@@ -258,6 +287,67 @@ mod tests {
             },
             budget_ms: 500,
         }
+    }
+
+    /// A staged diagram's reveal (D-187): a solid part over the user's box is caught; a frame
+    /// around it and a connector across it are not.
+    #[test]
+    fn a_revealed_part_over_your_box_is_caught_and_frames_may_cross() {
+        use crate::protocol::{StagedPart, TextAt};
+        let now = SessionTime::from_ms(1);
+        let mut violations = Vec::new();
+        let mut yours = Yours::default();
+        yours.on_ui(now, &boxed("u1", 0), false, &mut violations);
+        let rect = |x: i32| Rect {
+            x,
+            y: 10,
+            w: 60,
+            h: 30,
+        };
+        let frame = StagedPart::Frame {
+            id: id("f"),
+            rect: Rect {
+                x: -20,
+                y: -20,
+                w: 400,
+                h: 200,
+            },
+            label: TextAt {
+                text: "F".into(),
+                at: Point { x: 0, y: 0 },
+            },
+            note: None,
+            category: None,
+            dashed: true,
+        };
+        let part = |x: i32| StagedPart::Node {
+            id: id("p"),
+            shape: NodeShape::Pill,
+            rect: rect(x),
+            label: "p".into(),
+            note: None,
+            step: None,
+            category: None,
+            dashed: false,
+        };
+        let reveal = |parts: Vec<StagedPart>| UiEvent::OpStart {
+            layer: LayerId::MAIN,
+            op: DrawOp::Reveal {
+                id: id("r:1"),
+                op: OpId(1),
+                parts,
+            },
+            budget_ms: 500,
+        };
+        yours.on_ui(
+            now,
+            &reveal(vec![frame.clone(), part(300)]),
+            false,
+            &mut violations,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        yours.on_ui(now, &reveal(vec![frame, part(20)]), false, &mut violations);
+        assert_eq!(violations.len(), 1, "{violations:?}");
     }
 
     /// The planted violations: each turns the check red.

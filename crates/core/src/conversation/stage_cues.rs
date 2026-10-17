@@ -225,7 +225,7 @@ pub enum MainBoardCue {
     Continue,
 }
 
-fn made_of_stage(text: &str, table: &[&str]) -> bool {
+pub(super) fn made_of_stage(text: &str, table: &[&str]) -> bool {
     let fillers: Vec<&str> = CONTROL_FILLERS
         .iter()
         .chain(STAGE_FILLERS)
@@ -254,13 +254,14 @@ pub fn page_cue(text: &str) -> Option<PageCue> {
         return Some(PageCue::Only);
     }
     let tokens = tokens(text);
-    (leads_request(&tokens) || ends_request(&tokens)).then_some(PageCue::WithRequest)
+    (leads_request(&tokens, PAGE_PHRASES) || ends_request(&tokens, PAGE_PHRASES))
+        .then_some(PageCue::WithRequest)
 }
 
 /// A word of the utterance, and whether a comma or another mark closed it.
-type Token = (String, bool);
+pub(super) type Token = (String, bool);
 
-fn tokens(text: &str) -> Vec<Token> {
+pub(super) fn tokens(text: &str) -> Vec<Token> {
     text.split_whitespace()
         .filter_map(|raw| {
             let word = words(raw).into_iter().next()?;
@@ -279,9 +280,9 @@ fn page_fillers() -> Vec<&'static str> {
         .collect()
 }
 
-/// The longest page phrase starting at `index`, as a word count.
-fn page_phrase_at(tokens: &[Token], index: usize) -> Option<usize> {
-    PAGE_PHRASES
+/// The longest phrase of `table` starting at `index`, as a word count.
+pub(super) fn phrase_at(tokens: &[Token], index: usize, table: &[&str]) -> Option<usize> {
+    table
         .iter()
         .filter(|phrase| {
             phrase.split(' ').enumerate().all(|(offset, part)| {
@@ -294,15 +295,15 @@ fn page_phrase_at(tokens: &[Token], index: usize) -> Option<usize> {
         .max()
 }
 
-/// "Clear the board and explain DNS": fillers, a page phrase, then a joiner or a mark, then
-/// the request.
-fn leads_request(tokens: &[Token]) -> bool {
+/// "Clear the board and explain DNS": fillers, a phrase of `table` (a page cue's, or "back
+/// out"), then a joiner or a mark, then the request.
+pub(super) fn leads_request(tokens: &[Token], table: &[&str]) -> bool {
     let fillers = page_fillers();
     // Fillers may stand before the phrase, and a phrase may start with one ("clear").
     let Some((start, length)) = tokens
         .iter()
         .enumerate()
-        .map(|(index, (word, _))| (index, word, page_phrase_at(tokens, index)))
+        .map(|(index, (word, _))| (index, word, phrase_at(tokens, index, table)))
         .take_while(|(_, word, phrase)| phrase.is_some() || fillers.contains(&word.as_str()))
         .find_map(|(index, _, phrase)| Some((index, phrase?)))
     else {
@@ -323,8 +324,8 @@ fn leads_request(tokens: &[Token]) -> bool {
 }
 
 /// "Explain DNS on a fresh page", "explain DNS, but clear the board first": the request, a
-/// joiner or a mark, then a page phrase and nothing but fillers.
-fn ends_request(tokens: &[Token]) -> bool {
+/// joiner or a mark, then a phrase of `table` and nothing but fillers.
+pub(super) fn ends_request(tokens: &[Token], table: &[&str]) -> bool {
     let fillers = page_fillers();
     let tail = |word: &str| fillers.contains(&word) || matches!(word, "first" | "please");
     let end = tokens
@@ -332,7 +333,7 @@ fn ends_request(tokens: &[Token]) -> bool {
         .rposition(|(word, _)| !tail(word))
         .map_or(0, |last| last + 1);
     (1..end).any(|start| {
-        page_phrase_at(tokens, start).is_some_and(|length| start + length == end)
+        phrase_at(tokens, start, table).is_some_and(|length| start + length == end)
             && tokens
                 .get(start - 1)
                 .is_some_and(|(word, marked)| *marked || PAGE_JOINERS.contains(&word.as_str()))

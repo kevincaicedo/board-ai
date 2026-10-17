@@ -1,0 +1,76 @@
+Here is how inf-alloc hands out memory.
+<diagram id="alloc" title="inf-alloc · memory allocation">
+<node id="arena" kind="group" label="Arena" note="slab allocation · RAM records" cat="RAM records" style="dashed"/>
+<note id="addr_note" in="arena" text="ArenaAddr · 64 bit"/>
+<record id="addr" label="ArenaAddr" fields="chunk index · 27 bit|offset · 21 bit|tag · 16 bit" in="arena"/>
+<note in="arena" text="size classes: powers of two, 64 KiB to 2 MiB"/>
+<cells id="classes" values="64K|128K|256K|512K|1M|2M" index="none" in="arena"/>
+<cells id="chunk" values="r1|r2||r3|||r4|" label="one chunk, one class" in="arena"/>
+<note in="arena" text="exactly one size per chunk; filled slots are live records"/>
+<node id="alloc_in" label="alloc(size)" kind="pill" in="arena"/>
+<node id="class" label="class index" in="arena"/>
+<node id="slot" label="slot" in="arena"/>
+<edge from="alloc_in" to="class" label="round up"/>
+<edge from="class" to="slot" label="pop"/>
+<node id="big" label="over threshold" note="its own region" in="arena" dir="below"/>
+<edge from="alloc_in" to="big" style="dashed"/>
+<note in="arena" text="res_bytes reserved, not committed"/>
+<cells id="freelist" values="1|3|5|7||" label="free list of the chunk" index="none" in="arena"/>
+<record id="arena_s" label="struct Arena" fields="cfg|threshold|classes|chunks|free|live" in="arena"/>
+<node id="pool" kind="group" label="AlignedPool · AlignedBox" note="disk I/O buffers, 4 KiB aligned" cat="disk I/O" style="dashed"/>
+<note in="pool" text="base is 4096-aligned; every buffer is a multiple of 4096"/>
+<cells id="pages" values="4K|4K|4K|4K|4K|4K" label="one buffer, page by page" in="pool"/>
+<cells id="leases" values="leased|leased|free|leased|free|free" label="leases" in="pool"/>
+<node id="lease" label="lease()" kind="pill" in="pool"/>
+<node id="io" label="pread(fd, buf, off)" in="pool"/>
+<node id="give" label="give back" in="pool"/>
+<edge from="lease" to="io" label="free page"/>
+<edge from="io" to="give"/>
+<note in="pool" text="reads and writes move whole 4 KiB pages"/>
+<cells id="pool_free" values="2|4|5" label="free list" in="pool"/>
+<node id="sync" label="fsync" in="pool" dir="below"/>
+<edge from="give" to="sync" style="dashed"/>
+<record id="pool_s" label="struct AlignedPool" fields="*base|buf_size|free|leased" in="pool"/>
+<record id="box_s" label="AlignedBox" fields="*ptr|len" in="pool"/>
+<node id="slots" kind="group" label="SlotState · Buffer pool" note="network buffers" cat="network" style="dashed"/>
+<node id="free" label="Free" kind="pill" in="slots"/>
+<node id="leased" label="Leased(kind)" kind="pill" in="slots"/>
+<node id="staged" label="Staged" kind="pill" in="slots"/>
+<node id="inflight" label="InFlight" kind="pill" in="slots" dir="below"/>
+<node id="done" label="Done" kind="pill" in="slots"/>
+<edge from="free" to="leased" label="try lease"/>
+<edge from="leased" to="staged" label="try stage"/>
+<edge from="staged" to="inflight" label="submit"/>
+<edge from="inflight" to="done" label="complete"/>
+<edge from="done" to="free" label="release" style="dashed"/>
+<note in="slots" text="a slot only moves forward; release returns it to Free"/>
+<node id="ring" kind="group" label="io_uring" in="slots" style="dashed"/>
+<node id="sq" label="SQ" kind="queue" in="ring"/>
+<node id="cq" label="CQ" kind="queue" in="ring"/>
+<node id="batch" label="submit batch" in="ring" dir="below"/>
+<edge from="sq" to="cq" label="kernel"/>
+<edge from="batch" to="sq"/>
+<record id="ring_s" label="struct Ring" fields="sq_head|sq_tail|cq_head|cq_tail" in="ring"/>
+<cells id="table" values="0|1|2|3|4|5|6|7" label="slot table" in="slots"/>
+<record id="slot_s" label="struct Slot" fields="state|buf|len|gen" in="slots"/>
+<node id="region" kind="group" label="Region" note="tiered RAM" cat="tiered RAM" style="dashed"/>
+<note in="region" text="pages reserved up front, committed on first touch"/>
+<node id="hot" kind="group" label="hot tier" in="region"/>
+<node id="warm" kind="group" label="warm tier" in="region"/>
+<node id="dram" label="DRAM" kind="db" in="hot"/>
+<note in="hot" text="huge pages"/>
+<node id="cxl" label="CXL memory" kind="db" in="warm"/>
+<note in="warm" text="NUMA node 1"/>
+<edge from="dram" to="cxl" label="demote"/>
+<cells id="pagemap" values="hot|hot|warm|warm|cold|cold|hot|warm" label="page map" in="region"/>
+<cells id="tiers" values="DRAM|CXL|SSD" label="tiers, fastest first" index="none" in="region"/>
+<node id="touch" label="first touch" kind="pill" in="region"/>
+<node id="commit" label="commit page" in="region"/>
+<node id="mover" label="mover" note="demotes cold pages" in="region"/>
+<edge from="touch" to="commit"/>
+<edge from="commit" to="mover" style="dashed"/>
+<note in="region" text="a background mover demotes cold pages to CXL"/>
+<record id="region_s" label="struct Region" fields="base|res_bytes|committed|tier" in="region"/>
+<edge from="big" to="region" label="large alloc" style="dashed"/>
+</diagram>
+<reveal id="arena"/>The arena holds records smaller than the threshold, <reveal id="addr"/>each addressed by a chunk index and an offset. <reveal id="classes"/>Size classes are powers of two, <reveal id="chunk"/>and every chunk holds one class only. To allocate, <reveal id="alloc_in"/>it rounds the size up <reveal id="class"/>to a class, <reveal id="slot"/>then pops a free slot. <reveal id="big"/>Anything over the threshold gets a region of its own, <reveal id="arena" deep="true"/>and the struct keeps the counts. <reveal id="pool" deep="true"/>Disk buffers come from an aligned pool of four kilobyte pages, leased and given back whole. <reveal id="slots" deep="true"/>Network buffers live in slots that move through a small state machine, from free to leased, staged, in flight and done. <reveal id="region" deep="true"/>And the region tiers its pages between DRAM and CXL memory, committing each page on first touch.

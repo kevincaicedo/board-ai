@@ -55,7 +55,7 @@ fn pages(board: &Board) -> Option<String> {
 }
 
 fn visible(element: &Element) -> bool {
-    element.state != ElementState::Pending
+    element.state.is_shown()
 }
 
 struct EdgeRef<'a> {
@@ -66,11 +66,14 @@ struct EdgeRef<'a> {
 }
 
 fn layer_summary(layer: &Layer) -> String {
+    // A staged diagram's parts are told as the diagram, drawn and planned (D-187).
+    let staged = |element: &Element| super::staged::summary::is_part(layer, &element.id);
     let nodes: Vec<&Element> = layer
         .elements()
         .iter()
         .filter(|element| {
             visible(element)
+                && !staged(element)
                 && matches!(
                     element.kind,
                     ElementKind::Node { .. } | ElementKind::Cells { .. }
@@ -80,7 +83,7 @@ fn layer_summary(layer: &Layer) -> String {
     let edges: Vec<EdgeRef<'_>> = layer
         .elements()
         .iter()
-        .filter(|element| visible(element))
+        .filter(|element| visible(element) && !staged(element))
         .filter_map(|element| match &element.kind {
             ElementKind::Edge { from, to, style } => Some(EdgeRef {
                 from,
@@ -101,7 +104,9 @@ fn layer_summary(layer: &Layer) -> String {
     let sequence = sequence(layer);
     // Your shapes come last, as their own description (artboard 13).
     let yours = super::user::describe(layer).map(|drawing| format!("drawn by the user: {drawing}"));
-    if nodes.is_empty() && edges.is_empty() && sequence.is_none() && yours.is_none() {
+    let diagrams = super::staged::summary::describe(layer);
+    let empty = nodes.is_empty() && edges.is_empty() && sequence.is_none() && yours.is_none();
+    if empty && diagrams.is_empty() {
         return "empty".to_owned();
     }
     let mut used = vec![false; edges.len()];
@@ -121,6 +126,7 @@ fn layer_summary(layer: &Layer) -> String {
         ));
     }
     parts.extend(sequence);
+    parts.extend(diagrams);
     let marks = marks(layer);
     if !marks.is_empty() {
         parts.push(format!("marks: {}", marks.join(", ")));
@@ -280,7 +286,10 @@ fn node_token(element: &Element) -> String {
             let _ = write!(token, " [frozen at {progress_percent}%]");
         }
         ElementState::Struck => token.push_str(" [corrected]"),
-        ElementState::Pending | ElementState::Drawing { .. } | ElementState::Drawn => {}
+        ElementState::Pending
+        | ElementState::Planned
+        | ElementState::Drawing { .. }
+        | ElementState::Drawn => {}
     }
     token
 }
@@ -320,6 +329,7 @@ pub fn shape_name(shape: NodeShape) -> &'static str {
         NodeShape::Group => "group",
         NodeShape::Note => "note",
         NodeShape::Circle => "circle",
+        NodeShape::Pill => "pill",
     }
 }
 

@@ -53,7 +53,7 @@ function busyScene(): Scene {
       },
     ],
     [400, { type: "Thread", steps: ["Client", "LB"], current: 1, detours: ["cache-aside"] }],
-    [500, { type: "LayerPush", layer: 1, title: "cache-aside", question: null }],
+    [500, { type: "LayerPush", layer: 1, title: "cache-aside", question: null, anchor: null }],
     [600, { type: "SurfaceShow", surface: { kind: "Recap", id: 0, bullets: ["One", "Two"] } }],
     [
       700,

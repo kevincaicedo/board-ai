@@ -1,0 +1,24 @@
+<diagram id="inside" title="Arena · inside" layout="column">
+<node id="allocs" kind="group" label="alloc(size)" note="records smaller than the threshold, packed by size class" layout="row" cat="RAM records"/>
+<node id="s1" label="round up to a class" n="1" note="40 KiB to the 64 KiB class" in="allocs"/>
+<node id="s2" label="a chunk of that class" n="2" note="with a free slot, else a new one" in="allocs"/>
+<node id="s3" label="pop its free list" n="3" note="O(1), no search" in="allocs"/>
+<node id="s4" label="ArenaAddr" n="4" note="(chunk index, offset)" in="allocs"/>
+<edge from="s1" to="s2"/>
+<edge from="s2" to="s3"/>
+<edge from="s3" to="s4"/>
+<node id="one" kind="group" label="one chunk, 64 KiB class" layout="row"/>
+<record id="header" label="header" fields="class = 0|free = 3" in="one"/>
+<cells id="cslots" values="live||live||live|" label="slots" in="one"/>
+<note in="one" text="every slot the same size; offset = slot × class size; the free list runs 1, 3, 5"/>
+<edge from="header" to="cslots.1" label="free list" style="dashed"/>
+<node id="frees" kind="group" label="dealloc(addr)" layout="row"/>
+<node id="d1" label="index to chunk" n="1" in="frees"/>
+<node id="d2" label="push slot on free list" n="2" in="frees"/>
+<node id="d3" label="chunk empty: free chunks" n="3" in="frees"/>
+<edge from="d1" to="d2"/>
+<edge from="d2" to="d3"/>
+<node id="large" kind="group" label="size ≥ threshold" note="not the arena: its own Region" cat="tiered RAM" style="dashed"/>
+<note in="large" text="pages reserved, committed on touch; more detail on Region goes there"/>
+</diagram>
+<reveal id="allocs" deep="true"/>To allocate, the arena rounds the size up to a class, finds a chunk of that class and pops its free list. <reveal id="one" deep="true"/>Inside a chunk every slot is the same size, so a free slot is just a pop off the list. <reveal id="frees" deep="true"/>Freeing pushes the slot back, and an empty chunk goes back to the free chunks. <reveal id="large" deep="true"/>Anything at or over the threshold skips the arena for its own region.

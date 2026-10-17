@@ -270,7 +270,10 @@ function underlineAt(): number {
 
 function timeline(): Timed[] {
   const timed: Timed[] = [
-    { at: 0, event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null } },
+    {
+      at: 0,
+      event: { type: "Camera", layer: 0, frame: DEMO_CAMERA_FRAME, focus: null, enlarge: false },
+    },
     { at: AT.suggest, event: { type: "Suggestion", text: DEMO_SUGGESTION } },
     { at: AT.listen, event: { type: "Suggestion", text: null } },
     ...orb(),
@@ -284,7 +287,13 @@ function timeline(): Timed[] {
     { at: AT.interrupt, event: { type: "Freeze", layer: 0 } },
     {
       at: AT.detour,
-      event: { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
+      event: {
+        type: "LayerPush",
+        layer: 1,
+        title: "cache-aside",
+        question: "why Redis first?",
+        anchor: null,
+      },
     },
     thread(AT.branch, 3, ["cache-aside"]),
     ...detourBoard(),

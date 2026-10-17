@@ -215,10 +215,16 @@ const EVERY_EVENT: UiEvent[] = [
   },
   { type: "Freeze", layer: 0 },
   { type: "Resume", layer: 0, budget_ms: 800 },
-  { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?" },
-  { type: "LayerPush", layer: 2, title: "ttl", question: null },
+  { type: "LayerPush", layer: 1, title: "cache-aside", question: "why Redis first?", anchor: null },
+  { type: "LayerPush", layer: 2, title: "ttl", question: null, anchor: null },
   { type: "LayerPop", layer: 1 },
-  { type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 1440, h: 900 }, focus: "redis" },
+  {
+    type: "Camera",
+    layer: 0,
+    frame: { x: 0, y: 0, w: 1440, h: 900 },
+    focus: "redis",
+    enlarge: false,
+  },
   {
     type: "SurfaceShow",
     surface: { kind: "Code", id: 1, path: "a.go", first_line: 42, lines: ["x"], highlight: 42 },
@@ -516,7 +522,13 @@ test("protocol v1 logs still replay: v2's optional fields read a missing key as 
     layer: 1,
     title: "t",
     question: null,
+    anchor: null,
   });
+  // Protocol v5 (D-188): a frame from before close-ups is never enlarged.
+  assert.deepEqual(
+    parseUiEvent({ type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 1, h: 1 }, focus: null }),
+    { type: "Camera", layer: 0, frame: { x: 0, y: 0, w: 1, h: 1 }, focus: null, enlarge: false },
+  );
   const compare = parseUiEvent({
     type: "SurfaceShow",
     surface: { kind: "Compare", id: 2, options: ["a"], criteria: ["c"] },
